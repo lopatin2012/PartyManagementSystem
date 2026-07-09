@@ -37,6 +37,7 @@ DEBUG = (
     True if os.getenv('DEBUG') == '1'
     else False
 )
+print(DEBUG)
 
 ALLOWED_HOSTS = ['*']
 CSRF_TRUSTED_ORIGINS = ['*']
@@ -51,6 +52,9 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'app_uip.apps.AppUipConfig',
+    'app_wms.apps.AppWmsConfig',
+    'app_cz.apps.AppCzConfig'
 ]
 
 MIDDLEWARE = [
