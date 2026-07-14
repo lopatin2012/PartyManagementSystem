@@ -1,12 +1,17 @@
-# pyproject.toml
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "PartyManagementSystem"  # Имя проекта
-dynamic = ["version"]       # Динамичная
+name = "PartyManagementSystem"
+dynamic = ["version"]
 
 [tool.setuptools_scm]
-# Ссоздание файла с версией.
+# Записываем версию в файл при любой сборке
 version_file = "config/_version.py"
+
+[tool.setuptools.packages.find]
+# Включаем папку config.
+include = ["config", "config.*", "app_*"]
+# Исключаем статику, шаблоны, медиа и виртуальное окружение
+exclude = ["static*", "templates*", "media*", ".venv*", "venv*"]

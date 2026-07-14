@@ -42,7 +42,6 @@ DEBUG = (
     True if os.getenv('DEBUG') == '1'
     else False
 )
-SERVICE_VERSION = '0.0.1'
 SERVICE_MODE_TEXT = (
     'DEBUG (Разработка)'
     if DEBUG
