@@ -15,8 +15,20 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path
+from django.contrib.staticfiles.urls import staticfiles_urlpatterns
+from django.urls import path, include
+
+from config.settings import DEBUG
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('auth/', include('django.contrib.auth.urls')), # Стандартная аутентификация.
+    path('', include('app_page.urls')), # Страницы.
+    path('wms/', include('app_wms.urls')), # Склад.
+    path('factory/', include('app_factory.urls')), # Модуль производства.
+    path('cz/', include('app_cz.urls')), # Взаимодействие с Честным Знаком.
+    path('uip/', include('app_uip.urls')), # Взаимодействие с УИП.
 ]
+
+if DEBUG:
+    urlpatterns += staticfiles_urlpatterns()
