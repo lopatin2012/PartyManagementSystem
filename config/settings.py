@@ -56,7 +56,8 @@ INSTALLED_APPS = [
     'app_wms.apps.AppWmsConfig',
     'app_cz.apps.AppCzConfig',
     'app_factory.apps.AppFactoryConfig',
-    'app_helper.apps.AppHelperConfig'
+    'app_helper.apps.AppHelperConfig',
+    'app_page.apps.AppPageConfig'
 ]
 
 MIDDLEWARE = [
