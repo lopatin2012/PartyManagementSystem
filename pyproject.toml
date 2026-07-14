@@ -1,0 +1,12 @@
+# pyproject.toml
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "PartyManagementSystem"  # Имя проекта
+dynamic = ["version"]       # Динамичная
+
+[tool.setuptools_scm]
+# Ссоздание файла с версией.
+version_file = "config/_version.py"
