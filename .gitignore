@@ -1,13 +1,9 @@
 # Project folders.
-sps_core/__pycache__
-sps_dashboard/__pycache__
-sps_events/__pycache__
-sps_lines/__pycache__
-sps_parts/__pycache__
-sps_project/__pycache__
-sps_visualization/__pycache__
 *.xml
 *.iml
+
+# Версионность.
+config/_version.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
