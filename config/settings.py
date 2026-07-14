@@ -18,6 +18,11 @@ import os
 from dotenv import load_dotenv
 import psycopg
 
+try:
+    from ._version import version as SERVICE_VERSION
+except ImportError:
+    SERVICE_VERSION = '0.0.0-dev'
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -37,7 +42,18 @@ DEBUG = (
     True if os.getenv('DEBUG') == '1'
     else False
 )
-print(DEBUG)
+SERVICE_VERSION = '0.0.1'
+SERVICE_MODE_TEXT = (
+    'DEBUG (Разработка)'
+    if DEBUG
+    else 'PRODUCTION (Производство)'
+)
+SERVICE_MODE_COLOR = (
+    '#FABB1C'
+    if DEBUG
+    else '#BBCF32'
+)
+print(f'Запущена версия {SERVICE_VERSION} в режиме {SERVICE_MODE_TEXT}')
 
 ALLOWED_HOSTS = ['*']
 CSRF_TRUSTED_ORIGINS = ['*']
@@ -75,7 +91,7 @@ ROOT_URLCONF = 'config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': ['templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
