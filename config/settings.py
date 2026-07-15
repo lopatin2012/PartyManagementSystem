@@ -55,7 +55,12 @@ SERVICE_MODE_COLOR = (
 print(f'Запущена версия {SERVICE_VERSION} в режиме {SERVICE_MODE_TEXT}')
 
 ALLOWED_HOSTS = ['*']
-CSRF_TRUSTED_ORIGINS = ['*']
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost',
+    'http://127.0.0.1',
+    'http://*',
+    'https://*'
+]
 CORS_ORIGIN_WHITELIST = ['*']
 
 # Application definition
