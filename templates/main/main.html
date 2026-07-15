@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+
+{% block content %}
+    <h1>{{ page_name|default:"Главная страница" }}</h1>
+    <p class="subtitle">Быстрый поиск по коду (DataMatrix) и производственным партиям</p>
+
+    <form class="search-container" action="/search/" method="GET">
+        <select name="search_type" class="search-select">
+            <option value="code">Код маркировки</option>
+            <option value="uip">УИП (Партия)</option>
+        </select>
+
+        <input
+                type="text"
+                name="q"
+                class="search-input"
+                placeholder="Введите код или номер УИП..."
+                required autocomplete="off">
+
+        <button type="submit" class="btn-search">Найти</button>
+    </form>
+{% endblock %}

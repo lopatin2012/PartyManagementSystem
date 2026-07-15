@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ru">
+{% load static %}
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title_name|default:"Система управления партиями" }}</title>
+
+    <link rel="stylesheet" href="{% static 'css/main.css' %}" type="text/css">
+    <link rel="icon" type="image/x-icon" href="{% static 'icon/favicon.ico' %}">
+
+    {% block head %}
+    {% endblock %}
+</head>
+<body>
+
+    <!-- ХЕДЕР -->
+    <header>
+        <div class="logo-container">
+            <a href="{% url 'home' %}">
+                <img src="{% static 'icon/logo.svg' %}" alt="Главная" class="logo-image">
+            </a>
+        </div>
+
+        <div class="user-panel">
+            {% if is_authenticated %}
+                <span class="user-name">{{ user_name }}</span>
+            {% else %}
+                <span class="user-name user-name-guest">Гость</span>
+            {% endif %}
+
+            <a href="{% url 'login' %}" class="btn-login">
+                {% if is_authenticated %}Выйти{% else %}Войти в систему{% endif %}
+            </a>
+        </div>
+    </header>
+
+    <!-- ОСНОВНОЙ КОНТЕНТ -->
+    <main>
+        {% block content %}
+        {% endblock %}
+    </main>
+
+    <!-- ФУТЕР -->
+    <footer>
+        <div class="stat-item">
+            <span>Версия сервиса:</span>
+            <span class="stat-value">{{ service_version|default:"v1.0.0" }}</span>
+        </div>
+
+        <div class="stat-item">
+            <span>Запросов за час:</span>
+            <span class="stat-value stat-value-highlight">{{ requests_count|default:"0" }}</span>
+        </div>
+
+        <div class="stat-item">
+            <span>Режим:</span>
+            <span class="mode-badge" style="--mode-color: {{ service_mode_color|default:'#BBCF32' }};">
+                {{ service_mode_name|default:"PRODUCTION" }}
+            </span>
+        </div>
+    </footer>
+
+</body>
+</html>
