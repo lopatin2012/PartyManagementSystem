@@ -26,19 +26,12 @@ class MainPageView(TemplateView):
         else:
             user_name = 'Неизвестный'
 
-        # Имитация счётчика.
-        requests_count = 1000
-
         context.update(
             {
                 'title_name': 'Система управления партиями',
                 'page_name': 'Главная страница',
                 'user_name': user_name,
                 'is_authenticated': self.request.user.is_authenticated,
-                'service_version': SERVICE_VERSION,
-                'requests_count': requests_count,
-                'service_mode_name': SERVICE_MODE_TEXT,
-                'service_mode_color': SERVICE_MODE_COLOR
             }
         )
 
