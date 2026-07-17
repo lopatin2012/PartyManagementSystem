@@ -24,7 +24,11 @@
 
         <div class="user-panel">
             {% if is_authenticated %}
-                <span class="user-name">{{ user_name }}</span>
+                {% if user.is_superuser %}
+                    <a class="user-name" href="{% url 'admin:index' %}">{{ user_name }}</a>
+                {% else %}
+                    <span class="user-name">{{ user_name }}</span>
+                {% endif %}
             {% else %}
                 <span class="user-name user-name-guest">Гость</span>
             {% endif %}

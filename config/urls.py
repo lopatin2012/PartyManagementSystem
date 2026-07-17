@@ -23,6 +23,7 @@ from config.settings import DEBUG
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('auth/', include('django.contrib.auth.urls')), # Стандартная аутентификация.
+    path('admin/', admin.site.urls, name='admin'),
     path('', include('app_page.urls')), # Страницы.
     path('wms/', include('app_wms.urls')), # Склад.
     path('factory/', include('app_factory.urls')), # Модуль производства.
