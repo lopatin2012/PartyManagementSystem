@@ -90,7 +90,7 @@ class UIP(UUIDModel):
 
     class Meta:
         verbose_name = 'УИП (уникальный идентификатор партии)'
-        verbose_name_plural = 'УИП'
+        verbose_name_plural = '1. УИП'
         ordering = ('-created_at',)
         indexes = [
             models.Index(fields=['status', '-created_at']),
@@ -207,7 +207,7 @@ class ProductionParty(UUIDModel):
 
     class Meta:
         verbose_name = 'Производственная партия'
-        verbose_name_plural = 'Производственные партии'
+        verbose_name_plural = '2. Производственные партии'
         ordering = ('-created_at', )
         indexes = [
             models.Index(fields=['uip', '-created_at']),
