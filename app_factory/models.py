@@ -72,7 +72,7 @@ class Factory(UUIDModel):
 
     class Meta:
         verbose_name = "Завод"
-        verbose_name_plural = "Заводы"
+        verbose_name_plural = "1. Заводы"
         ordering = ('-id',)
 
     def __str__(self) -> str:
@@ -92,7 +92,7 @@ class Workshop(UUIDModel):
 
     class Meta:
         verbose_name = "Цех"
-        verbose_name_plural = "Цеха"
+        verbose_name_plural = "2. Цеха"
         ordering = ('-id',)
         constraints = [
             models.UniqueConstraint(fields=['factory', 'name'], name='unique_workshop_per_factory')
@@ -115,7 +115,7 @@ class Line(UUIDModel):
 
     class Meta:
         verbose_name = "Линия"
-        verbose_name_plural = "Линии"
+        verbose_name_plural = "3. Линии"
         ordering = ('-id',)
         constraints = [
             models.UniqueConstraint(fields=['workshop', 'name'], name='unique_line_per_workshop')
@@ -144,7 +144,7 @@ class Product(UUIDModel):
 
     class Meta:
         verbose_name = 'Продукт'
-        verbose_name_plural = 'Продукты'
+        verbose_name_plural = '4. Продукты'
         ordering = ('group', 'name')
 
     def __str__(self):
@@ -190,7 +190,7 @@ class ProductPackaging(UUIDModel):
 
     class Meta:
         verbose_name = 'Упаковка продукта (GTIN)'
-        verbose_name_plural = 'Упаковки продукта (GTIN)'
+        verbose_name_plural = '5. Упаковки продукта (GTIN)'
         ordering = ('product', 'level')
         constraints = [
             models.UniqueConstraint(
@@ -223,7 +223,7 @@ class ProductSKU(UUIDModel):
 
     class Meta:
         verbose_name = 'Номенклатура (SKU)'
-        verbose_name_plural = 'Номенклатуры (SKUs)'
+        verbose_name_plural = '6. Номенклатуры (SKUs)'
         ordering = ('product', 'sku_code')
 
     def __str__(self):
@@ -251,7 +251,7 @@ class ProductProductionLocation(UUIDModel):
 
     class Meta:
         verbose_name = 'Место производства продукции'
-        verbose_name_plural = 'Места производства продукции'
+        verbose_name_plural = '7. Места производства продукции'
         ordering = ('-id',)
         constraints = [
             models.UniqueConstraint(
