@@ -5,5 +5,5 @@ from django.apps import AppConfig
 
 class AppCzConfig(AppConfig):
     name = 'app_cz'
-    verbose_name = '2. CH (Честный Знак)'
+    verbose_name = '3. Честный Знак'
 
