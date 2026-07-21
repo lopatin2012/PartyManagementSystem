@@ -73,6 +73,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'drf_spectacular',
     'app_uip.apps.AppUipConfig',
     'app_wms.apps.AppWmsConfig',
     'app_cz.apps.AppCzConfig',
@@ -91,8 +92,17 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.TokenAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
+        'rest_framework.permissions.AllowAny',
+        #'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Система управления партиями API',
+    'DESCRIPTION': 'API для работы с кодами маркировки и УИП',
+    'VERSION': SERVICE_VERSION,
+    'SERVE_INCLUDE_SCHEMA': False,
 }
 
 MIDDLEWARE = [

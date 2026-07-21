@@ -3,6 +3,7 @@
 from django.shortcuts import render
 
 from rest_framework import viewsets, filters
+from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from app_cz.serializers import CISCodeSerializer, UIPSerializer, ProductionPartySerializer
 from app_cz.models import CISCode
@@ -21,6 +22,8 @@ class CISCodeViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['=code', 'code__istartswith']
     ordering_fields = ['created_at', 'cz_status', 'production_status']
     ordering = ['-created_at']
+
+    # permission_classes = [AllowAny]
 
 
 class UIViewSet(viewsets.ReadOnlyModelViewSet):

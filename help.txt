@@ -19,3 +19,6 @@ TIME_ZONE -> Часовой пояс.
 Поднятие версии с помощью tag:
     git tag 2.0.0: 1.0.0 -> 2.0.0.
     git tag -a v1.2.0 -m "Release version 1.2.0"
+
+# Документация API.
+http://domen:port/api/docs/
