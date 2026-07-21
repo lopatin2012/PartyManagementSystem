@@ -1,0 +1,130 @@
+<!-- templates/search/main.html -->
+
+{% extends 'base.html' %}
+{% load static %}
+
+{% block head %}
+    <link rel="stylesheet" href="{% static 'css/search.css' %}">
+{% endblock %}
+
+{% block content %}
+    <div class="search-results-container">
+        <h1>Результаты поиска</h1>
+        
+        {% if query %}
+            <p class="search-info">
+                Найдено: <strong>{{ total_count }}</strong> результатов по запросу 
+                "<strong>{{ query }}</strong>"
+                <br>
+                <small style="color: rgba(255,255,255,0.6);">
+                    Тип поиска определён автоматически: 
+                    {% if search_type == 'code' %}
+                        <strong>Код маркировки</strong>
+                    {% elif search_type == 'uip' %}
+                        <strong>УИП (номер партии)</strong>
+                    {% endif %}
+                </small>
+            </p>
+            
+            {% if results %}
+                <div class="results-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                {% if search_type == 'code' %}
+                                    <th>Код</th>
+                                    <th>УИП</th>
+                                    <th>GTIN</th>
+                                    <th>Уровень</th>
+                                    <th>Статус ЧЗ</th>
+                                    <th>Статус производства</th>
+                                    <th>Дата создания</th>
+                                {% elif search_type == 'uip' %}
+                                    <th>Номер УИП</th>
+                                    <th>Продукт</th>
+                                    <th>Тип</th>
+                                    <th>Статус</th>
+                                    <th>План</th>
+                                    <th>Факт</th>
+                                    <th>Дата создания</th>
+                                {% endif %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in results %}
+                                <tr>
+                                    {% if search_type == 'code' %}
+                                        <td class="code-cell" title="{{ item.code }}">
+                                            {{ item.code|truncatechars:30 }}
+                                        </td>
+                                        <td>{{ item.production_party.uip.number|default:"—" }}</td>
+                                        <td>{{ item.product_packaging.gtin|default:"—" }}</td>
+                                        <td>{{ item.get_level_display }}</td>
+                                        <td>
+                                            <span class="status-badge status-{{ item.cz_status }}">
+                                                {{ item.get_cz_status_display }}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span class="status-badge prod-status-{{ item.production_status }}">
+                                                {{ item.get_production_status_display }}
+                                            </span>
+                                        </td>
+                                        <td>{{ item.created_at|date:"d.m.Y H:i" }}</td>
+                                        
+                                    {% elif search_type == 'uip' %}
+                                        <td><strong>{{ item.number }}</strong></td>
+                                        <td>{{ item.product_sku.name|default:"—" }}</td>
+                                        <td>{{ item.get_number_type_display }}</td>
+                                        <td>
+                                            <span class="status-badge uip-status-{{ item.status }}">
+                                                {{ item.get_status_display }}
+                                            </span>
+                                        </td>
+                                        <td>{{ item.planned_quantity }}</td>
+                                        <td>{{ item.produced_quantity }}</td>
+                                        <td>{{ item.created_at|date:"d.m.Y H:i" }}</td>
+                                    {% endif %}
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Пагинация -->
+                {% if page_obj.has_other_pages %}
+                    <div class="pagination">
+                        {% if page_obj.has_previous %}
+                            <a href="?q={{ query }}&page=1">&laquo; Первая</a>
+                            <a href="?q={{ query }}&page={{ page_obj.previous_page_number }}">Предыдущая</a>
+                        {% endif %}
+                        
+                        <span class="current">
+                            Страница {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}
+                        </span>
+                        
+                        {% if page_obj.has_next %}
+                            <a href="?q={{ query }}&page={{ page_obj.next_page_number }}">Следующая</a>
+                            <a href="?q={{ query }}&page={{ page_obj.paginator.num_pages }}">Последняя &raquo;</a>
+                        {% endif %}
+                    </div>
+                {% endif %}
+                
+            {% else %}
+                <div class="no-results">
+                    <p>По вашему запросу ничего не найдено.</p>
+                    <p>Попробуйте проверить правильность введённых данных.</p>
+                </div>
+            {% endif %}
+            
+        {% else %}
+            <div class="no-query">
+                <p>Введите поисковый запрос.</p>
+            </div>
+        {% endif %}
+        
+        <div class="back-to-search">
+            <a href="{% url 'home' %}" class="btn-back">← Новый поиск</a>
+        </div>
+    </div>
+{% endblock %}

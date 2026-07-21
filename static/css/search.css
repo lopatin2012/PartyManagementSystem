@@ -1,0 +1,162 @@
+.search-results-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.search-info {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 2rem;
+    border-left: 4px solid var(--accent-green);
+}
+
+.results-table {
+    overflow-x: auto;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 12px;
+    padding: 1rem;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: transparent;
+}
+
+thead {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+th {
+    padding: 1rem;
+    text-align: left;
+    font-weight: 600;
+    color: var(--accent-green);
+    border-bottom: 2px solid var(--input-border);
+    white-space: nowrap;
+}
+
+td {
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid var(--input-border);
+    vertical-align: middle;
+}
+
+tr:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.code-cell {
+    font-family: 'Courier New', monospace;
+    font-size: 0.85rem;
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Статусы */
+.status-badge {
+    display: inline-block;
+    padding: 0.3rem 0.7rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: white;
+    white-space: nowrap;
+}
+
+/* Статусы ЧЗ */
+.status-1 { background-color: #6c757d; } /* Эмитирован */
+.status-2 { background-color: #FABB1C; } /* Нанесён */
+.status-3 { background-color: #BBCF32; } /* Введён в оборот */
+.status-4 { background-color: #dc3545; } /* Выведен из оборота */
+
+/* Статусы производства */
+.prod-status-1 { background-color: #6c757d; } /* Свободный */
+.prod-status-2 { background-color: #FABB1C; } /* Ожидает */
+.prod-status-3 { background-color: #3D52A1; } /* Нанесён */
+.prod-status-4 { background-color: #dc3545; } /* Отбракован */
+.prod-status-5 { background-color: #BBCF32; } /* Отгружен */
+
+/* Статусы УИП */
+.uip-status-draft { background-color: #6c757d; }
+.uip-status-reserved_cz { background-color: #FABB1C; }
+.uip-status-reserved_local { background-color: #FABB1C; }
+.uip-status-active { background-color: #BBCF32; }
+.uip-status-closed { background-color: #3D52A1; }
+.uip-status-archive { background-color: #302F80; }
+
+/* Пагинация */
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 2rem;
+    flex-wrap: wrap;
+}
+
+.pagination a {
+    color: var(--accent-green);
+    text-decoration: none;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--input-border);
+    border-radius: 6px;
+    transition: all 0.3s ease;
+}
+
+.pagination a:hover {
+    background: var(--accent-green);
+    color: var(--bg-dark);
+}
+
+.pagination .current {
+    color: rgba(255, 255, 255, 0.7);
+    padding: 0.5rem 1rem;
+}
+
+.no-results, .no-query {
+    text-align: center;
+    padding: 3rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.back-to-search {
+    margin-top: 2rem;
+    text-align: center;
+}
+
+.btn-back {
+    display: inline-block;
+    background: var(--accent-green);
+    color: var(--bg-dark);
+    padding: 0.8rem 2rem;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.btn-back:hover {
+    background: #d4e84b;
+    transform: translateY(-2px);
+}
+
+@media (max-width: 768px) {
+    .search-results-container {
+        padding: 1rem;
+    }
+
+    table {
+        font-size: 0.85rem;
+    }
+
+    th, td {
+        padding: 0.5rem;
+    }
+}

@@ -72,13 +72,28 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
     'app_uip.apps.AppUipConfig',
     'app_wms.apps.AppWmsConfig',
     'app_cz.apps.AppCzConfig',
     'app_factory.apps.AppFactoryConfig',
     'app_helper.apps.AppHelperConfig',
-    'app_page.apps.AppPageConfig'
+    'app_page.apps.AppPageConfig',
+
 ]
+
+# Настройки DRF.
+REST_FRAMEWORK = {
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 25,
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.TokenAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
