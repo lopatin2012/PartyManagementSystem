@@ -1,5 +1,7 @@
 from django.db import models
 from django.core.exceptions import ValidationError
+from django.core.validators import RegexValidator
+from django.utils import timezone
 
 from app_factory.models import PackagingLevelChoices
 
@@ -79,11 +81,9 @@ class CISCode(models.Model):
 
     class Meta:
         verbose_name = 'Код маркировки'
-        verbose_name_plural = 'Коды маркировки'
+        verbose_name_plural = '1. Коды маркировки'
         ordering = ('-created_at',)
         indexes = [
-            # Оставляем только критичные индексы. 
-            # Убрали uip и product_sku, так как их больше нет в модели.
             models.Index(fields=['production_party', '-created_at']),
             models.Index(fields=['product_packaging', '-created_at']),
             models.Index(fields=['cz_status', '-created_at']),
@@ -120,3 +120,121 @@ class CISCode(models.Model):
             self.level = self.product_packaging.level
 
         super().save(*args, **kwargs)
+
+
+class SUZAccount(models.Model):
+    """
+    Учётная запись для взаимодействия с СУЗ и TrueAPI.
+    """
+
+    # Основные данные.
+    is_active = models.BooleanField(
+        default=False,
+        verbose_name="Активная запись",
+        help_text="Только одна запись может быть активной одновременно."
+    )
+    certificate_name = models.CharField(
+        max_length=150,
+        verbose_name="Наименование сертификата"
+    )
+    serial_number = models.CharField(
+        max_length=64,
+        unique=True,
+        verbose_name="Серийный номер сертификата"
+    )
+    inn = models.CharField(
+        max_length=12,
+        validators=[
+            RegexValidator(
+                regex=r'^\d{10,12}$',
+                message='ИНН должен содержать 10 или 12 цифр'
+            )
+        ],
+        verbose_name="ИНН организации"
+    )
+
+    # Сроки действия.
+    valid_from = models.DateTimeField(
+        blank=True, null=True,
+        verbose_name="Действителен с"
+    )
+    valid_to = models.DateTimeField(
+        blank=True, null=True,
+        verbose_name="Действителен по"
+    )
+
+    # Параметры подключения.
+    oms_id = models.CharField(
+        max_length=100,
+        verbose_name="СУЗ ID (omsId)"
+    )
+    device_name = models.CharField(
+        max_length=150,
+        verbose_name="Название устройства (suz_device_name)"
+    )
+    connection_identifier = models.CharField(
+        max_length=100,
+        verbose_name="Идентификатор соединения (identifier_id)"
+    )
+
+    # Токены.
+    dynamic_token = models.CharField(
+        max_length=512,
+        blank=True, null=True,
+        verbose_name="Текущий динамический токен (client_token)"
+    )
+    token_expires_at = models.DateTimeField(
+        blank=True, null=True,
+        verbose_name="Токен действителен до"
+    )
+
+    # Аудит.
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Дата добавления"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name="Дата и время изменения"
+    )
+
+    class Meta:
+        verbose_name = "Учётная запись СУЗ"
+        verbose_name_plural = "2. Учётные записи СУЗ"
+        ordering = ["-is_active", "-updated_at"]
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=['is_active'],
+                condition=models.Q(is_active=True),
+                name='unique_active_suz_account'
+            )
+        ]
+
+    def __str__(self):
+        status = "✅ Активна" if self.is_active else "❌ Неактивна"
+        return f'{self.certificate_name} ({self.inn}) | {status}'
+
+    def save(self, *args, **kwargs):
+        """
+        Переопределяем save, чтобы при активации этой записи,
+        все остальные записи автоматически деактивировались.
+        """
+        if self.is_active:
+            # Снимаем флаг активности со всех остальных записей.
+            SUZAccount.objects.exclude(pk=self.pk).update(is_active=False)
+
+        super().save(*args, **kwargs)
+
+    @property
+    def is_token_valid(self) -> bool:
+        """Проверяет, не истёк ли срок действия текущего динамического токена."""
+        if not self.dynamic_token or not self.token_expires_at:
+            return False
+
+        # Добавляем небольшой буфер (например, 5 минут), чтобы не использовать токен на грани истечения.
+        return timezone.now() < (self.token_expires_at - timezone.timedelta(minutes=5))
+
+    def get_active_account(self):
+        """Получение активной записи для работы с СУЗ/TrueAPI."""
+        return SUZAccount.objects.filter(is_active=True).first()

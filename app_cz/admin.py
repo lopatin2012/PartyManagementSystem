@@ -3,7 +3,9 @@ from django.utils.html import format_html
 from django.core.paginator import Paginator
 from django.db import connection
 
-from .models import CISCode, CISCodesStatusChoices, ProductionCodeStatusChoices
+from app_cz.models import (
+    CISCode, CISCodesStatusChoices, ProductionCodeStatusChoices, SUZAccount
+)
 
 
 # ==========================================
@@ -191,3 +193,65 @@ def mark_as_applied(modeladmin, request, queryset):
 
 
 CISCodeAdmin.actions = [mark_as_rejected, mark_as_applied]
+
+
+@admin.register(SUZAccount)
+class SUZAccountAdmin(admin.ModelAdmin):
+    list_display = (
+        'certificate_name',
+        'inn',
+        'status_badge',
+        'oms_id',
+        'token_status',
+        'updated_at'
+    )
+
+    list_filter = ('is_active',)
+    search_fields = ('certificate_name', 'serial_number', 'inn', 'oms_id')
+    ordering = ('-is_active', '-updated_at')
+
+    # Поля, разделенные на логические группы.
+    fieldsets = (
+        ('Статус', {
+            'fields': ('is_active',)
+        }),
+        ('Данные сертификата', {
+            'fields': ('certificate_name', 'serial_number', 'inn', 'valid_from', 'valid_to')
+        }),
+        ('Параметры СУЗ', {
+            'fields': ('oms_id', 'device_name', 'connection_identifier')
+        }),
+        ('Авторизация (обновляется автоматически)', {
+            'fields': ('dynamic_token', 'token_expires_at'),
+            'classes': ('collapse',),  # Сворачиваем по умолчанию.
+            'description': 'Эти поля заполняются автоматически при успешном запросе токена из СУЗ.'
+        }),
+        ('Системная информация', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    readonly_fields = ('dynamic_token', 'token_expires_at', 'created_at', 'updated_at')
+
+    @admin.display(description='Статус')
+    def status_badge(self, obj):
+        if obj.is_active:
+            return format_html(
+                '<span style="background-color: #BBCF32; color: #302F80; padding: 3px 8px; '
+                'border-radius: 4px; font-weight: 600;">✅ АКТИВНА</span>'
+            )
+        return format_html(
+            '<span style="background-color: #6c757d; color: white; padding: 3px 8px; '
+            'border-radius: 4px; font-weight: 600;">Неактивна</span>'
+        )
+
+    @admin.display(description='Токен')
+    def token_status(self, obj):
+        if obj.is_token_valid:
+            return format_html(
+                '<span style="color: #BBCF32;">● Действует</span>'
+            )
+        return format_html(
+            '<span style="color: #dc3545;">● Отсутствует или истёк</span>'
+        )
