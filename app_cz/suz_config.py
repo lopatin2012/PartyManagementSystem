@@ -51,6 +51,7 @@ class SUZUrls:
 
         # --- Эндпоинты для получения клиентского токена (markirovka / markirovka.sandbox) ---
         self.auth_key = f"{self.true_api}/auth/key"
+        self.simple_sign_in = f"{self.true_api}/auth/simpleSignIn"
 
         # --- Эндпоинты Молочной продукции (milk / milk.sandbox) ---
         self.create_document_milk = f"{self.DOMAIN_MILK}/lk/documents/create"

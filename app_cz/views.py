@@ -10,11 +10,11 @@ from rest_framework import viewsets, filters
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 
 from app_cz.serializers import CISCodeSerializer, UIPSerializer, ProductionPartySerializer
 from app_cz.models import CISCode, SUZAccount
-from app_cz.services.suz_client import get_true_api_auth_key
+from app_cz.services.suz_client import get_true_api_auth_key, refresh_suz_dynamic_token
 
 from app_uip.models import UIP, ProductionParty
 
@@ -164,14 +164,53 @@ def api_get_auth_key(request):
     try:
         auth_data = get_true_api_auth_key()
 
-        return Response({
-            'uuid': auth_data.get('uuid'),
-            'data': auth_data.get('data')
-        }, status=status.HTTP_200_OK)
+        return Response(
+            {
+                'uuid': auth_data.get('uuid'),
+                'data': auth_data.get('data')
+            },
+            status=status.HTTP_200_OK
+        )
 
     except Exception as e:
-        return Response({
-            'error': str(e)
-        },
+        return Response(
+            {
+                'error': str(e)
+            },
             status=status.HTTP_502_BAD_GATEWAY
+        )
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def api_refresh_suz_token(request):
+    """
+    Принудительное обновления динамического токена СУЗ.
+    """
+    try:
+        success = refresh_suz_dynamic_token()
+
+        if success:
+            return Response(
+                {
+                    'success': True,
+                    'message': 'Динамический токен успешно обновлён'
+                },
+                status=status.HTTP_200_OK
+            )
+        else:
+            return Response(
+                {
+                    'success': False,
+                    'message': 'Не удалось получить токен. Проверьте логи сервера и настройки СУЗ.'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    except Exception as e:
+        return Response(
+            {
+                'success': False,
+                'message': f'Критическая ошибка: {str(e)}'
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

@@ -57,7 +57,7 @@
                 {% elif not status_suz.token_valid %}
                     <p class="status-text">Токен истёк или отсутствует</p>
                     {% if status_suz.can_manage %}
-                        <button class="btn-status-action btn-danger" onclick="refreshSuzToken()">Обновить токен</button>
+                        <button class="btn-status-action btn-danger" onclick="refreshSuzToken(event)">Обновить токен</button>
                     {% endif %}
                 {% else %}
                     <p class="status-text">Токен действителен</p>
@@ -66,7 +66,7 @@
                     </div>
                     {% if status_suz.can_manage %}
                         <div class="admin-actions">
-                            <button class="btn-status-action btn-sm" onclick="refreshSuzToken()">Обновить</button>
+                            <button class="btn-status-action btn-sm" onclick="refreshSuzToken(event)">Обновить</button>
                             <button class="btn-status-action btn-sm btn-danger" onclick="resetSuzData()">Сбросить</button>
                         </div>
                     {% endif %}

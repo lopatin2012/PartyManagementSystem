@@ -125,8 +125,39 @@ async function resetSuzData() {
 }
 
 // 6. Заглушка обновления токена.
-function refreshSuzToken() {
-    alert('Здесь будет вызов получения нового токена через TrueAPI.');
+async function refreshSuzToken(event) {
+    if (!confirm('Запросить новый динамический токен у Честного Знака?')) return;
+
+    // Получаем кнопку, по которой кликнули
+    const btn = event ? event.target : document.activeElement;
+    const originalText = btn.textContent;
+
+    btn.disabled = true;
+    btn.textContent = 'Обновление...';
+
+    try {
+        const response = await fetch('/cz/api/refresh-suz-token/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken'),
+                'Content-Type': 'application/json'
+            }
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            alert('Токен успешно обновлён!');
+            location.reload();
+        } else {
+            alert('Ошибка: ' + (result.message || 'Неизвестная ошибка'));
+        }
+    } catch (error) {
+        console.error('Ошибка при обновлении токена:', error);
+        alert('Ошибка сети при обновлении токена');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
 }
 
 // CSRF helper
