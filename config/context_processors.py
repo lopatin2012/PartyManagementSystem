@@ -1,7 +1,10 @@
 # config/context_processors.py
 
+from django.utils import timezone
+
 from django.conf import settings
 
+from app_cz.models import SUZAccount
 from config.settings import SERVICE_MODE_TEXT, SERVICE_MODE_COLOR, SERVICE_VERSION
 
 def global_footer_info(request):
@@ -17,4 +20,39 @@ def global_footer_info(request):
         'requests_count': requests_count,
         'service_mode_name': getattr(settings, 'SERVICE_MODE_TEXT', SERVICE_MODE_TEXT),
         'service_mode_color': getattr(settings, 'SERVICE_MODE_COLOR', SERVICE_MODE_COLOR),
+    }
+
+def service_status_info(request):
+    """Статусы внешних сервисов."""
+    # 1. Статус СУЗ
+    suz_account = SUZAccount.objects.filter(is_active=True).first()
+    suz_status = {
+        'is_active': bool(suz_account),
+        'token_valid': False,
+        'expires_in_seconds': 0,
+        'can_manage': request.user.is_authenticated and request.user.is_superuser
+    }
+
+    if suz_account and suz_account.is_token_valid:
+        suz_status['token_valid'] = True
+        delta = suz_account.token_expires_at - timezone.now()
+        suz_status['expires_in_seconds'] = max(0, int(delta.total_seconds()))
+
+    return {
+        'status_suz': suz_status,
+        'status_signature': {
+            'is_ok': True,
+            'message': 'Служба подписи работает'
+        },
+        'status_factories': {
+            'is_ok': True,
+            'workshops': [
+                {'name': 'ПАО МКВ', 'is_ok': True},
+                {'name': 'Малыш', 'is_ok': True},
+            ]
+        },
+        'status_1c': {
+            'is_ok': True,
+            'message': '1С: Предприятие'
+        }
     }

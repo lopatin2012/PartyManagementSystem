@@ -1,19 +1,12 @@
 {% extends 'base.html' %}
 
 {% block content %}
+    <!-- ОСНОВНОЙ КОНТЕНТ -->
     <h1>{{ page_name|default:"Главная страница" }}</h1>
     <p class="subtitle">Вставьте код маркировки или номер УИП для поиска</p>
 
     <form class="search-container" action="{% url 'search' %}" method="GET">
-        <input
-                type="text"
-                name="q"
-                class="search-input"
-                placeholder="Вставьте код DataMatrix или номер УИП..."
-                required
-                autocomplete="off"
-                autofocus>
-
+        <input type="text" name="q" class="search-input" placeholder="Вставьте код DataMatrix или номер УИП..." required autocomplete="off" autofocus>
         <button type="submit" class="btn-search">Найти</button>
     </form>
 {% endblock %}

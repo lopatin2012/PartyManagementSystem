@@ -1,5 +1,5 @@
 from django.contrib import admin
-from django.utils.html import format_html
+from django.utils.html import format_html, mark_safe
 from django.core.paginator import Paginator
 from django.db import connection
 
@@ -210,7 +210,6 @@ class SUZAccountAdmin(admin.ModelAdmin):
     search_fields = ('certificate_name', 'serial_number', 'inn', 'oms_id')
     ordering = ('-is_active', '-updated_at')
 
-    # Поля, разделенные на логические группы.
     fieldsets = (
         ('Статус', {
             'fields': ('is_active',)
@@ -223,7 +222,7 @@ class SUZAccountAdmin(admin.ModelAdmin):
         }),
         ('Авторизация (обновляется автоматически)', {
             'fields': ('dynamic_token', 'token_expires_at'),
-            'classes': ('collapse',),  # Сворачиваем по умолчанию.
+            'classes': ('collapse',),
             'description': 'Эти поля заполняются автоматически при успешном запросе токена из СУЗ.'
         }),
         ('Системная информация', {
@@ -237,11 +236,11 @@ class SUZAccountAdmin(admin.ModelAdmin):
     @admin.display(description='Статус')
     def status_badge(self, obj):
         if obj.is_active:
-            return format_html(
+            return mark_safe(
                 '<span style="background-color: #BBCF32; color: #302F80; padding: 3px 8px; '
-                'border-radius: 4px; font-weight: 600;">✅ АКТИВНА</span>'
+                'border-radius: 4px; font-weight: 600;">АКТИВНА</span>'
             )
-        return format_html(
+        return mark_safe(
             '<span style="background-color: #6c757d; color: white; padding: 3px 8px; '
             'border-radius: 4px; font-weight: 600;">Неактивна</span>'
         )
@@ -249,9 +248,9 @@ class SUZAccountAdmin(admin.ModelAdmin):
     @admin.display(description='Токен')
     def token_status(self, obj):
         if obj.is_token_valid:
-            return format_html(
-                '<span style="color: #BBCF32;">● Действует</span>'
+            return mark_safe(
+                '<span style="color: #BBCF32; font-weight: 600;">Действует</span>'
             )
-        return format_html(
-            '<span style="color: #dc3545;">● Отсутствует или истёк</span>'
+        return mark_safe(
+            '<span style="color: #dc3545; font-weight: 600;">Отсутствует или истёк</span>'
         )

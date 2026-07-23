@@ -130,6 +130,7 @@ TEMPLATES = [
                 'django.contrib.messages.context_processors.messages',
 
                 'config.context_processors.global_footer_info',
+                'config.context_processors.service_status_info'
             ],
         },
     },

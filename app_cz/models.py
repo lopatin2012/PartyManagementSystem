@@ -212,7 +212,7 @@ class SUZAccount(models.Model):
         ]
 
     def __str__(self):
-        status = "✅ Активна" if self.is_active else "❌ Неактивна"
+        status = "Активна" if self.is_active else "Неактивна"
         return f'{self.certificate_name} ({self.inn}) | {status}'
 
     def save(self, *args, **kwargs):

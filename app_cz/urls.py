@@ -13,4 +13,8 @@ router.register('parties', views.ProductionPartyViewSet, basename='api-parties')
 urlpatterns = [
     # API endpoints.
     path('api/', include(router.urls)),
+
+    path('api/get-suz-certificates/', view=views.api_get_suz_certificates, name='api-get-suz-certificates'),
+    path('api/setup-suz-account/', view=views.api_setup_suz_account, name='api-setup-suz-account'),
+    path('api/reset-suz-account/', view=views.api_reset_suz_account, name='api-reset-suz-account'),
 ]

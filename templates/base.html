@@ -7,6 +7,8 @@
     <title>{{ title_name|default:"Система управления партиями" }}</title>
 
     <link rel="stylesheet" href="{% static 'css/main.css' %}" type="text/css">
+    <link rel="stylesheet" href="{% static 'css/services_status.css' %}" type="text/css">
+    <link rel="stylesheet" href="{% static 'css/modal.css' %}" type="text/css">
     <link rel="icon" type="image/x-icon" href="{% static 'icon/favicon.ico' %}">
 
     {% block head %}
@@ -39,6 +41,86 @@
         </div>
     </header>
 
+    <!-- ПАНЕЛЬ СТАТУСОВ СЕРВИСОВ -->
+    <div class="services-status-panel">
+
+        <!-- 1. СУЗ (Честный Знак) -->
+        <div class="status-card {% if not status_suz.is_active %}status-warning{% elif not status_suz.token_valid %}status-danger{% else %}status-success{% endif %}">
+            <div class="status-header">
+                <span class="status-icon"></span>
+                <span class="status-title">СУЗ (Честный Знак)</span>
+            </div>
+            <div class="status-body">
+                {% if not status_suz.is_active %}
+                    <p class="status-text">Требуется первичная настройка</p>
+                    <button class="btn-status-action" onclick="openSuzModal()">Настроить СУЗ</button>
+                {% elif not status_suz.token_valid %}
+                    <p class="status-text">Токен истёк или отсутствует</p>
+                    {% if status_suz.can_manage %}
+                        <button class="btn-status-action btn-danger" onclick="refreshSuzToken()">Обновить токен</button>
+                    {% endif %}
+                {% else %}
+                    <p class="status-text">Токен действителен</p>
+                    <div class="countdown-timer" id="suz-countdown" data-seconds="{{ status_suz.expires_in_seconds }}">
+                        --:--:--
+                    </div>
+                    {% if status_suz.can_manage %}
+                        <div class="admin-actions">
+                            <button class="btn-status-action btn-sm" onclick="refreshSuzToken()">Обновить</button>
+                            <button class="btn-status-action btn-sm btn-danger" onclick="resetSuzData()">Сбросить</button>
+                        </div>
+                    {% endif %}
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- 2. Служба подписи -->
+        <div class="status-card {% if status_signature.is_ok %}status-success{% else %}status-danger{% endif %}">
+            <div class="status-header">
+                <span class="status-icon"></span>
+                <span class="status-title">Служба ЭЦП</span>
+            </div>
+            <div class="status-body">
+                <p class="status-text">{{ status_signature.message }}</p>
+                <span class="status-badge-small {% if status_signature.is_ok %}status-success{% else %}status-danger{% endif %}">
+                    {% if status_signature.is_ok %}Работает{% else %}Остановлена{% endif %}
+                </span>
+            </div>
+        </div>
+
+        <!-- 3. Молвест.Маркировка (Заводы) -->
+        <div class="status-card {% if status_factories.is_ok %}status-success{% else %}status-danger{% endif %}">
+            <div class="status-header">
+                <span class="status-icon"></span>
+                <span class="status-title">Молвест.Маркировка</span>
+            </div>
+            <div class="status-body">
+                {% for workshop in status_factories.workshops %}
+                    <div class="workshop-status">
+                        <span class="workshop-name">{{ workshop.name }}</span>
+                        <span class="status-badge-small {% if workshop.is_ok %}status-success{% else %}status-danger{% endif %}">
+                            {% if workshop.is_ok %}Работает{% else %}Недоступно{% endif %}
+                        </span>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- 4. 1С: Предприятие -->
+        <div class="status-card {% if status_1c.is_ok %}status-success{% else %}status-danger{% endif %}">
+            <div class="status-header">
+                <span class="status-icon"></span>
+                <span class="status-title">1С</span>
+            </div>
+            <div class="status-body">
+                <p class="status-text">{{ status_1c.message }}</p>
+                <span class="status-badge-small {% if status_1c.is_ok %}status-success{% else %}status-danger{% endif %}">
+                    {% if status_1c.is_ok %}Подключено{% else %}Недоступно{% endif %}
+                </span>
+            </div>
+        </div>
+    </div>
+
     <!-- ОСНОВНОЙ КОНТЕНТ -->
     <main>
         {% block content %}
@@ -65,5 +147,52 @@
         </div>
     </footer>
 
+    {% if status_suz.can_manage %}
+        <!-- МОДАЛЬНОЕ ОКНО НАСТРОЙКИ СУЗ -->
+        <div id="suzModal" class="modal-overlay" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Первичная настройка СУЗ</h3>
+                    <button class="modal-close" onclick="closeSuzModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="suzSetupForm">
+                        <div class="form-group">
+                            <label>Выберите сертификат ЭЦП:</label>
+                            <select id="certSelect" class="form-input" required>
+                                <option value="">Загрузка сертификатов...</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>СУЗ ID (omsId):</label>
+                            <input type="text" name="oms_id" class="form-input" required placeholder="Например: 12345678-1234-...">
+                        </div>
+                        <div class="form-group">
+                            <label>Название устройства:</label>
+                            <input type="text" name="device_name" class="form-input" required placeholder="Например: Server-01">
+                        </div>
+                        <div class="form-group">
+                            <label>Идентификатор соединения:</label>
+                            <input type="text" name="connection_identifier" class="form-input" required placeholder="Например: conn_12345">
+                        </div>
+                        <div class="form-group">
+                            <label>ИНН:</label>
+                            <input type="text" name="inn" class="form-input" required placeholder="Например: 1234567890">
+                        </div>
+
+                        <div class="modal-footer">
+                            <button type="button" class="btn-status-action" onclick="closeSuzModal()">Отмена</button>
+                            <button type="submit" class="btn-status-action btn-success">Сохранить</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+
+    {% block js %}
+    {% endblock %}
+
+    <script src="{% static 'js/suz_status.js' %}"></script>
 </body>
 </html>

@@ -1,14 +1,25 @@
 # app_cz/views.py
 
+from datetime import datetime
+import logging
+
 from django.shortcuts import render
+from django.utils import timezone
 
 from rest_framework import viewsets, filters
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
+from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from app_cz.serializers import CISCodeSerializer, UIPSerializer, ProductionPartySerializer
-from app_cz.models import CISCode
+from app_cz.models import CISCode, SUZAccount
 
 from app_uip.models import UIP, ProductionParty
+
+from app_helper.sign_helper import get_list_certificates
+
+logger = logging.getLogger(__name__)
 
 
 class CISCodeViewSet(viewsets.ReadOnlyModelViewSet):
@@ -46,3 +57,98 @@ class ProductionPartyViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['production_party', 'external_number_task', 'uip__number']
     ordering_fields = ['created_at', 'production_datetime_start']
     ordering = ['-created_at']
+
+
+# ==========================================
+# Функции для взаимодействия с СУЗ.
+# ==========================================
+
+@api_view(['GET'])
+def api_get_suz_certificates(request):
+    """Возвращает список доступных валидных сертификатов ЭЦП."""
+    try:
+        certs = get_list_certificates()
+        logger.info(f"API вернул {len(certs)} сертификатов.")
+
+        return Response(
+            {'certificates': certs},
+            status=status.HTTP_200_OK
+        )
+    except Exception as e:
+        logger.error(f"Критическая ошибка в api_get_suz_certificates: {e}", exc_info=True)
+        return Response(
+            {'error': f'Ошибка на сервере: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+# @permission_classes([IsAdminUser])
+def api_setup_suz_account(request):
+    """Создает или обновляет активную запись СУЗ на основе выбранных данных."""
+    try:
+        data = request.data
+        serial_number = data.get('serial_number')
+        oms_id = data.get('oms_id')
+        device_name = data.get('device_name')
+        connection_identifier = data.get('connection_identifier')
+
+        inn = data.get('inn', '000000000000')  # Пустой ИНН при отсутствии его на фронте.
+
+        certs = get_list_certificates()
+        cert_info = next((c for c in certs if c['serial_number'] == serial_number), None)
+
+        if not cert_info:
+            return Response(
+                {
+                    'error': 'Сертификат не найден или недействителен'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Парсинг дат из строки "ДД-ММ-ГГГГ"
+        valid_from = datetime.strptime(cert_info['valid_from'], "%d-%m-%Y")
+        valid_to = datetime.strptime(cert_info['valid_for'], "%d-%m-%Y")
+
+        account, created = SUZAccount.objects.update_or_create(
+            serial_number=serial_number,
+            defaults={
+                'is_active': True,
+                'certificate_name': cert_info['fio'],
+                'inn': inn,
+                'valid_from': valid_from,
+                'valid_to': valid_to,
+                'oms_id': oms_id,
+                'device_name': device_name,
+                'connection_identifier': connection_identifier,
+            }
+        )
+
+        return Response(
+            {
+                'success': True,
+                'message': 'СУЗ успешно настроен'
+            },
+            status=status.HTTP_200_OK
+        )
+
+    except Exception as e:
+        return Response(
+            {'error': str(e)
+             },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+# @permission_classes([IsAdminUser])
+def api_reset_suz_account(request):
+    """Деактивирует текущую активную запись СУЗ."""
+    SUZAccount.objects.filter(is_active=True).update(is_active=False)
+    return Response(
+        {
+            'success': True,
+            'message': 'Настройки СУЗ сброшены'
+        },
+        status=status.HTTP_200_OK
+    )
