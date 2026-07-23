@@ -49,6 +49,9 @@ class SUZUrls:
         self.reservation_party = f"{self.DOMAIN_TRUE_API}/api/v3/true-api/party-numbers/reserve"
         self.get_all_reserved_party = f"{self.DOMAIN_TRUE_API}/api/v3/true-api/party-numbers/list"
 
+        # --- Эндпоинты для получения клиентского токена (markirovka / markirovka.sandbox) ---
+        self.auth_key = f"{self.true_api}/auth/key"
+
         # --- Эндпоинты Молочной продукции (milk / milk.sandbox) ---
         self.create_document_milk = f"{self.DOMAIN_MILK}/lk/documents/create"
 

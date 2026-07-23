@@ -14,6 +14,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from app_cz.serializers import CISCodeSerializer, UIPSerializer, ProductionPartySerializer
 from app_cz.models import CISCode, SUZAccount
+from app_cz.services.suz_client import get_true_api_auth_key
 
 from app_uip.models import UIP, ProductionParty
 
@@ -152,3 +153,25 @@ def api_reset_suz_account(request):
         },
         status=status.HTTP_200_OK
     )
+
+@api_view(['GET'])
+# @permission_classes([IsAdminUser])
+def api_get_auth_key(request):
+    """
+    API-эндпоинт для получения ключа аутентификации TrueAPI.
+    Может использоваться фронтендом или другими внутренними сервисами.
+    """
+    try:
+        auth_data = get_true_api_auth_key()
+
+        return Response({
+            'uuid': auth_data.get('uuid'),
+            'data': auth_data.get('data')
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        },
+            status=status.HTTP_502_BAD_GATEWAY
+        )

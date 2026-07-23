@@ -17,4 +17,5 @@ urlpatterns = [
     path('api/get-suz-certificates/', view=views.api_get_suz_certificates, name='api-get-suz-certificates'),
     path('api/setup-suz-account/', view=views.api_setup_suz_account, name='api-setup-suz-account'),
     path('api/reset-suz-account/', view=views.api_reset_suz_account, name='api-reset-suz-account'),
+    path('api/get-auth-key/', view=views.api_get_auth_key, name='api-get-auth-key')
 ]
