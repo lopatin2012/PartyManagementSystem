@@ -2,8 +2,11 @@
 
 import logging
 from datetime import datetime
+import base64
+import json
 
 from app_cz.enums import Signature
+from app_cz.models import SUZAccount
 
 logger = logging.getLogger(__name__)
 
@@ -88,4 +91,120 @@ def get_list_certificates() -> list:
                 oStore.Close()
             except:
                 pass
+        pythoncom.CoUninitialize()
+
+def attached_signed_data(row_data: str) -> tuple[str, str]:
+    """
+    Создать прикреплённую подпись для данных.
+    :param row_data:
+    :return:
+    """
+
+    # Инициализация COM-библиотеки
+    pythoncom.CoInitialize()
+
+    try:
+        obj_account_suz = SUZAccount.objects.get(is_active=True)
+        # Ищем сертификат в хранилище
+        oCert = None
+        oStore = win32com.client.Dispatch("CAdESCOM.Store")
+        oStore.Open(
+            Signature.CAPICOM_CURRENT_USER_STORE.value,
+            Signature.CAPICOM_MY_STORE.value,
+            Signature.CAPICOM_STORE_OPEN_MAXIMUM_ALLOWED.value,
+        )
+        for val in oStore.Certificates:
+            if val.SerialNumber == obj_account_suz.serial_number.upper():
+                oCert = val
+        oStore.Close()
+        oSigner = win32com.client.Dispatch("CAdESCOM.CPSigner")
+        if not oCert:
+            raise ValueError('Необходимая подпись для работы отсутствует')
+
+        oSigner.Certificate = oCert
+        oSigningTimeAttr = win32com.client.Dispatch("CAdESCOM.CPAttribute")
+        oSigningTimeAttr.Name = 0
+        oSigningTimeAttr.Value = datetime.now()
+        oSigner.AuthenticatedAttributes2.Add(oSigningTimeAttr)
+        oSignedData = win32com.client.Dispatch("CAdESCOM.CadesSignedData")
+        oSignedData.ContentEncoding = 1
+        oSignedData.Content = base64.b64encode(row_data.encode('utf-8')).decode('ascii')
+        sSignedData = oSignedData.SignCades(
+            oSigner, Signature.CADES_BES.value,
+            False, Signature.CAPICOM_ENCODE_BASE64.value
+        )
+        # Удаляем из подписи символы переноса строки, иначе не вставить в заголовок запроса.
+        sSignedData = sSignedData.replace('\r', '')
+        sSignedData = sSignedData.replace('\n', '')
+
+        return row_data, sSignedData
+
+    except Exception as e:
+        logger.error(f"Ошибка при создании прикреплённой подписи: {e}")
+        raise
+
+    finally:
+        pythoncom.CoUninitialize()
+
+def unpinned_signed_data(row_data: str) -> tuple[str, str]:
+    """
+    Подписываем данные откреплённой подписью.
+    Возвращает подписанные данные и откреплённую подпись.
+    :param row_data:
+    :return:
+    """
+    # Инициализация COM-библиотеки
+    pythoncom.CoInitialize()
+
+    try:
+
+        obj_account_suz = SUZAccount.objects.get(is_active=True)
+        # Ищем сертификат в хранилище
+        oCert = None
+        oStore = win32com.client.Dispatch("CAdESCOM.Store")
+        oStore.Open(
+            Signature.CAPICOM_CURRENT_USER_STORE.value,
+            Signature.CAPICOM_MY_STORE.value,
+            Signature.CAPICOM_STORE_OPEN_MAXIMUM_ALLOWED.value,
+        )
+        for val in oStore.Certificates:
+            if val.SerialNumber.upper() == obj_account_suz.serial_number.upper():
+                oCert = val
+        oStore.Close()
+        if not oCert:
+            raise ValueError('Необходимая подпись для работы отсутствует')
+
+        oSigner = win32com.client.Dispatch("CAdESCOM.CPSigner", pythoncom.CoInitialize())
+        oSigner.Certificate = oCert
+
+        # Строка JSON БЕЗ ПРОБЕЛОВ
+        if isinstance(row_data, (dict, list)):
+            message = json.dumps(row_data, separators=(',', ':'), ensure_ascii=False)
+        else:
+            # Fallback, если передана уже строка
+            message = str(row_data).replace(' ', '\u0020')
+
+        message_bytes = message.encode()
+        base64_bytes = base64.b64encode(message_bytes)
+        base64_message = base64_bytes.decode()
+
+        signedData = win32com.client.Dispatch("CAdESCOM.CadesSignedData", pythoncom.CoInitialize())
+        signedData.ContentEncoding = 1
+        signedData.Content = base64_message
+        sSignedData = signedData.SignCades(
+            oSigner, Signature.CADES_BES.value,
+            True, Signature.CAPICOM_ENCODE_BASE64.value
+        )
+
+        # Удаляем из подписи символы переноса строки, иначе не вставить в заголовок запроса.
+        sSignedData = sSignedData.replace('\r', '')
+        sSignedData = sSignedData.replace('\n', '')
+
+        return row_data, sSignedData
+
+    except Exception as e:
+        logger.error(f"Ошибка при создании откреплённой подписи: {e}")
+        raise
+
+    finally:
         pythoncom.CoUninitialize()
