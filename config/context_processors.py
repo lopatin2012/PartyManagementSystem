@@ -40,10 +40,6 @@ def service_status_info(request):
 
     return {
         'status_suz': suz_status,
-        'status_signature': {
-            'is_ok': True,
-            'message': 'Служба подписи работает'
-        },
         'status_factories': {
             'is_ok': True,
             'workshops': [

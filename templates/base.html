@@ -74,21 +74,7 @@
             </div>
         </div>
 
-        <!-- 2. Служба подписи -->
-        <div class="status-card {% if status_signature.is_ok %}status-success{% else %}status-danger{% endif %}">
-            <div class="status-header">
-                <span class="status-icon"></span>
-                <span class="status-title">Служба ЭЦП</span>
-            </div>
-            <div class="status-body">
-                <p class="status-text">{{ status_signature.message }}</p>
-                <span class="status-badge-small {% if status_signature.is_ok %}status-success{% else %}status-danger{% endif %}">
-                    {% if status_signature.is_ok %}Работает{% else %}Остановлена{% endif %}
-                </span>
-            </div>
-        </div>
-
-        <!-- 3. Молвест.Маркировка (Заводы) -->
+        <!-- 2. Молвест.Маркировка (Заводы) -->
         <div class="status-card {% if status_factories.is_ok %}status-success{% else %}status-danger{% endif %}">
             <div class="status-header">
                 <span class="status-icon"></span>
@@ -106,7 +92,7 @@
             </div>
         </div>
 
-        <!-- 4. 1С: Предприятие -->
+        <!-- 3. 1С: Предприятие -->
         <div class="status-card {% if status_1c.is_ok %}status-success{% else %}status-danger{% endif %}">
             <div class="status-header">
                 <span class="status-icon"></span>
