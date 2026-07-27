@@ -36,4 +36,10 @@ urlpatterns = [
         view=views.api_close_party_reservation,
         name='close-party-reservation'
     ),
+
+    path(
+        'api/codes/sync-task/',
+        view=views.api_sync_codes_task,
+        name='api-sync-codes-task'
+    ),
 ]

@@ -3,6 +3,7 @@
 from rest_framework import serializers
 from app_cz.models import CISCode
 from app_cz.enums import TypeProduct
+from app_factory.models import PackagingLevelChoices
 from app_uip.models import UIP, ProductionParty
 
 
@@ -83,3 +84,30 @@ class ClosePartySerializer(serializers.Serializer):
     cis = serializers.CharField(min_length=31, max_length=50)
     batch_number = serializers.CharField(min_length=21, max_length=32)
 
+
+class SyncCodesTaskSerializer(serializers.Serializer):
+    """Для синхронизации кодов cis."""
+
+    url = serializers.URLField(
+        help_text="Базовый URL API рабочего проекта (например, http://192.168.1.100:8000)"
+    )
+    task_id = serializers.UUIDField(
+        help_text="UUID задания (Task)"
+    )
+    production_party_id = serializers.UUIDField(
+        help_text="UUID производственной партии"
+    )
+    packaging_id = serializers.UUIDField(
+        help_text="UUID упаковки продукта (GTIN)"
+    )
+    token = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text="Токен авторизации (опционально)"
+    )
+    level = serializers.IntegerField(
+        required=False,
+        default=PackagingLevelChoices.UNIT,
+        help_text="Уровень упаковки (по умолчанию UNIT)"
+    )

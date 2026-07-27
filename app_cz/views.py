@@ -19,9 +19,14 @@ from app_cz.services.party_service import (
     generate_party_numbers,
     reserve_parties_honest_sign,
     get_all_reserved_parties,
-    close_party_reservation
+    close_party_reservation,
 )
-from app_cz.serializers import GeneratePartySerializer, ReservePartySerializer, ClosePartySerializer
+from app_cz.services.code_sync import sync_codes_task
+from app_cz.serializers import (
+    GeneratePartySerializer, ReservePartySerializer, ClosePartySerializer, SyncCodesTaskSerializer
+)
+
+from app_factory.models import PackagingLevelChoices
 
 from app_uip.models import UIP, ProductionParty
 
@@ -314,6 +319,31 @@ def api_close_party_reservation(request):
         batch_number=serializer.validated_data['party_number'],
     )
 
+    if result.get('has_error'):
+        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(result, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def api_sync_codes_task(request):
+    """
+    API для синхронизации кодов из рабочего проекта.
+    """
+    # Валидация входных данных.
+    serializer = SyncCodesTaskSerializer(data=request.data)
+
+    if not serializer.is_valid():
+        return Response({
+            'has_error': True,
+            'message': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    # 2. Вызов сервиса с распаковкой проверенных данных.
+    result = sync_codes_task(**serializer.validated_data)
+
+    # 3. Возврат результата.
     if result.get('has_error'):
         return Response(result, status=status.HTTP_400_BAD_REQUEST)
 
