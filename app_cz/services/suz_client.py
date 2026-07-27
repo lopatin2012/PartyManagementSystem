@@ -14,6 +14,7 @@ from app_helper.sign_helper import attached_signed_data, unpinned_signed_data
 
 logger = logging.getLogger(__name__)
 
+
 def get_true_api_auth_key() -> dict:
     """
     Получает uuid и data для последующей подписи и получения токена.
@@ -43,9 +44,10 @@ def get_true_api_auth_key() -> dict:
         logger.error("Некорректный JSON в ответе от TrueAPI")
         raise Exception("Сервер Честного Знака вернул некорректные данные.")
 
+
 def get_true_api_session_token() -> dict:
     """
-    Получает базовый токен сессии TrueAPI (unitedToken=False).
+    Получает базовый токен сессии TrueAPI.
     Может потребоваться для некоторых специфичных методов API.
     """
     try:

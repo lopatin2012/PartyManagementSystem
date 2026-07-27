@@ -17,7 +17,7 @@ class PartyStatusChoices(models.TextChoices):
     DRAFT = 'draft', 'Черновик, не отправлен в ЧЗ'
     RESERVED_CZ = 'reserved_cz', 'Зарезервирован в ЧЗ (сгенерирован)'
     RESERVED_LOCAL = 'reserved_local', 'Зарезервирован в ЧЗ (собственный)'
-    ACTIVE = 'active', 'Отчёт о нанесении отправлен, партия в работе'
+    ACTIVE = 'active', 'Отчёт о нанесении отправлен, партия зарегистрирована'
     CLOSED = 'closed', 'Партия закрыта'
     ARCHIVE = 'archive', 'В архиве'
 

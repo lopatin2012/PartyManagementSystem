@@ -18,5 +18,22 @@ urlpatterns = [
     path('api/setup-suz-account/', view=views.api_setup_suz_account, name='api-setup-suz-account'),
     path('api/reset-suz-account/', view=views.api_reset_suz_account, name='api-reset-suz-account'),
     path('api/get-auth-key/', view=views.api_get_auth_key, name='api-get-auth-key'),
-    path('api/refresh-suz-token/', view=views.api_refresh_suz_token, name='api-refresh-suz-token')
+    path('api/refresh-suz-token/', view=views.api_refresh_suz_token, name='api-refresh-suz-token'),
+    # УИП.
+    # Генерация и резервирование номера партии на стороне ЧЗ.
+    path('api/generate-parties/', view=views.api_generate_parties, name='api-generate-parties'),
+    # Резервирование своего номера партии.
+    path('api/reserve-parties/', view=views.api_reserve_parties, name='api-reserve-parties'),
+    # Получение всех зарезервированных партий.
+    path(
+        'api/get-all-reserved-parties/',
+        view=views.api_get_all_reserved_parties,
+        name='get-all-reserved-parties'
+    ),
+    # Снятие с резерва партии.
+    path(
+        'api/close-party-reservation/',
+        view=views.api_close_party_reservation,
+        name='close-party-reservation'
+    ),
 ]

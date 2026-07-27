@@ -15,6 +15,13 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from app_cz.serializers import CISCodeSerializer, UIPSerializer, ProductionPartySerializer
 from app_cz.models import CISCode, SUZAccount
 from app_cz.services.suz_client import get_true_api_auth_key, refresh_suz_dynamic_token
+from app_cz.services.party_service import (
+    generate_party_numbers,
+    reserve_parties_honest_sign,
+    get_all_reserved_parties,
+    close_party_reservation
+)
+from app_cz.serializers import GeneratePartySerializer, ReservePartySerializer, ClosePartySerializer
 
 from app_uip.models import UIP, ProductionParty
 
@@ -154,6 +161,7 @@ def api_reset_suz_account(request):
         status=status.HTTP_200_OK
     )
 
+
 @api_view(['GET'])
 # @permission_classes([IsAdminUser])
 def api_get_auth_key(request):
@@ -179,6 +187,7 @@ def api_get_auth_key(request):
             },
             status=status.HTTP_502_BAD_GATEWAY
         )
+
 
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
@@ -214,3 +223,98 @@ def api_refresh_suz_token(request):
             },
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+# ==========================================
+# Функции для взаимодействия с УИП. Только админы или авторизованные системы могут вызывать эти методы ЧЗ.
+# ==========================================
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def api_generate_parties(request):
+    """Внешний API для генерации номеров партий в Честном Знаке."""
+    serializer = GeneratePartySerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(
+            {
+                'is_error': True,
+                'message_error': serializer.errors
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    result = generate_party_numbers(
+        party_info_list=serializer.validated_data['party_info_list'],
+        product_group=serializer.validated_data['product_group']
+    )
+
+    if result.get('is_error'):
+        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(result, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def api_reserve_parties(request):
+    """Внешний API для резервирования своих номеров партий в Честном Знаке."""
+    serializer = ReservePartySerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(
+            {
+                'is_error': True,
+                'message_error': serializer.errors
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    result = reserve_parties_honest_sign(
+        product_group=serializer.validated_data['product_group'],
+        party_numbers=serializer.validated_data['party_numbers']
+    )
+
+    if result.get('is_error'):
+        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(result, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def api_get_all_reserved_parties(request):
+    """Внешний API для получения списка всех зарезервированных партий из ЧЗ."""
+    result = get_all_reserved_parties()
+
+    if result.get('is_error'):
+        return Response(
+            result,
+            status=status.HTTP_502_BAD_GATEWAY
+        )
+
+    return Response(result, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def api_close_party_reservation(request):
+    """Внешний API для снятия партии с резерва (через отчет о нанесении)."""
+    serializer = ClosePartySerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(
+            {
+                'has_error': True,
+                'message': serializer.errors
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Отправляем отчёт о нанесении
+    result = close_party_reservation(
+        cis=serializer.validated_data['cis'],
+        batch_number=serializer.validated_data['party_number'],
+    )
+
+    if result.get('has_error'):
+        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(result, status=status.HTTP_200_OK)
