@@ -389,5 +389,5 @@ def close_party_reservation(
         return {
             'has_error': True,
             'status_close': False,
-            'message': f'Внутренняя ошибка: {str}'
+            'message': f'Внутренняя ошибка: {str(e)}'
         }
