@@ -41,67 +41,6 @@ class UIPSerializer(serializers.ModelSerializer):
         ]
 
 
-class UIPDetailSerializer(serializers.ModelSerializer):
-    """Детальный сериализатор с полной информацией о производстве."""
-
-    # Статусы только словами.
-    status = serializers.CharField(source='get_status_display', read_only=True)
-    number_type_display = serializers.CharField(source='get_number_type_display', read_only=True)
-
-    # Продукт.
-    product_name = serializers.CharField(source='product_sku.name', read_only=True)
-    gtin = serializers.CharField(source='product_sku.product.packagings.first.gtin', read_only=True, allow_null=True)
-
-    # Производственные партии (может быть несколько).
-    production_parties = serializers.SerializerMethodField()
-
-    # Суммарные данные.
-    total_planned = serializers.IntegerField(source='planned_quantity', read_only=True)
-    total_produced = serializers.IntegerField(source='produced_quantity', read_only=True)
-
-    class Meta:
-        model = UIP
-        fields = [
-            'number', # Номер.
-            'status', # Текущий статус.
-            'number_type_display', #
-            'product_name', # Название продукта.
-            'gtin', # Gtin продукта.
-            'description', # Описание.
-            'total_planned', # Всего по плану нужно сделать на производстве в штуках.
-            'total_produced', # Всего было валидировано на производстве в штуках.
-            'created_at', # Дата создания.
-            'updated_at', # Дата обновления.
-            'closed_at', # Дата закрытия.
-            'archived_at', # Дата архивирования.
-            'production_parties' # Производственные партии. Детальная информация.
-        ]
-
-    def get_production_parties(self, obj):
-        """Возвращает список производственных партий с детальной информацией."""
-        parties = obj.production_parties.select_related(
-            'factory', 'workshop', 'line'
-        ).order_by('-created_at')
-
-        result = []
-        for party in parties:
-            result.append({
-                'internal_number': party.production_party, # Внутренний производственный номер.
-                'external_task_number': party.external_number_task, # Номер внешнего задания.
-                'factory_name': party.factory.name if party.factory else None, # Наименование завода.
-                'workshop_name': party.workshop.name if party.workshop else None, # Наименование цеха.
-                'line_name': party.line.name if party.line else None, # Наименование линии.
-                'planned_quantity': party.planned_quantity, # План в штуках.
-                'produced_quantity': party.produced_quantity, # План валидированных в штуках.
-                'production_start': party.production_datetime_start, # Дата запуска.
-                'production_end': party.production_datetime_end, # Дата окончания.
-                'marking_datetime': party.marking_datetime, # Дата маркировки.
-                'expiration_datetime': party.expiration_datetime, # Срок годности.
-                'created_at': party.created_at # Дата создания производственной партии.
-            })
-        return result
-
-
 class ProductionPartySerializer(serializers.ModelSerializer):
     """Сериализатор для производственных партий."""
     uip_number = serializers.CharField(source='uip.number', read_only=True)
@@ -220,3 +159,327 @@ class CISCodeDetailSerializer(serializers.ModelSerializer):
             'gtin',  # Gtin кода.
             'product_name'  # Наименование продукта.
         ]
+
+
+class ReservedPartyProductSerializer(serializers.Serializer):
+    """Вложенный сериализатор для продукта."""
+    id = serializers.UUIDField()
+    gtin = serializers.CharField()
+    name = serializers.CharField()
+    articles = serializers.ListField(child=serializers.CharField())
+
+
+class ReservedPartyWorkshopSerializer(serializers.Serializer):
+    """Вложенный сериализатор для цеха."""
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+
+
+class ReservedPartyLineSerializer(serializers.Serializer):
+    """Вложенный сериализатор для линии."""
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+
+
+class ReservedPartyListSerializer(serializers.ModelSerializer):
+    """Сериализатор для списка зарезервированных партий."""
+
+    party_number = serializers.CharField(source='number')
+    party_number_type = serializers.CharField(source='get_number_type_display')
+    status = serializers.CharField(source='get_status_display')
+
+    product = serializers.SerializerMethodField()
+    workshop = serializers.SerializerMethodField()
+    lines = serializers.SerializerMethodField()
+    marking_date = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UIP
+        fields = [
+            'id',
+            'party_number',
+            'party_number_type',
+            'status',
+            'product',
+            'workshop',
+            'lines',
+            'marking_date',
+            'created_at',
+            'updated_at'
+        ]
+
+    def get_product(self, obj):
+        """Продукт с GTIN и списком артикулов."""
+        sku = obj.product_sku
+        if not sku:
+            return None
+
+        product = sku.product
+        articles = list(
+            product.skus.filter(is_active=True).values_list('sku_code', flat=True)
+        )
+
+        # GTIN берём из первой активной упаковки.
+        gtin = product.packagings.filter(is_active=True).values_list('gtin', flat=True).first()
+
+        return {
+            'id': str(product.id),
+            'gtin': gtin or '',
+            'name': product.name,
+            'articles': articles
+        }
+
+    def get_workshop(self, obj):
+        """Цех из первой производственной партии."""
+        party = obj.production_parties.select_related('workshop').first()
+        if party and party.workshop:
+            return {
+                'id': str(party.workshop.id),
+                'name': party.workshop.name
+            }
+        return None
+
+    def get_lines(self, obj):
+        """Все уникальные линии из производственных партий."""
+        parties = obj.production_parties.select_related('line').all()
+        lines_map = {}
+        for party in parties:
+            if party.line and party.line.id not in lines_map:
+                lines_map[party.line.id] = {
+                    'id': str(party.line.id),
+                    'name': party.line.name
+                }
+        return list(lines_map.values())
+
+    def get_marking_date(self, obj):
+        """Дата маркировки из первой партии (формат dd.mm.yyyy)."""
+        party = obj.production_parties.first()
+        if party and party.marking_datetime:
+            return party.marking_datetime.strftime('%d.%m.%Y')
+        return None
+
+
+class ReservedPartyDetailSerializer(serializers.ModelSerializer):
+    """
+    Детальный сериализатор УИП с полной информацией:
+    - продукт, цех, линии
+    - производственные партии
+    - статистика кодов и уровень агрегации
+    """
+
+    # === Основная информация ===
+    party_number = serializers.CharField(source='number')
+    status = serializers.CharField(source='get_status_display')
+    number_type_display = serializers.CharField(source='get_number_type_display')
+    description = serializers.CharField(read_only=True)
+
+    # === Продукт ===
+    product = serializers.SerializerMethodField()
+
+    # === Место производства ===
+    workshop = serializers.SerializerMethodField()
+    lines = serializers.SerializerMethodField()
+    marking_date = serializers.SerializerMethodField()
+
+    # === Суммарные данные ===
+    total_planned = serializers.IntegerField(source='planned_quantity', read_only=True)
+    total_produced = serializers.IntegerField(source='produced_quantity', read_only=True)
+
+    # === Статистика кодов ===
+    level_aggregation = serializers.SerializerMethodField()
+    codes_total = serializers.SerializerMethodField()
+
+    # === Производственные партии ===
+    production_parties = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UIP
+        fields = [
+            'id',
+            'party_number',
+            'status',
+            'number_type_display',
+            'description',
+            'product',
+            'workshop',
+            'lines',
+            'marking_date',
+            'total_planned',
+            'total_produced',
+            'level_aggregation',
+            'codes_total',
+            'production_parties',
+            'created_at',
+            'updated_at',
+            'closed_at',
+            'archived_at'
+        ]
+
+    # === Методы для получения данных ===
+
+    def get_product(self, obj):
+        """Продукт с GTIN и списком артикулов."""
+        sku = obj.product_sku
+        if not sku:
+            return None
+
+        product = sku.product
+        articles = list(
+            product.skus.filter(is_active=True).values_list('sku_code', flat=True)
+        )
+        gtin = product.packagings.filter(is_active=True).values_list('gtin', flat=True).first()
+
+        return {
+            'id': str(product.id),
+            'gtin': gtin or '',
+            'name': product.name,
+            'articles': articles
+        }
+
+    def get_workshop(self, obj):
+        """Цех из первой производственной партии."""
+        party = obj.production_parties.select_related('workshop').first()
+        if party and party.workshop:
+            return {
+                'id': str(party.workshop.id),
+                'name': party.workshop.name
+            }
+        return None
+
+    def get_lines(self, obj):
+        """Все уникальные линии из производственных партий."""
+        parties = obj.production_parties.select_related('line').all()
+        lines_map = {}
+        for party in parties:
+            if party.line and party.line.id not in lines_map:
+                lines_map[party.line.id] = {
+                    'id': str(party.line.id),
+                    'name': party.line.name
+                }
+        return list(lines_map.values())
+
+    def get_marking_date(self, obj):
+        """Дата маркировки из первой партии (формат dd.mm.yyyy)."""
+        party = obj.production_parties.first()
+        if party and party.marking_datetime:
+            return party.marking_datetime.strftime('%d.%m.%Y')
+        return None
+
+    def _get_all_codes(self, obj):
+        """Кэшированный запрос всех кодов для УИП."""
+        if not hasattr(obj, '_cached_codes'):
+            obj._cached_codes = list(
+                CISCode.objects.filter(
+                    production_party__uip=obj
+                ).values('code', 'level')
+            )
+        return obj._cached_codes
+
+    def get_level_aggregation(self, obj):
+        """Максимальный уровень агрегации среди всех кодов."""
+        codes = self._get_all_codes(obj)
+        if not codes:
+            return 0
+        return max(c['level'] for c in codes)
+
+    def get_codes_total(self, obj):
+        """Количество кодов по уровням."""
+        codes = self._get_all_codes(obj)
+        totals = {}
+        for c in codes:
+            key = f"level{c['level']}_total"
+            totals[key] = totals.get(key, 0) + 1
+        return totals
+
+    def get_production_parties(self, obj):
+        """Детальная информация о всех производственных партиях."""
+        parties = obj.production_parties.select_related(
+            'factory', 'workshop', 'line'
+        ).order_by('-created_at')
+
+        result = []
+        for party in parties:
+            result.append({
+                'internal_number': party.production_party,  # Внутренний производственный номер.
+                'external_task_number': party.external_number_task,  # Номер внешнего задания.
+                'factory_name': party.factory.name if party.factory else None,  # Наименование завода.
+                'workshop_name': party.workshop.name if party.workshop else None,  # Наименование цеха.
+                'line_name': party.line.name if party.line else None,  # Наименование линии.
+                'planned_quantity': party.planned_quantity,  # План в штуках.
+                'produced_quantity': party.produced_quantity,  # План валидированных в штуках.
+                'production_start': party.production_datetime_start,  # Дата запуска.
+                'production_end': party.production_datetime_end,  # Дата окончания.
+                'marking_datetime': party.marking_datetime,  # Дата маркировки.
+                'expiration_datetime': party.expiration_datetime,  # Срок годности.
+                'created_at': party.created_at  # Дата создания производственной партии.
+            })
+        return result
+
+
+class CodeTreeNodeSerializer(serializers.Serializer):
+    """Рекурсивный сериализатор для дерева кодов."""
+    code = serializers.CharField()
+    level = serializers.CharField(source='get_level_display')
+    children = serializers.SerializerMethodField()
+
+    def get_children(self, obj):
+        """Рекурсивно строит дерево вложенных кодов."""
+        children = obj.children.all().select_related('product_packaging')
+        if not children:
+            return []
+        return CodeTreeNodeSerializer(children, many=True).data
+
+
+class ReservedPartyCodesSerializer(serializers.ModelSerializer):
+    """Сериализатор для дерева кодов УИП."""
+
+    party_number = serializers.CharField(source='number')
+    status = serializers.CharField(source='get_status_display')
+    level_aggregation = serializers.SerializerMethodField()
+    codes = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UIP
+        fields = [
+            'id',
+            'party_number',
+            'status',
+            'level_aggregation',
+            'codes'
+        ]
+
+    def get_level_aggregation(self, obj):
+        from django.db import models
+
+        codes = CISCode.objects.filter(production_party__uip=obj)
+        max_level = codes.aggregate(max_level=models.Max('level'))['max_level']
+        return max_level or 0
+
+    def get_codes(self, obj):
+        """
+        Строит дерево кодов, сгруппированное по уровням.
+        Возвращает структуру: { "level3": [...], "level2": [...], "level1": [...] }
+        """
+        from django.db import models as db_models
+
+        all_codes = CISCode.objects.filter(
+            production_party__uip=obj
+        ).select_related('product_packaging').prefetch_related('children')
+
+        # Находим максимальный уровень
+        max_level = all_codes.aggregate(m=db_models.Max('level'))['m'] or 0
+
+        if max_level == 0:
+            return {}
+
+        # Группируем коды по уровням (от высшего к низшему)
+        result = {}
+        for lvl in range(max_level, 0, -1):
+            level_codes = all_codes.filter(level=lvl)
+            if level_codes.exists():
+                level_name = f"level{lvl}"
+                result[level_name] = CodeTreeNodeSerializer(
+                    level_codes, many=True
+                ).data
+
+        return result

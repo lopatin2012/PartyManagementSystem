@@ -1,15 +1,17 @@
 # app_cz/views.py
 
+import uuid
 from datetime import datetime
 import logging
 
 from django.shortcuts import render
+from django.db.models import Q
 from django.utils import timezone
 
-from rest_framework import viewsets, filters
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework import viewsets, filters, status
+from rest_framework.decorators import api_view, action, permission_classes
+from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
-from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 
 from app_cz.serializers import CISCodeSerializer, UIPSerializer, ProductionPartySerializer
@@ -23,8 +25,21 @@ from app_cz.services.party_service import (
 )
 from app_cz.services.code_sync import sync_codes_task
 from app_cz.serializers import (
-    GeneratePartySerializer, ReservePartySerializer, ClosePartySerializer, SyncCodesTaskSerializer,
-    CISCodeDetailSerializer, UIPDetailSerializer
+    # Взаимодействие УИП через ЧЗ.
+    GeneratePartySerializer, ReservePartySerializer, ClosePartySerializer,
+
+    # Синхронизация кодов из задания.
+    SyncCodesTaskSerializer,
+    # Подробная информация о коде.
+    CISCodeDetailSerializer,
+    # Подробная информация об УИП.
+    UIPDetailSerializer,
+
+    # Endpoint для внешних информационных систем по зарезервированным партиям (УИП)
+    # с большей информацией и возможностями.
+    ReservedPartyListSerializer,
+    ReservedPartyDetailSerializer,
+    ReservedPartyCodesSerializer
 )
 
 from app_uip.models import UIP, ProductionParty, PartyStatusChoices
@@ -67,64 +82,154 @@ class CISCodeViewSet(viewsets.ReadOnlyModelViewSet):
     # permission_classes = [AllowAny]
 
 
-class UIViewSet(viewsets.ReadOnlyModelViewSet):
-    """API для просмотра УИП."""
+class ReservedPartyViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    API для работы с зарезервированными партиями (УИП).
 
-    lookup_field = 'number'
-    serializer_class = UIPSerializer
+    GET /api/v1/reserved_parties/              — список с фильтрацией
+    GET /api/v1/reserved_parties/{id_or_number}/ — детальная информация (с кодами и партиями)
+    GET /api/v1/reserved_parties/{id_or_number}/codes/ — дерево кодов
+    """
 
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['=number', 'number__icontains']
-    ordering_fields = ['created_at', 'status']
-    ordering = ['-created_at']
+    permission_classes = [IsAuthenticated]
 
     def get_serializer_class(self):
-        """Детальный сериализатор только для просмотра одного УИП."""
         if self.action == 'retrieve':
-            return UIPDetailSerializer
-        return self.serializer_class
+            return ReservedPartyDetailSerializer
+        if self.action == 'codes':
+            return ReservedPartyCodesSerializer
+        return ReservedPartyListSerializer
+
+    def get_object(self):
+        """Умный lookup: UUID или номер УИП."""
+        queryset = self.filter_queryset(self.get_queryset())
+        lookup_value = self.kwargs.get('pk')
+
+        if not lookup_value:
+            raise NotFound("Не указан идентификатор")
+
+        # Проверяем, является ли строка валидным UUID
+        try:
+            uuid.UUID(lookup_value)
+            obj = queryset.filter(id=lookup_value).first()
+        except (ValueError, AttributeError):
+            obj = queryset.filter(number=lookup_value).first()
+
+        if not obj:
+            raise NotFound(f"УИП не найден: {lookup_value}")
+
+        self.check_object_permissions(self.request, obj)
+        return obj
 
     def get_queryset(self):
-        """
-        Оптимизированный queryset:
-        - По умолчанию показывает только УИП в резерве (RESERVED_CZ, RESERVED_LOCAL)
-        - Через ?status=<value> можно переопределить фильтр
-        - production_parties подгружаются ТОЛЬКО при запросе одного УИП (retrieve)
-        """
-        # Базовый queryset с минимальными связями.
-        qs = UIP.objects.select_related('product_sku__product')
+        """Базовый queryset с фильтрацией."""
+        qs = UIP.objects.select_related(
+            'product_sku__product'
+        ).prefetch_related(
+            'production_parties__factory',
+            'production_parties__workshop',
+            'production_parties__line',
+            'product_sku__product__skus',
+            'product_sku__product__packagings'
+        )
 
-        status_param = self.request.query_params.get('status')
+        params = self.request.query_params
 
+        # === ФИЛЬТР ПО СТАТУСУ ===
+        status_param = params.get('status')
         if status_param:
-            if status_param == 'all':
-                # Без фильтра — показать все.
-                pass
-            elif ',' in status_param:
-                # Несколько статусов через запятую.
+            if status_param != 'all':
                 statuses = [s.strip() for s in status_param.split(',')]
                 qs = qs.filter(status__in=statuses)
-            else:
-                # Один статус.
-                qs = qs.filter(status=status_param)
         else:
-            # Отображать УИП только в резерве.
             qs = qs.filter(
                 status__in=[
                     PartyStatusChoices.RESERVED_CZ,
                     PartyStatusChoices.RESERVED_LOCAL,
+                    PartyStatusChoices.ACTIVE,
                 ]
             )
 
-        # Если требуется отобразить детальную информацию об одном УИП.
-        if self.action == 'retrieve':
-            qs = qs.prefetch_related(
-                'production_parties__factory',
-                'production_parties__workshop',
-                'production_parties__line'
-            )
+        # === ФИЛЬТР ПО ДАТЕ МАРКИРОВКИ ===
+        marking_date = params.get('marking_date')
+        if marking_date:
+            try:
+                parsed = datetime.strptime(marking_date, '%d.%m.%Y')
+                qs = qs.filter(
+                    production_parties__marking_datetime__date=parsed.date()
+                )
+            except ValueError:
+                pass
 
-        return qs
+        marking_date_from = params.get('marking_date_from')
+        if marking_date_from:
+            try:
+                parsed = datetime.strptime(marking_date_from, '%d.%m.%Y')
+                qs = qs.filter(
+                    production_parties__marking_datetime__date__gte=parsed.date()
+                )
+            except ValueError:
+                pass
+
+        # === ФИЛЬТР ПО ВРЕМЕНИ МАРКИРОВКИ ===
+        marking_time = params.get('marking_time')
+        if marking_time:
+            try:
+                parsed_time = datetime.strptime(marking_time, '%H:%M').time()
+                qs = qs.filter(
+                    production_parties__marking_datetime__time=parsed_time
+                )
+            except ValueError:
+                pass
+
+        # === ФИЛЬТРЫ ПО СВЯЗЯМ ===
+        workshop_id = params.get('workshop_id')
+        if workshop_id:
+            qs = qs.filter(production_parties__workshop_id=workshop_id)
+
+        line_id = params.get('line_id')
+        if line_id:
+            qs = qs.filter(production_parties__line_id=line_id)
+
+        product_id = params.get('product_id')
+        if product_id:
+            qs = qs.filter(product_sku__product_id=product_id)
+
+        article = params.get('article')
+        if article:
+            qs = qs.filter(product_sku__sku_code__icontains=article)
+
+        # === ПОИСК ===
+        search = params.get('search')
+        if search:
+            qs = qs.filter(number__icontains=search)
+
+        # === СОРТИРОВКА ===
+        ordering = params.get('ordering')
+        if ordering:
+            ordering_map = {
+                'marking_date': 'production_parties__marking_datetime',
+                '-marking_date': '-production_parties__marking_datetime',
+                'party_number': 'number',
+                '-party_number': '-number',
+                'status': 'status',
+                '-status': '-status',
+                'created_at': 'created_at',
+                '-created_at': '-created_at',
+            }
+            real_ordering = ordering_map.get(ordering, ordering)
+            qs = qs.order_by(real_ordering)
+        else:
+            qs = qs.order_by('-created_at')
+
+        return qs.distinct()
+
+    @action(detail=True, methods=['get'], url_path='codes')
+    def codes(self, request, pk=None):
+        """GET /api/v1/reserved_parties/{id_or_number}/codes/"""
+        uip = self.get_object()
+        serializer = ReservedPartyCodesSerializer(uip)
+        return Response(serializer.data)
 
 
 class ProductionPartyViewSet(viewsets.ReadOnlyModelViewSet):
