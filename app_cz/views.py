@@ -23,10 +23,9 @@ from app_cz.services.party_service import (
 )
 from app_cz.services.code_sync import sync_codes_task
 from app_cz.serializers import (
-    GeneratePartySerializer, ReservePartySerializer, ClosePartySerializer, SyncCodesTaskSerializer
+    GeneratePartySerializer, ReservePartySerializer, ClosePartySerializer, SyncCodesTaskSerializer,
+    CISCodeDetailSerializer
 )
-
-from app_factory.models import PackagingLevelChoices
 
 from app_uip.models import UIP, ProductionParty
 
@@ -37,15 +36,33 @@ logger = logging.getLogger(__name__)
 
 class CISCodeViewSet(viewsets.ReadOnlyModelViewSet):
     """API для просмотра кодов маркировки (только чтение)."""
-    queryset = CISCode.objects.select_related(
-        'production_party__uip',
-        'product_packaging__product'
-    ).order_by('-created_at')
+
+    lookup_field = 'code'
+
     serializer_class = CISCodeSerializer
+
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['=code', 'code__istartswith']
     ordering_fields = ['created_at', 'cz_status', 'production_status']
     ordering = ['-created_at']
+
+    def get_serializer_class(self):
+        """Используем детальный сериализатор только при просмотре одного кода."""
+        if self.action == 'retrieve':
+            return CISCodeDetailSerializer
+        return self.serializer_class
+
+    def get_queryset(self):
+        """
+        Загружаем все связанные данные ОДНИМ SQL-запросом (JOIN).
+        """
+        return CISCode.objects.select_related(
+            'production_party__uip',
+            'production_party__factory',
+            'production_party__workshop',
+            'production_party__line',
+            'product_packaging__product'
+        )
 
     # permission_classes = [AllowAny]
 
