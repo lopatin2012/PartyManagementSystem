@@ -112,14 +112,16 @@ class SyncCodesTaskSerializer(serializers.Serializer):
         help_text="Уровень упаковки (по умолчанию UNIT)"
     )
 
+
 class CISCodeDetailSerializer(serializers.ModelSerializer):
-    """Детальный сериализатор для просмотра полной информации о коде."""
+    """Детальный сериализатор для просмотра полной информации о коде (только строки)."""
 
-    # Статусы (текстовое представление)
-    cz_status_display = serializers.CharField(source='get_cz_status_display', read_only=True)
-    production_status_display = serializers.CharField(source='get_production_status_display', read_only=True)
+    # Переопределяем поля для возврата текстового представления.
+    level = serializers.CharField(source='get_level_display', read_only=True)
+    cz_status = serializers.CharField(source='get_cz_status_display', read_only=True)
+    production_status = serializers.CharField(source='get_production_status_display', read_only=True)
 
-    # Данные УИП и Партии
+    # Данные УИП и Партии.
     uip_number = serializers.CharField(source='production_party.uip.number', read_only=True)
     external_task_number = serializers.CharField(source='production_party.external_number_task', read_only=True,
                                                  allow_null=True)
@@ -127,32 +129,30 @@ class CISCodeDetailSerializer(serializers.ModelSerializer):
     marking_datetime = serializers.DateTimeField(source='production_party.marking_datetime', read_only=True,
                                                  allow_null=True)
 
-    # Данные о месте производства (Завод, Цех, Линия)
+    # Данные о месте производства.
     factory_name = serializers.CharField(source='production_party.factory.name', read_only=True, allow_null=True)
     workshop_name = serializers.CharField(source='production_party.workshop.name', read_only=True, allow_null=True)
     line_name = serializers.CharField(source='production_party.line.name', read_only=True, allow_null=True)
 
-    # Данные об упаковке и продукте
+    # Данные об упаковке и продукте.
     gtin = serializers.CharField(source='product_packaging.gtin', read_only=True)
     product_name = serializers.CharField(source='product_packaging.product.name', read_only=True)
 
     class Meta:
         model = CISCode
         fields = [
-            'code', # Сам код.
-            'level', # Уровень вложенности кода.
-            'cz_status', # Статус в ЧЗ.
-            'cz_status_display', # Читаемый статус.
-            'production_status', # Статус на производстве.
-            'production_status_display', # Читаемый статус.
-            'created_at',  # Когда код был добавлен в систему
-            'marking_datetime',  # Когда была маркировка на линии (из партии)
-            'uip_number', # УИП.
-            'external_task_number', # Номер задания во внешней системе.
-            'internal_party_number', # Производственная партия.
-            'factory_name', # Наименование цеха.
-            'workshop_name', # Наименование завода.
-            'line_name', # Наименование линии.
-            'gtin', # GTIN продукта.
-            'product_name' # Наименование продукта.
+            'code',  # Сам код.
+            'level',  # Уровень вложенности.
+            'cz_status',  # Статус в ЧЗ.
+            'production_status',  # Статус на производстве.
+            'created_at',  # Дата и время добавления кода в локальную базу данных.
+            'marking_datetime',  # Дата маркировки.
+            'uip_number',  # Номер УИП.
+            'external_task_number',  # Номер задания во внешней системе.
+            'internal_party_number',  # Внутренний номер партии.
+            'factory_name',  # Название завода.
+            'workshop_name',  # Название цеха.
+            'line_name',  # Название линии.
+            'gtin',  # Gtin кода.
+            'product_name'  # Наименование продукта.
         ]

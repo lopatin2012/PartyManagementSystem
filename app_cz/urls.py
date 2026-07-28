@@ -6,9 +6,9 @@ from rest_framework.routers import DefaultRouter
 from app_cz import views
 
 router = DefaultRouter()
-router.register('codes', views.CISCodeViewSet, basename='api-codes')
-router.register('uips', views.UIViewSet, basename='api-uips')
-router.register('parties', views.ProductionPartyViewSet, basename='api-parties')
+router.register('v1/codes', views.CISCodeViewSet, basename='api-v1-codes')
+router.register('v1/uips', views.UIViewSet, basename='api-v1-uips')
+router.register('v1/parties', views.ProductionPartyViewSet, basename='api-v1-parties')
 
 urlpatterns = [
     # API endpoints.
