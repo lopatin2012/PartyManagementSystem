@@ -24,10 +24,10 @@ from app_cz.services.party_service import (
 from app_cz.services.code_sync import sync_codes_task
 from app_cz.serializers import (
     GeneratePartySerializer, ReservePartySerializer, ClosePartySerializer, SyncCodesTaskSerializer,
-    CISCodeDetailSerializer
+    CISCodeDetailSerializer, UIPDetailSerializer
 )
 
-from app_uip.models import UIP, ProductionParty
+from app_uip.models import UIP, ProductionParty, PartyStatusChoices
 
 from app_helper.sign_helper import get_list_certificates
 
@@ -68,13 +68,63 @@ class CISCodeViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class UIViewSet(viewsets.ReadOnlyModelViewSet):
-    """API для просмотра УИП (только чтение)."""
-    queryset = UIP.objects.select_related('product_sku__product').order_by('-created_at')
+    """API для просмотра УИП."""
+
+    lookup_field = 'number'
     serializer_class = UIPSerializer
+
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['number', 'number__icontains']
+    search_fields = ['=number', 'number__icontains']
     ordering_fields = ['created_at', 'status']
     ordering = ['-created_at']
+
+    def get_serializer_class(self):
+        """Детальный сериализатор только для просмотра одного УИП."""
+        if self.action == 'retrieve':
+            return UIPDetailSerializer
+        return self.serializer_class
+
+    def get_queryset(self):
+        """
+        Оптимизированный queryset:
+        - По умолчанию показывает только УИП в резерве (RESERVED_CZ, RESERVED_LOCAL)
+        - Через ?status=<value> можно переопределить фильтр
+        - production_parties подгружаются ТОЛЬКО при запросе одного УИП (retrieve)
+        """
+        # Базовый queryset с минимальными связями.
+        qs = UIP.objects.select_related('product_sku__product')
+
+        status_param = self.request.query_params.get('status')
+
+        if status_param:
+            if status_param == 'all':
+                # Без фильтра — показать все.
+                pass
+            elif ',' in status_param:
+                # Несколько статусов через запятую.
+                statuses = [s.strip() for s in status_param.split(',')]
+                qs = qs.filter(status__in=statuses)
+            else:
+                # Один статус.
+                qs = qs.filter(status=status_param)
+        else:
+            # Отображать УИП только в резерве.
+            qs = qs.filter(
+                status__in=[
+                    PartyStatusChoices.RESERVED_CZ,
+                    PartyStatusChoices.RESERVED_LOCAL,
+                ]
+            )
+
+        # Если требуется отобразить детальную информацию об одном УИП.
+        if self.action == 'retrieve':
+            qs = qs.prefetch_related(
+                'production_parties__factory',
+                'production_parties__workshop',
+                'production_parties__line'
+            )
+
+        return qs
 
 
 class ProductionPartyViewSet(viewsets.ReadOnlyModelViewSet):

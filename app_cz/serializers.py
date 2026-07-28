@@ -27,15 +27,79 @@ class CISCodeSerializer(serializers.ModelSerializer):
 class UIPSerializer(serializers.ModelSerializer):
     """Сериализатор для УИП."""
     product_name = serializers.CharField(source='product_sku.name', read_only=True)
-    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    status = serializers.CharField(source='get_status_display', read_only=True)
 
     class Meta:
         model = UIP
         fields = [
-            'id', 'number', 'number_type', 'status', 'status_display',
-            'product_name', 'planned_quantity', 'produced_quantity',
-            'created_at', 'updated_at'
+            'number',
+            'status',
+            'product_name',
+            'planned_quantity',
+            'produced_quantity',
+            'created_at'
         ]
+
+
+class UIPDetailSerializer(serializers.ModelSerializer):
+    """Детальный сериализатор с полной информацией о производстве."""
+
+    # Статусы только словами.
+    status = serializers.CharField(source='get_status_display', read_only=True)
+    number_type_display = serializers.CharField(source='get_number_type_display', read_only=True)
+
+    # Продукт.
+    product_name = serializers.CharField(source='product_sku.name', read_only=True)
+    gtin = serializers.CharField(source='product_sku.product.packagings.first.gtin', read_only=True, allow_null=True)
+
+    # Производственные партии (может быть несколько).
+    production_parties = serializers.SerializerMethodField()
+
+    # Суммарные данные.
+    total_planned = serializers.IntegerField(source='planned_quantity', read_only=True)
+    total_produced = serializers.IntegerField(source='produced_quantity', read_only=True)
+
+    class Meta:
+        model = UIP
+        fields = [
+            'number', # Номер.
+            'status', # Текущий статус.
+            'number_type_display', #
+            'product_name', # Название продукта.
+            'gtin', # Gtin продукта.
+            'description', # Описание.
+            'total_planned', # Всего по плану нужно сделать на производстве в штуках.
+            'total_produced', # Всего было валидировано на производстве в штуках.
+            'created_at', # Дата создания.
+            'updated_at', # Дата обновления.
+            'closed_at', # Дата закрытия.
+            'archived_at', # Дата архивирования.
+            'production_parties' # Производственные партии. Детальная информация.
+        ]
+
+    def get_production_parties(self, obj):
+        """Возвращает список производственных партий с детальной информацией."""
+        parties = obj.production_parties.select_related(
+            'factory', 'workshop', 'line'
+        ).order_by('-created_at')
+
+        result = []
+        for party in parties:
+            result.append({
+                'internal_number': party.production_party, # Внутренний производственный номер.
+                'external_task_number': party.external_number_task, # Номер внешнего задания.
+                'factory_name': party.factory.name if party.factory else None, # Наименование завода.
+                'workshop_name': party.workshop.name if party.workshop else None, # Наименование цеха.
+                'line_name': party.line.name if party.line else None, # Наименование линии.
+                'planned_quantity': party.planned_quantity, # План в штуках.
+                'produced_quantity': party.produced_quantity, # План валидированных в штуках.
+                'production_start': party.production_datetime_start, # Дата запуска.
+                'production_end': party.production_datetime_end, # Дата окончания.
+                'marking_datetime': party.marking_datetime, # Дата маркировки.
+                'expiration_datetime': party.expiration_datetime, # Срок годности.
+                'created_at': party.created_at # Дата создания производственной партии.
+            })
+        return result
 
 
 class ProductionPartySerializer(serializers.ModelSerializer):
