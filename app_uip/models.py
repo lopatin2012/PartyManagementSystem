@@ -137,6 +137,11 @@ class UIP(UUIDModel):
             PartyStatusChoices.ARCHIVED
         ]
 
+    @property
+    def gtin(self) -> str:
+        """GTIN — первые 14 символов номера УИП."""
+        return self.number[:14] if self.number else ''
+
 
 class ProductionParty(UUIDModel):
     """Производственная партия — задание на линии."""

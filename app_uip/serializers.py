@@ -68,6 +68,7 @@ class UIPActiveListSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'number',
+            'gtin',
             'status',
             'status_display',
             'product_name',

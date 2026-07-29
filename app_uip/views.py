@@ -1,11 +1,16 @@
 # app_uip/views.py
 
+from datetime import timedelta
+
+from django.utils import timezone
+from django.db.models import Q
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from app_uip.models import UIP
+from app_uip.models import UIP, PartyStatusChoices
 from app_uip.serializers import (
     UIPStatusSerializer,
     UIPBatchStatusSerializer,
@@ -93,23 +98,66 @@ class UIPStatusViewSet(viewsets.ViewSet):
     def active_list(self, request):
         """
         GET /api/v1/status_parties/active/
-        Список всех зарезервированных и зарегистрированных УИП.
+        Список всех действующих УИП.
+
+        По умолчанию: зарезервированные УИП + зарегистрированные за последние 7 дней.
         """
         queryset = UIP.objects.filter(
             status__in=UIP.ACTIVE_STATUSES
         ).select_related('product_sku').order_by('-created_at')
 
-        # Фильтры.
+        # Фильтры по продукту.
         product_id = request.query_params.get('product_id')
         if product_id:
             queryset = queryset.filter(product_sku__product_id=product_id)
 
+        product_article = request.query_params.get('product_article')
+        if product_article:
+            queryset = queryset.filter(product_sku__sku_code__icontains=product_article)
+
+        gtin = request.query_params.get('gtin')
+        if gtin:
+            queryset = queryset.filter(number__startswith=gtin)
+
         search = request.query_params.get('search')
         if search:
             queryset = queryset.filter(number__icontains=search)
+
+        # Фильтры по датам
+        production_date_from = request.query_params.get('production_date_from')
+        production_date_to = request.query_params.get('production_date_to')
+        reservation_date_from = request.query_params.get('reservation_date_from')
+        reservation_date_to = request.query_params.get('reservation_date_to')
+
+        # Применяем фильтры по датам, если указаны
+        if production_date_from:
+            queryset = queryset.filter(production_date__gte=production_date_from)
+        if production_date_to:
+            queryset = queryset.filter(production_date__lte=production_date_to)
+        if reservation_date_from:
+            queryset = queryset.filter(reservation_date__gte=reservation_date_from)
+        if reservation_date_to:
+            queryset = queryset.filter(reservation_date__lte=reservation_date_to)
+
+        # Если НЕ указаны фильтры по датам, применяем дефолтную логику:
+        # показать все зарезервированные + зарегистрированные за последние 7 дней.
+        if not (production_date_from or production_date_to or
+                reservation_date_from or reservation_date_to):
+            seven_days_ago = timezone.now().date() - timedelta(days=7)
+            queryset = queryset.filter(
+                Q(status__in=[
+                    PartyStatusChoices.RESERVED_CZ,
+                    PartyStatusChoices.RESERVED_LOCAL
+                ]) |
+                Q(
+                    status=PartyStatusChoices.REGISTERED,
+                    production_date__gte=seven_days_ago
+                )
+            )
 
         serializer = UIPActiveListSerializer(queryset, many=True)
         return Response({
             'count': queryset.count(),
             'result': serializer.data
         })
+
