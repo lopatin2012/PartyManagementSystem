@@ -14,12 +14,13 @@ party_number_validator = RegexValidator(
 
 class PartyStatusChoices(models.TextChoices):
     """Статусы производственной партии (согласно ТЗ)."""
-    DRAFT = 'draft', 'Черновик, не отправлен в ЧЗ'
-    RESERVED_CZ = 'reserved_cz', 'Зарезервирован в ЧЗ (сгенерирован)'
-    RESERVED_LOCAL = 'reserved_local', 'Зарезервирован в ЧЗ (собственный)'
-    ACTIVE = 'active', 'Отчёт о нанесении отправлен, партия зарегистрирована'
-    CLOSED = 'closed', 'Партия закрыта'
-    ARCHIVE = 'archive', 'В архиве'
+    DRAFT = 'draft', 'Черновик, не отправлен в ЧЗ' # Не возвращать в 1С. # NOT TRUE.
+    RESERVED_CZ = 'reserved_cz', 'Зарезервирован в ЧЗ (сгенерирован)' # TRUE
+    RESERVED_LOCAL = 'reserved_local', 'Зарезервирован в ЧЗ (собственный)' # TRUE
+    REGISTERED = 'registered', 'Отчёт о нанесении отправлен, партия зарегистрирована' # TRUE
+    CLOSED = 'closed', 'Партия закрыта' # Нет новых заданий по УИП в течении 3-х дней после даты производства. # TRUE
+    DELETED = 'deleted', 'Удалён по истечению времени' # УИП сгорел по истечению 30 дней. # NOT TRUE.
+    ARCHIVED = 'archived', 'В архиве' # Если не было активных заданий в течение 30 дней. # TRUE
 
 
 class PartyNumberTypeChoices(models.TextChoices):

@@ -32,8 +32,6 @@ from app_cz.serializers import (
     SyncCodesTaskSerializer,
     # Подробная информация о коде.
     CISCodeDetailSerializer,
-    # Подробная информация об УИП.
-    UIPDetailSerializer,
 
     # Endpoint для внешних информационных систем по зарезервированным партиям (УИП)
     # с большей информацией и возможностями.
