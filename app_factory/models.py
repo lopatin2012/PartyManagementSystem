@@ -68,7 +68,7 @@ class Factory(UUIDModel):
         upload_to='factory_image',
         verbose_name='Фотография'
     )
-    ip_address = models.IPAddressField(
+    ip_address = models.GenericIPAddressField(
         blank=True, null=True,
         verbose_name='ip-адрес локального приложения',
         help_text='Локально приложение должно поддерживать необходимые методы'
