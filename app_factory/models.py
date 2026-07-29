@@ -68,6 +68,16 @@ class Factory(UUIDModel):
         upload_to='factory_image',
         verbose_name='Фотография'
     )
+    ip_address = models.IPAddressField(
+        blank=True, null=True,
+        verbose_name='ip-адрес локального приложения',
+        help_text='Локально приложение должно поддерживать необходимые методы'
+    )
+    port_address = models.IntegerField(
+        blank=True, null=True,
+        verbose_name='порт-адрес локального приложения',
+        help_text='Локально приложение должно поддерживать необходимые методы'
+    )
     is_active = models.BooleanField(default=True, verbose_name='Действующий')
 
     class Meta:
@@ -134,6 +144,7 @@ class Product(UUIDModel):
     )
     name = models.CharField(max_length=255, verbose_name='Наименование')
     shelf_life_in_days = models.IntegerField(verbose_name='Срок годности в днях')
+    shelf_life_in_minutes = models.IntegerField(default=0, verbose_name='Срок годности в минутах')
     item_condition = models.CharField(
         max_length=50, choices=StateConditionChoices.choices, verbose_name='Состояние товара'
     )
@@ -185,7 +196,13 @@ class ProductPackaging(UUIDModel):
         verbose_name='Количество в упаковке',
         help_text='Сколько штук (или коробок) помещается в эту упаковку. Для штуки = 1.'
     )
-    code_storage_period_in_days = models.IntegerField(verbose_name='Срок хранения кодов в днях')
+    code_storage_period_in_days = models.IntegerField(
+        default=60, verbose_name='Срок хранения кодов в днях'
+    )
+    code_tnved = models.CharField(
+        blank=True, null=True,
+        verbose_name='Код ТНВЭД', help_text='Ветеринарный номер'
+    )
     is_active = models.BooleanField(default=True, verbose_name='Активна')
 
     class Meta:
