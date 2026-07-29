@@ -33,6 +33,15 @@ class PartyNumberTypeChoices(models.TextChoices):
 class UIP(UUIDModel):
     """УИП — резервирование в Честном Знаке."""
 
+    # Активные статусы.
+    ACTIVE_STATUSES = [
+        PartyStatusChoices.RESERVED_CZ,
+        PartyStatusChoices.RESERVED_LOCAL,
+        PartyStatusChoices.REGISTERED,
+        PartyStatusChoices.CLOSED,
+        PartyStatusChoices.ARCHIVED,
+    ]
+
     # Связи.
     product_sku = models.ForeignKey(
         to=ProductSKU,
@@ -83,6 +92,10 @@ class UIP(UUIDModel):
         verbose_name='Описание'
     )
 
+    # Информация по УИП для дальнейших вычислений.
+    production_date = models.DateField(null=True, blank=True, verbose_name='Дата производства')
+    reservation_date = models.DateField(null=True, blank=True, verbose_name='Дата резервирования')
+
     # Audit.
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Создано')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Обновлено')
@@ -113,6 +126,15 @@ class UIP(UUIDModel):
         return self.status in [
             PartyStatusChoices.RESERVED_CZ,
             PartyStatusChoices.RESERVED_LOCAL
+        ]
+
+    @property
+    def is_registered(self) -> bool:
+        """УИП был зарегистрирован в ЧЗ."""
+        return self.status in [
+            PartyStatusChoices.REGISTERED,
+            PartyStatusChoices.CLOSED,
+            PartyStatusChoices.ARCHIVED
         ]
 
 
