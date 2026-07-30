@@ -152,6 +152,12 @@
                                 <span class="status-badge status-{{ uip.status }}">
                                     {{ uip.get_status_display }}
                                 </span>
+                                {% if uip.is_desync %}
+                                    <span class="desync-badge"
+                                          title="УИП зарегистрирован/закрыт/в архиве, но всё ещё числится зарезервированным в ЧЗ">
+                                        ⚠
+                                    </span>
+                                {% endif %}
                             </td>
                             <td>{{ uip.product_sku.product.name }}</td>
                             <td class="article-cell">{{ uip.product_sku.sku_code }}</td>

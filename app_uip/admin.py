@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
-from .models import UIP, ProductionParty, PartyStatusChoices
+from .models import UIP, UIPStatusLog, ProductionParty, PartyStatusChoices
 
 
 # ==========================================
@@ -87,12 +87,31 @@ class ProductionPartyInline(admin.TabularInline):
 
 
 # ==========================================
+# Inline истории статусов (только чтение).
+# ==========================================
+class UIPStatusLogInline(admin.TabularInline):
+    model = UIPStatusLog
+    extra = 0
+    fields = ('from_status', 'to_status', 'source', 'note', 'changed_by', 'created_at')
+    readonly_fields = ('from_status', 'to_status', 'source', 'note', 'changed_by', 'created_at')
+    ordering = ('-created_at',)
+    verbose_name = 'История статуса'
+    verbose_name_plural = 'История изменений статуса'
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+# ==========================================
 # Админка для УИП.
 # ==========================================
 @admin.register(UIP)
 class UIPAdmin(admin.ModelAdmin):
     list_display = (
-        'number', 'product_sku', status_colored,
+        'number', 'product_sku', status_colored, 'desync_indicator',
         'planned_and_produced',
         'created_at'
     )
@@ -112,7 +131,7 @@ class UIPAdmin(admin.ModelAdmin):
             'fields': ('planned_quantity', 'produced_quantity')
         }),
         ('Дополнительно', {
-            'fields': ('description',),
+            'fields': ('description', 'is_desync'),
             'classes': ('collapse',)
         }),
         ('Аудит', {
@@ -121,12 +140,50 @@ class UIPAdmin(admin.ModelAdmin):
         }),
     )
 
-    inlines = [ProductionPartyInline]
+    inlines = [ProductionPartyInline, UIPStatusLogInline]
 
     @admin.display(description='План/Факт')
     def planned_and_produced(self, obj):
         """План/Факт с мини-прогрессбаром."""
         return render_plan_fact(obj.planned_quantity, obj.produced_quantity)
+
+    @admin.display(description='Рассинхрон')
+    def desync_indicator(self, obj):
+        """Индикатор рассинхрона данных с ЧЗ."""
+        if obj.is_desync:
+            return mark_safe(
+                '<span style="color: #870000; font-weight: 600;" '
+                'title="УИП зарегистрирован/закрыт/в архиве, но числится в резерве ЧЗ">'
+                '+</span>'
+            )
+        return mark_safe('<span style="color: #999;">—</span>')
+
+    def save_model(self, request, obj, form, change):
+        """Логируем создание и ручную смену статуса через админку."""
+        user = request.user if request.user.is_authenticated else None
+
+        if change:
+            old_status = UIP.objects.filter(pk=obj.pk).values_list('status', flat=True).first()
+            super().save_model(request, obj, form, change)
+            if old_status and old_status != obj.status:
+                UIPStatusLog.objects.create(
+                    uip=obj,
+                    from_status=old_status,
+                    to_status=obj.status,
+                    source='admin',
+                    note='Статус изменён через админку',
+                    changed_by=user,
+                )
+        else:
+            super().save_model(request, obj, form, change)
+            UIPStatusLog.objects.create(
+                uip=obj,
+                from_status=None,
+                to_status=obj.status,
+                source='admin',
+                note='УИП создан через админку',
+                changed_by=user,
+            )
 
 
 # ==========================================

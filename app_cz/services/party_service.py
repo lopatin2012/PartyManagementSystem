@@ -6,8 +6,9 @@ from datetime import datetime, date
 
 import requests
 from django.utils import timezone
-from django.db.models import Q, ObjectDoesNotExist
+from django.db.models import ObjectDoesNotExist
 from django.db import transaction
+from django.utils.dateparse import parse_datetime, parse_date
 
 from app_cz.models import SUZAccount
 from app_cz.suz_config import SUZ
@@ -19,7 +20,7 @@ from app_factory.models import ProductSKU
 
 from app_helper.sign_helper import unpinned_signed_data
 
-from app_uip.models import UIP, PartyStatusChoices
+from app_uip.models import UIP, PartyStatusChoices, UIPStatusLog
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,27 @@ def validate_party_number(party_number: str) -> bool:
     return bool(re.match(pattern, party_number))
 
 
+def parse_cz_datetime(value: str):
+    """
+    Парсит дату-время из ЧЗ (ISO 8601).
+    Пример: '2026-07-30T22:00:00.000Z' -> datetime.
+    """
+    if not value:
+        return None
+    # Заменяем Z на +00:00 для гарантированной совместимости.
+    return parse_datetime(value.replace('Z', '+00:00'))
+
+
+def parse_cz_date(value: str):
+    """
+    Парсит дату из ЧЗ (YYYY-MM-DD).
+    Пример: '2026-07-30' -> date.
+    """
+    if not value:
+        return None
+    return parse_date(value)
+
+
 def build_local_party_number(gtin: str, production_date: date, article: str) -> str:
     """
     Формирует локальный номер УИП:
@@ -47,6 +69,7 @@ def build_local_party_number(gtin: str, production_date: date, article: str) -> 
     article_part = (article or '')[:5].ljust(5, '0')
     base = f'{gtin}{date_str}{article_part}'  # 25 символов
     return base.ljust(32, '0')[:32]  # добивка до 32
+
 
 def get_available_products() -> list[dict]:
     """Список продуктов, доступных для генерации УИП (с GTIN и артикулом)."""
@@ -69,9 +92,6 @@ def get_available_products() -> list[dict]:
             'group': sku.product.group,
         })
     return products
-
-
-
 
 
 def generate_party_numbers(
@@ -405,9 +425,15 @@ def close_party_reservation(
         # 4. Если отчёт отправлен успешно, обновляем статус УИП в нашей БД.
         uip = UIP.objects.filter(number=batch_number).first()
         if uip:
-            uip.status = PartyStatusChoices.REGISTERED
-            uip.save(update_fields=['status', 'updated_at'])
-            logger.info(f"Партия {batch_number} успешно закрыта и переведена в статус REGISTERED.")
+            changed = uip.change_status(
+                PartyStatusChoices.REGISTERED,
+                source='service',
+                note='Отчёт о нанесении отправлен, партия снята с резерва',
+            )
+            if changed:
+                logger.info(f"Партия {batch_number} переведена в статус REGISTERED.")
+            else:
+                logger.info(f"Партия {batch_number} уже находилась в статусе REGISTERED.")
         else:
             logger.warning(f"УИП {batch_number} не найден в локальной БД, но отчёт в ЧЗ отправлен успешно.")
 
@@ -434,30 +460,21 @@ def close_party_reservation(
 
 def sync_parties_from_cz() -> dict:
     """
-    Синхронизирует список зарезервированных партий из Честного Знака с локальной базой.
+    Синхронизирует список зарезервированных партий из ЧЗ с локальной базой.
 
-    Returns:
-        dict: {
-            'is_error': bool,
-            'message': str,
-            'created': int,
-            'updated': int,
-            'total': int
-        }
+    - Новый УИП → создаём RESERVED_CZ, ставим reservation_date (первое резервирование).
+    - RESERVED_CZ / RESERVED_LOCAL → норма: актуализируем данные, статус не меняем.
+    - Любой другой статус при наличии в резерве ЧЗ → РАССИНХРОН: ничего не меняем,
+      помечаем is_desync и логируем.
+    - Момент синхронизации фиксирует updated_at.
     """
-    # Получаем список партий из ЧЗ
     result = get_all_reserved_parties()
 
     if result.get('is_error'):
         return {
             'is_error': True,
-            'message': result.get(
-                'message_error',
-                'Ошибка получения данных из ЧЗ'
-            ),
-            'created': 0,
-            'updated': 0,
-            'total': 0
+            'message': result.get('message_error', 'Ошибка получения данных из ЧЗ'),
+            'created': 0, 'updated': 0, 'desync': 0, 'total': 0,
         }
 
     lst_party_info = result.get('lst_party_number_info', [])
@@ -466,13 +483,18 @@ def sync_parties_from_cz() -> dict:
         return {
             'is_error': False,
             'message': 'В ЧЗ нет зарезервированных партий',
-            'created': 0,
-            'updated': 0,
-            'total': 0
+            'created': 0, 'updated': 0, 'desync': 0, 'total': 0,
         }
+
+    # Статусы, нормальные для УИП, числящегося в резерве ЧЗ.
+    NORMAL_STATUSES = [
+        PartyStatusChoices.RESERVED_CZ,
+        PartyStatusChoices.RESERVED_LOCAL,
+    ]
 
     created_count = 0
     updated_count = 0
+    desync_count = 0
 
     try:
         with transaction.atomic():
@@ -480,56 +502,96 @@ def sync_parties_from_cz() -> dict:
                 party_number = party_info.get('partyNumber', '')
 
                 if not party_number:
-                    logger.warning(
-                        f'Пропущена запись без номера партии: {party_info}'
-                    )
+                    logger.warning(f'Пропущена запись без номера партии: {party_info}')
                     continue
 
-                # Парсим дату производства (формат: YYMMDD из первых 6 цифр после GTIN).
-                production_date = None
-                if len(party_number) >= 20:
+                # === Дата резервирования ===
+                created_dt = parse_cz_datetime(party_info.get('createdDateTime'))
+                reservation_date = created_dt.date() if created_dt else None
+                if reservation_date is None:
+                    logger.warning(
+                        f'УИП {party_number}: отсутствует или некорректна дата резервирования '
+                        f'(createdDateTime) в ответе ЧЗ.'
+                    )
+
+                # === Дата производства — предпочитаем явную из ЧЗ, иначе парсим из номера. ===
+                production_date = parse_cz_date(party_info.get('productionDate'))
+                if production_date is None and len(party_number) >= 20:
                     try:
-                        date_str = party_number[14:20]  # 6 цифр после GTIN
+                        date_str = party_number[14:20]
                         production_date = datetime.strptime(date_str, '%y%m%d').date()
                     except ValueError:
                         pass
 
-                # Определяем статус на основе данных из ЧЗ
-                # По умолчанию считаем зарезервированным в ЧЗ.
-                status = PartyStatusChoices.RESERVED_CZ
-
-                # Пытаемся найти соответствующий SKU по GTIN.
+                # === SKU ищем по GTIN (предпочитаем явный из ответа ЧЗ). ===
+                gtin = party_info.get('gtin') or (
+                    party_number[:14] if len(party_number) >= 14 else None
+                )
                 product_sku = None
-                if len(party_number) >= 14:
-                    gtin = party_number[:14]
+                if gtin:
                     product_sku = ProductSKU.objects.filter(
                         product__packagings__gtin=gtin,
                         is_active=True
                     ).first()
 
-                # Создаём или обновляем УИП.
-                uip, created = UIP.objects.update_or_create(
-                    number=party_number,
-                    defaults={
-                        'product_sku': product_sku,
-                        'status': status,
-                        'production_date': production_date,
-                        'reservation_date': timezone.now().date(),
-                        'planned_quantity': party_info.get('expectedQuantity', 0),
-                        'description': f'Синхронизировано из ЧЗ: '
-                                       f'{timezone.now().strftime("%d.%m.%Y %H:%M")}'
-                    }
-                )
+                existing_uip = UIP.objects.filter(number=party_number).first()
 
-                if created:
+                # === УИП НЕ НАЙДЕН — создаём ===
+                if existing_uip is None:
+                    uip = UIP.objects.create(
+                        number=party_number,
+                        product_sku=product_sku,
+                        status=PartyStatusChoices.RESERVED_CZ,
+                        production_date=production_date,
+                        reservation_date=reservation_date,
+                        planned_quantity=party_info.get('expectedQuantity', 0),
+                        is_desync=False,
+                        description='Создан при синхронизации с ЧЗ',
+                    )
+                    UIPStatusLog.objects.create(
+                        uip=uip,
+                        from_status=None,
+                        to_status=PartyStatusChoices.RESERVED_CZ,
+                        source='sync',
+                        note='Создан при синхронизации с ЧЗ',
+                    )
                     created_count += 1
-                    logger.info(f'Создан УИП: {party_number}')
-                else:
-                    updated_count += 1
-                    logger.info(f'Обновлён УИП: {party_number}')
+                    logger.info(f'Создан УИП: {party_number} (резерв: {reservation_date})')
+                    continue
 
-        message = (f'Синхронизация завершена. Создано: {created_count},'
-                   f' обновлено: {updated_count}')
+                # === УИП НАЙДЕН — обновляем ===
+                current_status = existing_uip.status
+
+                if current_status in NORMAL_STATUSES:
+                    # Норма: актуализируем данные, статус не меняем, снимаем флаг.
+                    existing_uip.product_sku = product_sku or existing_uip.product_sku
+                    existing_uip.production_date = production_date or existing_uip.production_date
+                    existing_uip.planned_quantity = party_info.get('expectedQuantity', 0)
+                    # reservation_date НЕ перезаписываем; заполняем только если он был пуст.
+                    if existing_uip.reservation_date is None and reservation_date is not None:
+                        existing_uip.reservation_date = reservation_date
+                    existing_uip.is_desync = False
+                    existing_uip.save()  # updated_at зафиксирует момент синхронизации.
+                    logger.info(f'Обновлён УИП: {party_number} (статус: {current_status})')
+                else:
+                    # РАССИНХРОН: статус и данные НЕ меняем — только помечаем и логируем.
+                    existing_uip.is_desync = True
+                    existing_uip.save()
+                    desync_count += 1
+                    logger.warning(
+                        f'РАССИНХРОН: УИП {party_number} имеет статус '
+                        f'"{existing_uip.get_status_display()}", но числится '
+                        f'зарезервированным в ЧЗ. Требуется проверка администратором.'
+                    )
+
+                updated_count += 1
+
+        message = (
+            f'Синхронизация завершена. Создано: {created_count}, '
+            f'обновлено: {updated_count}'
+        )
+        if desync_count:
+            message += f', ⚠ рассинхрон: {desync_count}'
         logger.info(message)
 
         return {
@@ -537,21 +599,21 @@ def sync_parties_from_cz() -> dict:
             'message': message,
             'created': created_count,
             'updated': updated_count,
-            'total': len(lst_party_info)
+            'desync': desync_count,
+            'total': len(lst_party_info),
         }
 
     except Exception as e:
-        logger.error(
-            f'Ошибка при синхронизации партий: {e}',
-            exc_info=True
-        )
+        logger.error(f'Ошибка при синхронизации партий: {e}', exc_info=True)
         return {
             'is_error': True,
             'message': f'Ошибка при сохранении данных: {str(e)}',
             'created': created_count,
             'updated': updated_count,
-            'total': len(lst_party_info)
+            'desync': desync_count,
+            'total': len(lst_party_info),
         }
+
 
 def _generate_local_uip(sku: ProductSKU, gtin: str, production_date: date) -> dict:
     """
@@ -587,13 +649,20 @@ def _generate_local_uip(sku: ProductSKU, gtin: str, production_date: date) -> di
     # 3. ЧЗ подтвердил резервирование — сохраняем УИП локально.
     try:
         with transaction.atomic():
-            UIP.objects.create(
+            uip = UIP.objects.create(
                 product_sku=sku,
                 number=number,
                 status=PartyStatusChoices.RESERVED_LOCAL,
                 production_date=production_date,
                 reservation_date=timezone.now().date(),
                 description='Сгенерирован вручную (локальный формат), зарезервирован в ЧЗ',
+            )
+            UIPStatusLog.objects.create(
+                uip=uip,
+                from_status=None,
+                to_status=PartyStatusChoices.RESERVED_LOCAL,
+                source='manual_local',
+                note='Сгенерирован вручную (локальный формат), зарезервирован в ЧЗ',
             )
         logger.info(f'Создан и зарезервирован в ЧЗ локальный УИП: {number}')
         return {
@@ -602,10 +671,7 @@ def _generate_local_uip(sku: ProductSKU, gtin: str, production_date: date) -> di
             'number': number,
         }
     except Exception as e:
-        logger.error(
-            f'Ошибка сохранения локального УИП: {e}',
-            exc_info=True
-        )
+        logger.error(f'Ошибка сохранения локального УИП: {e}', exc_info=True)
         return {'is_error': True, 'message': f'Ошибка сохранения УИП: {str(e)}'}
 
 
@@ -642,16 +708,46 @@ def _generate_cz_uip(sku: ProductSKU, gtin: str, production_date: date) -> dict:
                 number = info.get('partyNumber', '')
                 if not number:
                     continue
-                UIP.objects.update_or_create(
-                    number=number,
-                    defaults={
-                        'product_sku': sku,
-                        'status': PartyStatusChoices.RESERVED_CZ,
-                        'production_date': production_date,
-                        'reservation_date': timezone.now().date(),
-                        'description': 'Сгенерирован вручную через Честный Знак',
-                    }
-                )
+
+                # Дата резервирования — из ответа ЧЗ (createdDateTime).
+                created_dt = parse_cz_datetime(info.get('createdDateTime'))
+                reservation_date = created_dt.date() if created_dt else timezone.now().date()
+
+                existing_uip = UIP.objects.filter(number=number).first()
+
+                if existing_uip is None:
+                    # === Создаём новый УИП + лог установки начального статуса. ===
+                    uip = UIP.objects.create(
+                        number=number,
+                        product_sku=sku,
+                        status=PartyStatusChoices.RESERVED_CZ,
+                        production_date=production_date,
+                        reservation_date=reservation_date,
+                        description='Сгенерирован вручную через Честный Знак',
+                    )
+                    UIPStatusLog.objects.create(
+                        uip=uip,
+                        from_status=None,
+                        to_status=PartyStatusChoices.RESERVED_CZ,
+                        source='manual_cz',
+                        note='Сгенерирован вручную через Честный Знак',
+                    )
+                else:
+                    # === Обновляем существующий. ===
+                    existing_uip.product_sku = sku
+                    existing_uip.production_date = production_date
+                    # reservation_date не перезаписываем, заполняем только если пуст.
+                    if existing_uip.reservation_date is None:
+                        existing_uip.reservation_date = reservation_date
+                    existing_uip.description = 'Сгенерирован вручную через Честный Знак'
+                    existing_uip.save()
+                    # Смена статуса через единый метод.
+                    existing_uip.change_status(
+                        PartyStatusChoices.RESERVED_CZ,
+                        source='manual_cz',
+                        note='Повторная генерация через Честный Знак',
+                    )
+
                 created.append(number)
 
         if not created:
