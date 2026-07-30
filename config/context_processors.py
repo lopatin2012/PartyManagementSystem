@@ -5,7 +5,8 @@ from django.utils import timezone
 from django.conf import settings
 
 from app_cz.models import SUZAccount
-from config.settings import SERVICE_MODE_TEXT, SERVICE_MODE_COLOR, SERVICE_VERSION
+from config.settings import SERVICE_MODE_TEXT, SERVICE_MODE_COLOR, SERVICE_VERSION, DEBUG
+
 
 def global_footer_info(request):
     """
@@ -16,6 +17,7 @@ def global_footer_info(request):
     requests_count = 1000
 
     return {
+        'debug': DEBUG,
         'service_version': getattr(settings, 'SERVICE_VERSION', SERVICE_VERSION),
         'requests_count': requests_count,
         'service_mode_name': getattr(settings, 'SERVICE_MODE_TEXT', SERVICE_MODE_TEXT),

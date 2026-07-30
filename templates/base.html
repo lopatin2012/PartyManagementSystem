@@ -24,6 +24,17 @@
             </a>
         </div>
 
+        <nav class="main-nav">
+            <a href="{% url 'home' %}" class="nav-link {% if request.resolver_match.url_name == 'home' %}nav-link-active{% endif %}">
+                Главная
+            </a>
+            {% if debug %}
+                <a href="/api/docs/" class="nav-link" target="_blank" rel="noopener">
+                    Документация API
+                </a>
+            {% endif %}
+        </nav>
+
         <div class="user-panel">
             {% if is_authenticated %}
                 {% if user.is_superuser %}

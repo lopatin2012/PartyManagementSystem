@@ -46,6 +46,48 @@ header {
     object-fit: contain;
 }
 
+/* Стили для навигационного меню. */
+.main-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.nav-link {
+    color: rgba(255, 255, 255, 0.85);
+    text-decoration: none;
+    font-size: 1rem;
+    font-weight: 500;
+    padding: 0.6rem 1.2rem;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.nav-link:hover {
+    color: var(--text-main);
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Активный пункт меню */
+.nav-link-active {
+    color: var(--accent-green);
+    background-color: rgba(187, 207, 50, 0.1);
+}
+
+.nav-link-active::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 60%;
+    height: 2px;
+    background-color: var(--accent-green);
+    border-radius: 2px;
+}
+
+/* Стили для панели пользователя. */
 .user-panel {
     display: flex;
     align-items: center;
