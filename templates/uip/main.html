@@ -1,0 +1,146 @@
+<!-- templates/uip/main.html -->
+
+{% extends 'base.html' %}
+{% load static %}
+
+{% block head %}
+    <link rel="stylesheet" href="{% static 'css/uip_list.css' %}" type="text/css">
+{% endblock %}
+
+{% block content %}
+<div class="uip-page">
+    <div class="uip-header">
+        <h1>{{ page_name }}</h1>
+        <p class="subtitle">Всего найдено: <span class="highlight">{{ total_count }}</span></p>
+    </div>
+
+    <!-- ФИЛЬТР ПО СТАТУСАМ -->
+    <div class="status-filter">
+        <a href="?status=all" class="filter-btn {% if current_status == 'all' %}filter-btn-active{% endif %}">
+            Все <span class="filter-count">{{ status_counts.all }}</span>
+        </a>
+        <a href="?status=reserved_cz" class="filter-btn {% if current_status == 'reserved_cz' %}filter-btn-active{% endif %}">
+            Резерв ЧЗ <span class="filter-count">{{ status_counts.reserved_cz }}</span>
+        </a>
+        <a href="?status=reserved_local" class="filter-btn {% if current_status == 'reserved_local' %}filter-btn-active{% endif %}">
+            Собственный <span class="filter-count">{{ status_counts.reserved_local }}</span>
+        </a>
+        <a href="?status=registered" class="filter-btn {% if current_status == 'registered' %}filter-btn-active{% endif %}">
+            Зарегистрирован <span class="filter-count">{{ status_counts.registered }}</span>
+        </a>
+        <a href="?status=closed" class="filter-btn {% if current_status == 'closed' %}filter-btn-active{% endif %}">
+            Закрыт <span class="filter-count">{{ status_counts.closed }}</span>
+        </a>
+        <a href="?status=archived" class="filter-btn {% if current_status == 'archived' %}filter-btn-active{% endif %}">
+            Архив <span class="filter-count">{{ status_counts.archived }}</span>
+        </a>
+        <a href="?status=draft" class="filter-btn {% if current_status == 'draft' %}filter-btn-active{% endif %}">
+            Черновик <span class="filter-count">{{ status_counts.draft }}</span>
+        </a>
+        <a href="?status=deleted" class="filter-btn {% if current_status == 'deleted' %}filter-btn-active{% endif %}">
+            Удалён <span class="filter-count">{{ status_counts.deleted }}</span>
+        </a>
+    </div>
+
+    <!-- ТАБЛИЦА УИП -->
+    {% if page_obj %}
+        <div class="uip-table-container">
+            <table class="uip-table">
+                <thead>
+                    <tr>
+                        <th>Номер УИП</th>
+                        <th>Статус</th>
+                        <th>Продукт</th>
+                        <th>Артикул</th>
+                        <th>Дата производства</th>
+                        <th>Дата резервирования</th>
+                        <th>Создан</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for uip in page_obj %}
+                        <tr>
+                            <td class="uip-number" title="{{ uip.number }}">
+                                {{ uip.number }}
+                            </td>
+                            <td>
+                                <span class="status-badge status-{{ uip.status }}">
+                                    {{ uip.get_status_display }}
+                                </span>
+                            </td>
+                            <td>{{ uip.product_sku.product.name }}</td>
+                            <td class="article-cell">{{ uip.product_sku.sku_code }}</td>
+                            <td>
+                                {% if uip.production_date %}
+                                    {{ uip.production_date|date:"d.m.Y" }}
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if uip.reservation_date %}
+                                    {{ uip.reservation_date|date:"d.m.Y" }}
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                            <td class="date-cell">{{ uip.created_at|date:"d.m.Y H:i" }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- ПАГИНАЦИЯ -->
+        <div class="pagination-wrapper">
+            <div class="pagination-info">
+                Показаны <span class="highlight">{{ start_item }}–{{ end_item }}</span> из <span class="highlight">{{ total_count }}</span>
+            </div>
+
+            <div class="pagination">
+                <!-- Кнопка "Первая" -->
+                {% if page_obj.has_previous %}
+                    <a href="?status={{ current_status }}&page=1" class="page-btn" title="Первая страница">
+                        «
+                    </a>
+                    <a href="?status={{ current_status }}&page={{ page_obj.previous_page_number }}" class="page-btn" title="Предыдущая">
+                        ‹
+                    </a>
+                {% else %}
+                    <span class="page-btn page-btn-disabled">«</span>
+                    <span class="page-btn page-btn-disabled">‹</span>
+                {% endif %}
+
+                <!-- Номера страниц -->
+                {% for page in page_range %}
+                    {% if page == '...' %}
+                        <span class="page-ellipsis">…</span>
+                    {% elif page == page_obj.number %}
+                        <span class="page-btn page-btn-active">{{ page }}</span>
+                    {% else %}
+                        <a href="?status={{ current_status }}&page={{ page }}" class="page-btn">{{ page }}</a>
+                    {% endif %}
+                {% endfor %}
+
+                <!-- Кнопка "Следующая" -->
+                {% if page_obj.has_next %}
+                    <a href="?status={{ current_status }}&page={{ page_obj.next_page_number }}" class="page-btn" title="Следующая">
+                        ›
+                    </a>
+                    <a href="?status={{ current_status }}&page={{ paginator.num_pages }}" class="page-btn" title="Последняя страница">
+                        »
+                    </a>
+                {% else %}
+                    <span class="page-btn page-btn-disabled">›</span>
+                    <span class="page-btn page-btn-disabled">»</span>
+                {% endif %}
+            </div>
+        </div>
+    {% else %}
+        <div class="empty-state">
+            <p class="empty-text">Список пуст</p>
+            <p class="empty-subtext">Попробуйте изменить фильтр</p>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -28,6 +28,9 @@
             <a href="{% url 'home' %}" class="nav-link {% if request.resolver_match.url_name == 'home' %}nav-link-active{% endif %}">
                 Главная
             </a>
+            <a href="{% url 'uip_list' %}" class="nav-link {% if request.resolver_match.url_name == 'uip_list' %}nav-link-active{% endif %}">
+                УИП
+            </a>
             {% if debug %}
                 <a href="/api/docs/" class="nav-link" target="_blank" rel="noopener">
                     Документация API

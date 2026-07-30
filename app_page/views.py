@@ -12,6 +12,7 @@ from app_cz.models import CISCode
 from app_uip.models import UIP, ProductionParty
 
 from app_helper.search_helper import detect_search_type
+from app_helper.user_helper import get_user_name
 
 from config.settings import (
     DEBUG, SERVICE_MODE_TEXT, SERVICE_MODE_COLOR, SERVICE_VERSION
@@ -26,21 +27,10 @@ class MainPageView(TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
-        # Определяем имя пользователя.
-        if self.request.user.is_authenticated:
-            user_name = (
-                    self.request.user.get_full_name()
-                    or self.request.user.username
-            )
-        else:
-            user_name = 'Неизвестный'
-
         context.update(
             {
                 'title_name': 'Система управления партиями',
                 'page_name': 'Главная страница',
-                'user_name': user_name,
-                'is_authenticated': self.request.user.is_authenticated,
             }
         )
 
@@ -106,3 +96,85 @@ class SearchView(View):
         ).select_related(
             'product_sku__product'
         ).order_by('-created_at')
+
+
+class UIPListView(TemplateView):
+    """Страница со списком последних 100 УИПов."""
+    template_name = 'uip/main.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        # Получаем фильтр по статусу из query-параметров.
+        status_filter = self.request.GET.get('status', 'all')
+
+        # Базовый queryset.
+        queryset = UIP.objects.select_related(
+            'product_sku__product'
+        ).order_by('-created_at')
+
+        # Применяем фильтр по статусу.
+        if status_filter and status_filter != 'all':
+            queryset = queryset.filter(status=status_filter)
+
+        # Пагинация: 100 записей на страницу.
+        paginator = Paginator(queryset, 100)
+        page_number = self.request.GET.get('page', 1)
+        page_obj = paginator.get_page(page_number)
+
+        # Формируем диапазон страниц для отображения в пагинаторе.
+        # Показываем текущую страницу ± 2, плюс первую и последнюю.
+        current_page = page_obj.number
+        total_pages = paginator.num_pages
+        page_range = []
+
+        # Всегда добавляем первую страницу.
+        page_range.append(1)
+
+        # Добавляем диапазон вокруг текущей страницы.
+        start = max(2, current_page - 2)
+        end = min(total_pages - 1, current_page + 2)
+
+        if start > 2:
+            page_range.append('...')
+        page_range.extend(range(start, end + 1))
+        if end < total_pages - 1:
+            page_range.append('...')
+
+        # Всегда добавляем последнюю страницу (если больше 1).
+        if total_pages > 1:
+            page_range.append(total_pages)
+
+        # Статистика по статусам (для фильтра).
+        status_counts = {
+            'all': UIP.objects.count(),
+            'draft': UIP.objects.filter(status='draft').count(),
+            'reserved_cz': UIP.objects.filter(status='reserved_cz').count(),
+            'reserved_local': UIP.objects.filter(status='reserved_local').count(),
+            'registered': UIP.objects.filter(status='registered').count(),
+            'closed': UIP.objects.filter(status='closed').count(),
+            'deleted': UIP.objects.filter(status='deleted').count(),
+            'archived': UIP.objects.filter(status='archived').count(),
+        }
+
+        # Границы отображаемых записей (для текста "Показаны X-Y из Z").
+        start_item = (page_obj.number - 1) * paginator.per_page + 1
+        end_item = start_item + len(page_obj) - 1
+        if paginator.count == 0:
+            start_item = 0
+            end_item = 0
+
+        context.update({
+            'title_name': 'Список УИП',
+            'page_name': 'Список УИП',
+            'page_obj': page_obj,
+            'paginator': paginator,
+            'page_range': page_range,
+            'total_count': paginator.count,
+            'current_status': status_filter,
+            'status_counts': status_counts,
+            'start_item': start_item,
+            'end_item': end_item,
+        })
+
+        return context

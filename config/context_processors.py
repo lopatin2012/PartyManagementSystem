@@ -4,8 +4,24 @@ from django.utils import timezone
 
 from django.conf import settings
 
+from app_helper.user_helper import get_user_name
 from app_cz.models import SUZAccount
 from config.settings import SERVICE_MODE_TEXT, SERVICE_MODE_COLOR, SERVICE_VERSION, DEBUG
+
+
+def service_context(request):
+    """Информация о работе сервиса."""
+    return {
+        'debug': getattr(settings, 'DEBUG', DEBUG),
+    }
+
+
+def user_context(request):
+    """Информация о пользователе."""
+    return {
+        'user_name': get_user_name(request),
+        'is_authenticated': request.user.is_authenticated,
+    }
 
 
 def global_footer_info(request):
@@ -17,12 +33,12 @@ def global_footer_info(request):
     requests_count = 1000
 
     return {
-        'debug': DEBUG,
         'service_version': getattr(settings, 'SERVICE_VERSION', SERVICE_VERSION),
         'requests_count': requests_count,
         'service_mode_name': getattr(settings, 'SERVICE_MODE_TEXT', SERVICE_MODE_TEXT),
         'service_mode_color': getattr(settings, 'SERVICE_MODE_COLOR', SERVICE_MODE_COLOR),
     }
+
 
 def service_status_info(request):
     """Статусы внешних сервисов."""
