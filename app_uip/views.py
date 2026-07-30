@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from django.utils import timezone
 from django.db.models import Q
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -14,7 +15,8 @@ from app_uip.models import UIP, PartyStatusChoices
 from app_uip.serializers import (
     UIPStatusSerializer,
     UIPBatchStatusSerializer,
-    UIPActiveListSerializer
+    UIPActiveListSerializer,
+    UIPBatchResultSerializer
 )
 
 
@@ -26,8 +28,26 @@ class UIPStatusViewSet(viewsets.ViewSet):
     POST /api/v1/status_parties/batch/ — проверка списка УИП
     GET /api/v1/status_parties/active/ — список действующих УИП
     """
+
     # permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=['УИП'],
+        operation_id='status_parties_retrieve',
+        summary='Проверка статуса одного УИП',
+        parameters=[
+            OpenApiParameter(
+                name='id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.PATH,
+                description='Номер УИП (partyNumber)',
+            )
+        ],
+        responses={
+            200: UIPStatusSerializer,
+            404: UIPStatusSerializer,
+        },
+    )
     def retrieve(self, request, pk=None):
         """
         GET /api/v1/status_parties/{number}/
@@ -52,6 +72,16 @@ class UIPStatusViewSet(viewsets.ViewSet):
         # Если действующий — 200.
         return Response(data, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        tags=['УИП'],
+        operation_id='status_parties_batch',
+        summary='Пакетная проверка статусов УИП',
+        request=UIPBatchStatusSerializer,
+        responses={
+            200: UIPBatchResultSerializer,
+            404: UIPBatchResultSerializer,
+        },
+    )
     @action(detail=False, methods=['post'], url_path='batch')
     def batch_check(self, request):
         """
@@ -94,6 +124,22 @@ class UIPStatusViewSet(viewsets.ViewSet):
         # Все найдены и действующие — 200.
         return Response(response_data, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        tags=['УИП'],
+        operation_id='status_parties_active',
+        summary='Список действующих УИП',
+        parameters=[
+            OpenApiParameter(name='product_id', type=OpenApiTypes.UUID, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='product_article', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='gtin', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='search', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='production_date_from', type=OpenApiTypes.DATE, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='production_date_to', type=OpenApiTypes.DATE, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='reservation_date_from', type=OpenApiTypes.DATE, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='reservation_date_to', type=OpenApiTypes.DATE, location=OpenApiParameter.QUERY),
+        ],
+        responses={200: UIPActiveListSerializer(many=True)},
+    )
     @action(detail=False, methods=['get'], url_path='active')
     def active_list(self, request):
         """
@@ -160,4 +206,3 @@ class UIPStatusViewSet(viewsets.ViewSet):
             'count': queryset.count(),
             'result': serializer.data
         })
-

@@ -1,5 +1,6 @@
 # app_uip/serializers.py
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from app_uip.models import UIP, PartyStatusChoices
@@ -21,6 +22,7 @@ class UIPStatusSerializer(serializers.ModelSerializer):
             'detail'
         ]
 
+    @extend_schema_field(serializers.BooleanField)
     def get_is_active(self, obj):
         """
         Определяет, можно ли использовать УИП.
@@ -29,6 +31,7 @@ class UIPStatusSerializer(serializers.ModelSerializer):
         """
         return obj.status in UIP.ACTIVE_STATUSES
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_detail(self, obj):
         """Возвращает причину, почему УИП не найден/недействующий."""
         if obj.status == PartyStatusChoices.DRAFT:

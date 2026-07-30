@@ -1,5 +1,6 @@
 # app_factory/serializers.py
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from app_factory.models import (
@@ -32,7 +33,8 @@ class LineSerializer(serializers.ModelSerializer):
     workshop_name = serializers.CharField(source='workshop.name', read_only=True)
     factory_id = serializers.UUIDField(source='workshop.factory.id', read_only=True)
     factory_name = serializers.CharField(source='workshop.factory.name', read_only=True)
-    factory_ip_address = serializers.IPAddressField(source='workshop.factory.ip_address', read_only=True, allow_null=True)
+    factory_ip_address = serializers.IPAddressField(source='workshop.factory.ip_address', read_only=True,
+                                                    allow_null=True)
 
     class Meta:
         model = Line
@@ -58,8 +60,8 @@ class ProductSerializer(serializers.ModelSerializer):
     expiration_time = serializers.IntegerField(source='shelf_life_in_minutes', read_only=True)
     box_nesting = serializers.SerializerMethodField()
     pallet_nesting = serializers.SerializerMethodField()
-    storage_period_codes_in_archive = serializers.SerializerMethodField()
-    tnved_code = serializers.SerializerMethodField()
+    code_storage_period_in_days = serializers.SerializerMethodField()
+    code_tnved = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -79,6 +81,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'code_tnved'
         ]
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_articles(self, obj):
         """Список артикулов (SKU из 1С)."""
         return list(
@@ -89,36 +92,43 @@ class ProductSerializer(serializers.ModelSerializer):
         """Вспомогательный метод для получения упаковки по уровню."""
         return obj.packagings.filter(level=level, is_active=True).first()
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_gtin(self, obj):
         """GTIN потребительской упаковки (уровень 1)."""
         packaging = self._get_packaging(obj, PackagingLevelChoices.UNIT)
         return packaging.gtin if packaging else None
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_gtin_packaging(self, obj):
         """GTIN групповой упаковки (уровень 2)."""
         packaging = self._get_packaging(obj, PackagingLevelChoices.GROUP)
         return packaging.gtin if packaging else None
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_gtin_pallets(self, obj):
         """GTIN транспортной упаковки (уровень 3)."""
         packaging = self._get_packaging(obj, PackagingLevelChoices.TRANSPORT)
         return packaging.gtin if packaging else None
 
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
     def get_box_nesting(self, obj):
         """Количество единиц в коробке (из групповой упаковки)."""
         packaging = self._get_packaging(obj, PackagingLevelChoices.GROUP)
         return packaging.quantity_inside if packaging else None
 
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
     def get_pallet_nesting(self, obj):
         """Количество коробок в паллете (из транспортной упаковки)."""
         packaging = self._get_packaging(obj, PackagingLevelChoices.TRANSPORT)
         return packaging.quantity_inside if packaging else None
 
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
     def get_code_storage_period_in_days(self, obj):
         """Срок хранения кодов в архиве (из потребительской упаковки)."""
         packaging = self._get_packaging(obj, PackagingLevelChoices.UNIT)
         return packaging.code_storage_period_in_days if packaging else None
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_code_tnved(self, obj):
         """
         Код ТН ВЭД из потребительской упаковки.

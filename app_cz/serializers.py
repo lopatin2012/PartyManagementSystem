@@ -1,6 +1,8 @@
 # app_cz/serializers.py
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+
 from app_cz.models import CISCode
 from app_cz.enums import TypeProduct
 from app_factory.models import PackagingLevelChoices
@@ -208,6 +210,7 @@ class ReservedPartyListSerializer(serializers.ModelSerializer):
             'updated_at'
         ]
 
+    @extend_schema_field(serializers.CharField)
     def get_product(self, obj):
         """Продукт с GTIN и списком артикулов."""
         sku = obj.product_sku
@@ -229,6 +232,7 @@ class ReservedPartyListSerializer(serializers.ModelSerializer):
             'articles': articles
         }
 
+    @extend_schema_field(serializers.CharField)
     def get_workshop(self, obj):
         """Цех из первой производственной партии."""
         party = obj.production_parties.select_related('workshop').first()
@@ -239,6 +243,7 @@ class ReservedPartyListSerializer(serializers.ModelSerializer):
             }
         return None
 
+    @extend_schema_field(serializers.ListField)
     def get_lines(self, obj):
         """Все уникальные линии из производственных партий."""
         parties = obj.production_parties.select_related('line').all()
@@ -251,6 +256,7 @@ class ReservedPartyListSerializer(serializers.ModelSerializer):
                 }
         return list(lines_map.values())
 
+    @extend_schema_field(serializers.DateField)
     def get_marking_date(self, obj):
         """Дата маркировки из первой партии (формат dd.mm.yyyy)."""
         party = obj.production_parties.first()
@@ -317,6 +323,7 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
 
     # === Методы для получения данных ===
 
+    @extend_schema_field(serializers.CharField())
     def get_product(self, obj):
         """Продукт с GTIN и списком артикулов."""
         sku = obj.product_sku
@@ -336,6 +343,7 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
             'articles': articles
         }
 
+    @extend_schema_field(serializers.CharField())
     def get_workshop(self, obj):
         """Цех из первой производственной партии."""
         party = obj.production_parties.select_related('workshop').first()
@@ -346,6 +354,7 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
             }
         return None
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_lines(self, obj):
         """Все уникальные линии из производственных партий."""
         parties = obj.production_parties.select_related('line').all()
@@ -358,6 +367,7 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
                 }
         return list(lines_map.values())
 
+    @extend_schema_field(serializers.DateField(allow_null=True))
     def get_marking_date(self, obj):
         """Дата маркировки из первой партии (формат dd.mm.yyyy)."""
         party = obj.production_parties.first()
@@ -375,6 +385,7 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
             )
         return obj._cached_codes
 
+    @extend_schema_field(serializers.CharField())
     def get_level_aggregation(self, obj):
         """Максимальный уровень агрегации среди всех кодов."""
         codes = self._get_all_codes(obj)
@@ -382,6 +393,7 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
             return 0
         return max(c['level'] for c in codes)
 
+    @extend_schema_field(serializers.IntegerField())
     def get_codes_total(self, obj):
         """Количество кодов по уровням."""
         codes = self._get_all_codes(obj)
@@ -391,6 +403,7 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
             totals[key] = totals.get(key, 0) + 1
         return totals
 
+    @extend_schema_field(serializers.ListField())
     def get_production_parties(self, obj):
         """Детальная информация о всех производственных партиях."""
         parties = obj.production_parties.select_related(
@@ -448,6 +461,7 @@ class ReservedPartyCodesSerializer(serializers.ModelSerializer):
             'codes'
         ]
 
+    @extend_schema_field(serializers.CharField())
     def get_level_aggregation(self, obj):
         from django.db import models
 
@@ -455,6 +469,7 @@ class ReservedPartyCodesSerializer(serializers.ModelSerializer):
         max_level = codes.aggregate(max_level=models.Max('level'))['max_level']
         return max_level or 0
 
+    @extend_schema_field(serializers.CharField())
     def get_codes(self, obj):
         """
         Строит дерево кодов, сгруппированное по уровням.

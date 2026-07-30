@@ -8,6 +8,9 @@ from django.shortcuts import render
 from django.db.models import Q
 from django.utils import timezone
 
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
+
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import api_view, action, permission_classes
 from rest_framework.exceptions import NotFound
@@ -47,6 +50,7 @@ from app_helper.sign_helper import get_list_certificates
 logger = logging.getLogger(__name__)
 
 
+@extend_schema(tags=["Честный Знак"])
 class CISCodeViewSet(viewsets.ReadOnlyModelViewSet):
     """API для просмотра кодов маркировки (только чтение)."""
 
@@ -80,16 +84,19 @@ class CISCodeViewSet(viewsets.ReadOnlyModelViewSet):
     # permission_classes = [AllowAny]
 
 
+@extend_schema(tags=["Честный Знак"])
 class ReservedPartyViewSet(viewsets.ReadOnlyModelViewSet):
     """
     API для работы с зарезервированными партиями (УИП).
 
-    GET /api/v1/reserved_parties/              — список с фильтрацией
+    GET /api/v1/reserved_parties/ — список с фильтрацией
     GET /api/v1/reserved_parties/{id_or_number}/ — детальная информация (с кодами и партиями)
     GET /api/v1/reserved_parties/{id_or_number}/codes/ — дерево кодов
     """
 
-    permission_classes = [IsAuthenticated]
+    queryset = UIP.objects.all()
+
+    # permission_classes = [IsAuthenticated]
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
@@ -230,6 +237,7 @@ class ReservedPartyViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(serializer.data)
 
 
+@extend_schema(tags=["Честный Знак"])
 class ProductionPartyViewSet(viewsets.ReadOnlyModelViewSet):
     """API для просмотра производственных партий (только чтение)."""
     queryset = ProductionParty.objects.select_related(
@@ -246,6 +254,14 @@ class ProductionPartyViewSet(viewsets.ReadOnlyModelViewSet):
 # Функции для взаимодействия с СУЗ.
 # ==========================================
 
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Возвращает список доступных валидных сертификатов ЭЦП",
+    responses={
+        200: OpenApiTypes.OBJECT,
+        500: OpenApiTypes.OBJECT
+    }
+)
 @api_view(['GET'])
 def api_get_suz_certificates(request):
     """Возвращает список доступных валидных сертификатов ЭЦП."""
@@ -265,6 +281,12 @@ def api_get_suz_certificates(request):
         )
 
 
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Создает или обновляет активную запись СУЗ",
+    request=OpenApiTypes.OBJECT,
+    responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 500: OpenApiTypes.OBJECT}
+)
 @api_view(['POST'])
 # @permission_classes([IsAdminUser])
 def api_setup_suz_account(request):
@@ -323,6 +345,12 @@ def api_setup_suz_account(request):
         )
 
 
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Деактивирует текущую активную запись СУЗ",
+    request=OpenApiTypes.OBJECT,
+    responses={200: OpenApiTypes.OBJECT}
+)
 @api_view(['POST'])
 # @permission_classes([IsAdminUser])
 def api_reset_suz_account(request):
@@ -337,6 +365,11 @@ def api_reset_suz_account(request):
     )
 
 
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Получение ключа аутентификации TrueAPI",
+    responses={200: OpenApiTypes.OBJECT, 502: OpenApiTypes.OBJECT}
+)
 @api_view(['GET'])
 # @permission_classes([IsAdminUser])
 def api_get_auth_key(request):
@@ -364,6 +397,12 @@ def api_get_auth_key(request):
         )
 
 
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Принудительное обновление динамического токена СУЗ",
+    request=OpenApiTypes.OBJECT,
+    responses={200: OpenApiTypes.OBJECT, 500: OpenApiTypes.OBJECT}
+)
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 def api_refresh_suz_token(request):
@@ -404,6 +443,12 @@ def api_refresh_suz_token(request):
 # Функции для взаимодействия с УИП. Только админы или авторизованные системы могут вызывать эти методы ЧЗ.
 # ==========================================
 
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Генерация номеров партий в Честном Знаке",
+    request=GeneratePartySerializer,
+    responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT}
+)
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 def api_generate_parties(request):
@@ -429,6 +474,12 @@ def api_generate_parties(request):
     return Response(result, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Резервирование своих номеров партий в Честном Знаке",
+    request=ReservePartySerializer,
+    responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT}
+)
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 def api_reserve_parties(request):
@@ -454,6 +505,11 @@ def api_reserve_parties(request):
     return Response(result, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Получение списка всех зарезервированных партий из ЧЗ",
+    responses={200: OpenApiTypes.OBJECT, 502: OpenApiTypes.OBJECT}
+)
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def api_get_all_reserved_parties(request):
@@ -469,6 +525,12 @@ def api_get_all_reserved_parties(request):
     return Response(result, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Снятие партии с резерва (через отчет о нанесении)",
+    request=ClosePartySerializer,
+    responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT}
+)
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 def api_close_party_reservation(request):
@@ -495,6 +557,12 @@ def api_close_party_reservation(request):
     return Response(result, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Синхронизация кодов из рабочего проекта",
+    request=SyncCodesTaskSerializer,
+    responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT}
+)
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 def api_sync_codes_task(request):

@@ -1,5 +1,6 @@
 # app_factory/views.py
 
+from drf_spectacular.utils import extend_schema
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -10,6 +11,7 @@ from app_factory.serializers import (
 )
 
 
+@extend_schema(tags=['Производство'])
 class WorkshopViewSet(viewsets.ReadOnlyModelViewSet):
     """
     API для получения списка цехов.
@@ -40,6 +42,7 @@ class WorkshopViewSet(viewsets.ReadOnlyModelViewSet):
         return Response({'result': serializer.data})
 
 
+@extend_schema(tags=['Производство'])
 class LineViewSet(viewsets.ReadOnlyModelViewSet):
     """
     API для получения списка линий.
@@ -77,6 +80,7 @@ class LineViewSet(viewsets.ReadOnlyModelViewSet):
         return Response({'result': serializer.data})
 
 
+@extend_schema(tags=['Производство'])
 class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     """
     API для получения списка продуктов.
