@@ -4,7 +4,7 @@
 {% load static %}
 
 {% block head %}
-    <link rel="stylesheet" href="{% static 'css/uip.css' %}" type="text/css">
+<link rel="stylesheet" href="{% static 'css/uip.css' %}" type="text/css">
 {% endblock %}
 
 {% block content %}
@@ -13,11 +13,13 @@
         <h1>{{ page_name }}</h1>
         <p class="subtitle">Всего найдено: <span class="highlight">{{ total_count }}</span> УИП</p>
 
-    {% if user.is_superuser %}
+        {% if user.is_superuser %}
         <div class="sync-controls">
             <!-- Кнопка синхронизации -->
-            <button id="syncBtn" class="btn-sync" data-url="{% url 'uip_sync' %}" data-csrf="{{ csrf_token }}" onclick="syncParties()">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <button id="syncBtn" class="btn-sync" data-url="{% url 'uip_sync' %}" data-csrf="{{ csrf_token }}"
+                    onclick="syncParties()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
                     <polyline points="23 4 23 10 17 10"></polyline>
                     <polyline points="1 20 1 14 7 14"></polyline>
                     <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
@@ -27,7 +29,8 @@
 
             <!-- кнопка генерации -->
             <button id="generateBtn" class="btn-generate" onclick="openGenerateModal()">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
                     <line x1="12" y1="5" x2="12" y2="19"></line>
                     <line x1="5" y1="12" x2="19" y2="12"></line>
                 </svg>
@@ -52,6 +55,13 @@
                     <!-- Выбор продукта -->
                     <div class="form-group">
                         <label>Продукт:</label>
+                        <div class="product-search">
+                            <input type="text" id="productSearch" class="form-input"
+                                   placeholder="Поиск по артикулу или названию…"
+                                   autocomplete="off"
+                                   oninput="filterProducts(this.value)">
+                            <span class="product-count" id="productCount"></span>
+                        </div>
                         <div class="product-list" id="productList"></div>
                     </div>
 
@@ -96,58 +106,114 @@
                 </div>
             </div>
         </div>
-    {% endif %}
+        {% endif %}
     </div>
 
-    <!-- ФИЛЬТР ПО СТАТУСАМ -->
-    <div class="status-filter">
-        <a href="?status=all" class="filter-btn {% if current_status == 'all' %}filter-btn-active{% endif %}">
-            Все <span class="filter-count">{{ status_counts.all }}</span>
-        </a>
-        <a href="?status=reserved_cz" class="filter-btn {% if current_status == 'reserved_cz' %}filter-btn-active{% endif %}">
-            Резерв ЧЗ <span class="filter-count">{{ status_counts.reserved_cz }}</span>
-        </a>
-        <a href="?status=reserved_local" class="filter-btn {% if current_status == 'reserved_local' %}filter-btn-active{% endif %}">
-            Собственный <span class="filter-count">{{ status_counts.reserved_local }}</span>
-        </a>
-        <a href="?status=registered" class="filter-btn {% if current_status == 'registered' %}filter-btn-active{% endif %}">
-            Зарегистрирован <span class="filter-count">{{ status_counts.registered }}</span>
-        </a>
-        <a href="?status=closed" class="filter-btn {% if current_status == 'closed' %}filter-btn-active{% endif %}">
-            Закрыт <span class="filter-count">{{ status_counts.closed }}</span>
-        </a>
-        <a href="?status=archived" class="filter-btn {% if current_status == 'archived' %}filter-btn-active{% endif %}">
-            Архив <span class="filter-count">{{ status_counts.archived }}</span>
-        </a>
-        <a href="?status=draft" class="filter-btn {% if current_status == 'draft' %}filter-btn-active{% endif %}">
-            Черновик <span class="filter-count">{{ status_counts.draft }}</span>
-        </a>
-        <a href="?status=deleted" class="filter-btn {% if current_status == 'deleted' %}filter-btn-active{% endif %}">
-            Удалён <span class="filter-count">{{ status_counts.deleted }}</span>
-        </a>
+    <!-- ТУЛБАР НАД ТАБЛИЦЕЙ -->
+    <div class="table-toolbar">
+        <div class="toolbar-info">
+            Найдено: <span class="highlight">{{ total_count }}</span> УИП
+        </div>
+        <div class="toolbar-actions">
+            <button type="submit" form="uipFilterForm" class="btn-apply">Применить фильтры</button>
+            {% if has_active_filters %}
+                <button type="button" class="btn-reset" onclick="resetFilters()">
+                    ✕ Сбросить фильтры
+                </button>
+            {% endif %}
+        </div>
     </div>
 
-    <!-- ТАБЛИЦА УИП -->
-    {% if page_obj %}
-        <div class="uip-table-container">
-            <table class="uip-table">
-                <thead>
+    <!-- ФОРМА ФИЛЬТРОВ (оборачивает и таблицу, и пустое состояние) -->
+    <form id="uipFilterForm" method="get" action="">
+        {% if page_obj %}
+            <div class="uip-table-container">
+                <table class="uip-table">
+                    <thead>
                     <tr>
-                        <th>Номер УИП</th>
-                        <th>Статус</th>
+                        <!-- Номер УИП: текстовый поиск -->
+                        <th class="filterable">
+                            <div class="th-label" onclick="toggleFilter('number')">
+                                Номер УИП
+                                <span class="filter-caret {% if current_number %}active{% endif %}">▾</span>
+                            </div>
+                            <div class="th-filter" id="thf-number" {% if not current_number %}style="display:none;"{% endif %}>
+                                <input type="text" name="number" value="{{ current_number }}"
+                                       placeholder="Поиск по номеру"
+                                       onkeypress="if(event.key==='Enter') applyFilters()">
+                            </div>
+                        </th>
+
+                        <!-- Статус: выпадающий список -->
+                        <th class="filterable">
+                            <div class="th-label" onclick="toggleFilter('status')">
+                                Статус
+                                <span class="filter-caret {% if current_status %}active{% endif %}">▾</span>
+                            </div>
+                            <div class="th-filter" id="thf-status" {% if not current_status %}style="display:none;"{% endif %}>
+                                <select name="status" onchange="applyFilters()">
+                                    <option value="">Все статусы</option>
+                                    {% for value, label in status_choices %}
+                                        <option value="{{ value }}" {% if current_status == value %}selected{% endif %}>
+                                            {{ label }}
+                                        </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </th>
+
+                        <!-- Продукт: без фильтра -->
                         <th>Продукт</th>
-                        <th>Артикул</th>
-                        <th>Дата производства</th>
-                        <th>Дата резервирования</th>
+
+                        <!-- Артикул: текстовый поиск -->
+                        <th class="filterable">
+                            <div class="th-label" onclick="toggleFilter('article')">
+                                Артикул
+                                <span class="filter-caret {% if current_article %}active{% endif %}">▾</span>
+                            </div>
+                            <div class="th-filter" id="thf-article" {% if not current_article %}style="display:none;"{% endif %}>
+                                <input type="text" name="article" value="{{ current_article }}"
+                                       placeholder="Поиск по артикулу"
+                                       onkeypress="if(event.key==='Enter') applyFilters()">
+                            </div>
+                        </th>
+
+                        <!-- Дата производства: диапазон -->
+                        <th class="filterable">
+                            <div class="th-label" onclick="toggleFilter('prod')">
+                                Дата производства
+                                <span class="filter-caret {% if current_prod_from or current_prod_to %}active{% endif %}">▾</span>
+                            </div>
+                            <div class="th-filter th-filter-date" id="thf-prod"
+                                 {% if not current_prod_from and not current_prod_to %}style="display:none;"{% endif %}>
+                                <input type="date" name="prod_from" value="{{ current_prod_from }}" onchange="applyFilters()">
+                                <span class="date-sep">—</span>
+                                <input type="date" name="prod_to" value="{{ current_prod_to }}" onchange="applyFilters()">
+                            </div>
+                        </th>
+
+                        <!-- Дата резервирования: диапазон -->
+                        <th class="filterable">
+                            <div class="th-label" onclick="toggleFilter('res')">
+                                Дата резервирования
+                                <span class="filter-caret {% if current_res_from or current_res_to %}active{% endif %}">▾</span>
+                            </div>
+                            <div class="th-filter th-filter-date" id="thf-res"
+                                 {% if not current_res_from and not current_res_to %}style="display:none;"{% endif %}>
+                                <input type="date" name="res_from" value="{{ current_res_from }}" onchange="applyFilters()">
+                                <span class="date-sep">—</span>
+                                <input type="date" name="res_to" value="{{ current_res_to }}" onchange="applyFilters()">
+                            </div>
+                        </th>
+
+                        <!-- Создан: без фильтра -->
                         <th>Создан</th>
                     </tr>
-                </thead>
-                <tbody>
+                    </thead>
+                    <tbody>
                     {% for uip in page_obj %}
                         <tr>
-                            <td class="uip-number" title="{{ uip.number }}">
-                                {{ uip.number }}
-                            </td>
+                            <td class="uip-number" title="{{ uip.number }}">{{ uip.number }}</td>
                             <td>
                                 <span class="status-badge status-{{ uip.status }}">
                                     {{ uip.get_status_display }}
@@ -178,65 +244,56 @@
                             <td class="date-cell">{{ uip.created_at|date:"d.m.Y H:i" }}</td>
                         </tr>
                     {% endfor %}
-                </tbody>
-            </table>
-        </div>
-
-        <!-- ПАГИНАЦИЯ -->
-        <div class="pagination-wrapper">
-            <div class="pagination-info">
-                Показаны <span class="highlight">{{ start_item }}–{{ end_item }}</span> из <span class="highlight">{{ total_count }}</span>
+                    </tbody>
+                </table>
             </div>
 
-            <div class="pagination">
-                <!-- Кнопка "Первая" -->
-                {% if page_obj.has_previous %}
-                    <a href="?status={{ current_status }}&page=1" class="page-btn" title="Первая страница">
-                        «
-                    </a>
-                    <a href="?status={{ current_status }}&page={{ page_obj.previous_page_number }}" class="page-btn" title="Предыдущая">
-                        ‹
-                    </a>
-                {% else %}
-                    <span class="page-btn page-btn-disabled">«</span>
-                    <span class="page-btn page-btn-disabled">‹</span>
-                {% endif %}
+            <!-- ПАГИНАЦИЯ (с сохранением фильтров через query_string) -->
+            <div class="pagination-wrapper">
+                <div class="pagination-info">
+                    Показаны <span class="highlight">{{ start_item }}–{{ end_item }}</span> из <span class="highlight">{{ total_count }}</span>
+                </div>
 
-                <!-- Номера страниц -->
-                {% for page in page_range %}
-                    {% if page == '...' %}
-                        <span class="page-ellipsis">…</span>
-                    {% elif page == page_obj.number %}
-                        <span class="page-btn page-btn-active">{{ page }}</span>
+                <div class="pagination">
+                    {% if page_obj.has_previous %}
+                        <a href="?{% if query_string %}{{ query_string }}&{% endif %}page=1" class="page-btn" title="Первая страница">«</a>
+                        <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.previous_page_number }}" class="page-btn" title="Предыдущая">‹</a>
                     {% else %}
-                        <a href="?status={{ current_status }}&page={{ page }}" class="page-btn">{{ page }}</a>
+                        <span class="page-btn page-btn-disabled">«</span>
+                        <span class="page-btn page-btn-disabled">‹</span>
                     {% endif %}
-                {% endfor %}
 
-                <!-- Кнопка "Следующая" -->
-                {% if page_obj.has_next %}
-                    <a href="?status={{ current_status }}&page={{ page_obj.next_page_number }}" class="page-btn" title="Следующая">
-                        ›
-                    </a>
-                    <a href="?status={{ current_status }}&page={{ paginator.num_pages }}" class="page-btn" title="Последняя страница">
-                        »
-                    </a>
-                {% else %}
-                    <span class="page-btn page-btn-disabled">›</span>
-                    <span class="page-btn page-btn-disabled">»</span>
-                {% endif %}
+                    {% for page in page_range %}
+                        {% if page == '...' %}
+                            <span class="page-ellipsis">…</span>
+                        {% elif page == page_obj.number %}
+                            <span class="page-btn page-btn-active">{{ page }}</span>
+                        {% else %}
+                            <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page }}" class="page-btn">{{ page }}</a>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if page_obj.has_next %}
+                        <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.next_page_number }}" class="page-btn" title="Следующая">›</a>
+                        <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ paginator.num_pages }}" class="page-btn" title="Последняя страница">»</a>
+                    {% else %}
+                        <span class="page-btn page-btn-disabled">›</span>
+                        <span class="page-btn page-btn-disabled">»</span>
+                    {% endif %}
+                </div>
             </div>
-        </div>
-    {% else %}
-        <div class="empty-state">
-            <p class="empty-text">Список пуст</p>
-            <p class="empty-subtext">Попробуйте изменить фильтр</p>
-        </div>
-    {% endif %}
+        {% else %}
+            <!-- ПУСТОЕ СОСТОЯНИЕ -->
+            <div class="empty-state">
+                <p class="empty-text">Список пуст</p>
+                <p class="empty-subtext">Попробуйте изменить фильтры или сбросить их</p>
+            </div>
+        {% endif %}
+    </form>
 </div>
 
-{% block js %}
-    <script src="{% static 'js/uip.js' %}"></script>
 {% endblock %}
 
+{% block js %}
+<script type="text/javascript" src="{% static 'js/uip.js' %}" defer></script>
 {% endblock %}

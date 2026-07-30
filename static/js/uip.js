@@ -80,7 +80,11 @@ async function syncParties() {
 // ==========================================
 // ГЕНЕРАЦИЯ УИП
 // ==========================================
-let availableProducts = [];
+let availableProducts = [];   // полный список
+let filteredProducts = [];    // отфильтрованный список
+let selectedSkuId = null;     // сохранённый выбор
+let lastQuery = '';           // последний поисковый запрос (для подсветки)
+const MAX_VISIBLE_PRODUCTS = 50;  // сколько элементов рендерим за раз
 
 function initGenerateModal() {
     const dataEl = document.getElementById('available-products-data');
@@ -91,41 +95,100 @@ function initGenerateModal() {
             availableProducts = [];
         }
     }
+    filteredProducts = availableProducts;
     renderProductList();
 
     const dateInput = document.getElementById('productionDate');
     if (dateInput) {
-        dateInput.valueAsDate = new Date();  // по умолчанию — сегодня
+        dateInput.valueAsDate = new Date();
         dateInput.addEventListener('change', updatePreview);
     }
 }
 
+/** Фильтрация по артикулу и названию. */
+function filterProducts(query) {
+    lastQuery = query.trim();
+    const q = lastQuery.toLowerCase();
+
+    if (!q) {
+        filteredProducts = availableProducts;
+    } else {
+        filteredProducts = availableProducts.filter(p =>
+            p.sku_code.toLowerCase().includes(q) ||
+            p.name.toLowerCase().includes(q)
+        );
+    }
+    renderProductList();
+}
+
+/** Рендерим только первые MAX_VISIBLE_PRODUCTS совпадений. */
 function renderProductList() {
     const list = document.getElementById('productList');
     if (!list) return;
 
-    if (!availableProducts.length) {
-        list.innerHTML = '<div class="empty-products">Нет доступных продуктов с заполненным GTIN</div>';
+    updateProductCount();
+
+    if (!filteredProducts.length) {
+        list.innerHTML = '<div class="empty-products">Ничего не найдено</div>';
         return;
     }
 
-    list.innerHTML = availableProducts.map((p, i) => `
+    const visible = filteredProducts.slice(0, MAX_VISIBLE_PRODUCTS);
+
+    // Сохраняем выбор, если выбранный продукт виден; иначе — первый.
+    let checkedIndex = visible.findIndex(p => p.sku_id === selectedSkuId);
+    if (checkedIndex === -1) checkedIndex = 0;
+
+    list.innerHTML = visible.map((p, i) => `
         <label class="product-item">
             <input type="radio" name="product" value="${p.sku_id}"
                    data-gtin="${p.gtin}" data-article="${escapeHtml(p.sku_code)}"
-                   ${i === 0 ? 'checked' : ''} onchange="onProductSelect(this)">
+                   ${i === checkedIndex ? 'checked' : ''} onchange="onProductSelect(this)">
             <div class="product-info">
-                <span class="product-name">${escapeHtml(p.name)}</span>
-                <span class="product-meta">GTIN: ${p.gtin} · Артикул: ${escapeHtml(p.sku_code)}</span>
+                <span class="product-name">${highlightMatch(p.name, lastQuery)}</span>
+                <span class="product-meta">GTIN: ${p.gtin} · Арт: ${highlightMatch(p.sku_code, lastQuery)}</span>
             </div>
         </label>
     `).join('');
 
-    const first = list.querySelector('input[type=radio]');
-    if (first) onProductSelect(first);
+    const checked = list.querySelector('input[type=radio]:checked');
+    if (checked) {
+        selectedSkuId = checked.value;
+        updatePreview();
+    }
+}
+
+/** Счётчик найденного. */
+function updateProductCount() {
+    const countEl = document.getElementById('productCount');
+    if (!countEl) return;
+
+    const total = availableProducts.length;
+    const found = filteredProducts.length;
+
+    if (!lastQuery) {
+        countEl.textContent = `Всего продуктов: ${total}`;
+    } else if (found > MAX_VISIBLE_PRODUCTS) {
+        countEl.textContent = `Найдено: ${found} · показано первых ${MAX_VISIBLE_PRODUCTS}`;
+    } else {
+        countEl.textContent = `Найдено: ${found} из ${total}`;
+    }
+}
+
+/** Безопасная подсветка совпадений. */
+function highlightMatch(text, query) {
+    if (!query) return escapeHtml(text);
+    const idx = text.toLowerCase().indexOf(query.toLowerCase());
+    if (idx === -1) return escapeHtml(text);
+
+    const before = text.slice(0, idx);
+    const match = text.slice(idx, idx + query.length);
+    const after = text.slice(idx + query.length);
+    return escapeHtml(before) + '<mark>' + escapeHtml(match) + '</mark>' + escapeHtml(after);
 }
 
 function onProductSelect(radio) {
+    selectedSkuId = radio.value;
     updatePreview();
 }
 
@@ -185,6 +248,12 @@ function updatePreview() {
 function openGenerateModal() {
     document.getElementById('generateModal').style.display = 'flex';
     document.getElementById('generateStatus').style.display = 'none';
+
+    // Сброс поиска при открытии (выбор продукта сохраняется через selectedSkuId).
+    const searchInput = document.getElementById('productSearch');
+    if (searchInput) searchInput.value = '';
+    filterProducts('');
+
     updatePreview();
 }
 
@@ -254,5 +323,53 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
+// ==========================================
+// ФИЛЬТРЫ ТАБЛИЦЫ УИП
+// ==========================================
+
+/** Закрыть все открытые панели фильтров. */
+function closeAllFilterPanels() {
+    document.querySelectorAll('.th-filter').forEach(p => {
+        p.style.display = 'none';
+        const parentTh = p.closest('th');
+        if (parentTh) parentTh.classList.remove('open');
+    });
+}
+
+/** Раскрыть/скрыть панель фильтра в заголовке колонки. */
+function toggleFilter(col) {
+    const panel = document.getElementById('thf-' + col);
+    if (!panel) return;
+
+    const th = panel.closest('th');
+    const isVisible = panel.style.display !== 'none';
+
+    closeAllFilterPanels();
+
+    if (!isVisible) {
+        // Убираем inline-скрытие — CSS сам задаст block/flex.
+        panel.style.display = '';
+        if (th) th.classList.add('open');
+        const firstInput = panel.querySelector('input, select');
+        if (firstInput) firstInput.focus();
+    }
+}
+
+/** Применить фильтры (отправить форму). */
+function applyFilters() {
+    document.getElementById('uipFilterForm').submit();
+}
+
+/** Сбросить все фильтры — переход на чистый URL. */
+function resetFilters() {
+    window.location.href = window.location.pathname;
+}
+
+// Закрытие панелей фильтров по клику вне таблицы.
+document.addEventListener('click', function (event) {
+    if (!event.target.closest('.uip-table')) {
+        closeAllFilterPanels();
+    }
+});
 // Инициализация при загрузке страницы.
 document.addEventListener('DOMContentLoaded', initGenerateModal);

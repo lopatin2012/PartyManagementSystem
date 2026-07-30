@@ -16,7 +16,7 @@ from django.db.models import Q
 from app_cz.models import CISCode
 from app_cz.services.party_service import sync_parties_from_cz, generate_uip, get_available_products
 
-from app_uip.models import UIP, ProductionParty
+from app_uip.models import UIP, PartyStatusChoices
 
 from app_helper.search_helper import detect_search_type
 
@@ -102,70 +102,81 @@ class SearchView(View):
 
 
 class UIPListView(TemplateView):
-    """Страница со списком последних 100 УИПов."""
+    """Страница со списком УИП с фильтрацией и пагинацией."""
     template_name = 'uip/main.html'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
-        # Получаем фильтр по статусу из query-параметров.
-        status_filter = self.request.GET.get('status', 'all')
+        get = self.request.GET
 
-        # Базовый queryset.
+        # === Читаем все фильтры из query-параметров ===
+        status_filter = get.get('status', '')
+        number_filter = get.get('number', '').strip()
+        article_filter = get.get('article', '').strip()
+        prod_from = get.get('prod_from', '')
+        prod_to = get.get('prod_to', '')
+        res_from = get.get('res_from', '')
+        res_to = get.get('res_to', '')
+
+        # === Базовый queryset ===
         queryset = UIP.objects.select_related(
             'product_sku__product'
         ).order_by('-created_at')
 
-        # Применяем фильтр по статусу.
+        # === Применяем фильтры ===
         if status_filter and status_filter != 'all':
             queryset = queryset.filter(status=status_filter)
+        if number_filter:
+            queryset = queryset.filter(number__icontains=number_filter)
+        if article_filter:
+            queryset = queryset.filter(product_sku__sku_code__icontains=article_filter)
+        if prod_from:
+            queryset = queryset.filter(production_date__gte=prod_from)
+        if prod_to:
+            queryset = queryset.filter(production_date__lte=prod_to)
+        if res_from:
+            queryset = queryset.filter(reservation_date__gte=res_from)
+        if res_to:
+            queryset = queryset.filter(reservation_date__lte=res_to)
 
-        # Пагинация: 100 записей на страницу.
+        # === Пагинация: 100 записей на страницу ===
         paginator = Paginator(queryset, 100)
-        page_number = self.request.GET.get('page', 1)
+        page_number = get.get('page', 1)
         page_obj = paginator.get_page(page_number)
 
-        # Формируем диапазон страниц для отображения в пагинаторе.
-        # Показываем текущую страницу ± 2, плюс первую и последнюю.
+        # Диапазон страниц для пагинатора.
         current_page = page_obj.number
         total_pages = paginator.num_pages
-        page_range = []
-
-        # Всегда добавляем первую страницу.
-        page_range.append(1)
-
-        # Добавляем диапазон вокруг текущей страницы.
+        page_range = [1]
         start = max(2, current_page - 2)
         end = min(total_pages - 1, current_page + 2)
-
         if start > 2:
             page_range.append('...')
         page_range.extend(range(start, end + 1))
         if end < total_pages - 1:
             page_range.append('...')
-
-        # Всегда добавляем последнюю страницу (если больше 1).
         if total_pages > 1:
             page_range.append(total_pages)
 
-        # Статистика по статусам (для фильтра).
-        status_counts = {
-            'all': UIP.objects.count(),
-            'draft': UIP.objects.filter(status='draft').count(),
-            'reserved_cz': UIP.objects.filter(status='reserved_cz').count(),
-            'reserved_local': UIP.objects.filter(status='reserved_local').count(),
-            'registered': UIP.objects.filter(status='registered').count(),
-            'closed': UIP.objects.filter(status='closed').count(),
-            'deleted': UIP.objects.filter(status='deleted').count(),
-            'archived': UIP.objects.filter(status='archived').count(),
-        }
+        # Query string без page — для сохранения фильтров при переходе по страницам.
+        params = get.copy()
+        params.pop('page', None)
+        query_string = params.urlencode()
 
-        # Границы отображаемых записей (для текста "Показаны X-Y из Z").
+        # Границы отображаемых записей.
         start_item = (page_obj.number - 1) * paginator.per_page + 1
         end_item = start_item + len(page_obj) - 1
         if paginator.count == 0:
             start_item = 0
             end_item = 0
+
+        # Есть ли активные фильтры (для кнопки сброса и подсветки заголовков).
+        has_active_filters = bool(
+            (status_filter and status_filter != 'all')
+            or number_filter or article_filter
+            or prod_from or prod_to or res_from or res_to
+        )
 
         context.update({
             'title_name': 'Список УИП',
@@ -174,11 +185,23 @@ class UIPListView(TemplateView):
             'paginator': paginator,
             'page_range': page_range,
             'total_count': paginator.count,
-            'current_status': status_filter,
-            'status_counts': status_counts,
+            'query_string': query_string,
             'start_item': start_item,
             'end_item': end_item,
             'available_products': get_available_products(),
+
+            # Текущие значения фильтров (для сохранения в шаблоне).
+            'current_status': status_filter,
+            'current_number': number_filter,
+            'current_article': article_filter,
+            'current_prod_from': prod_from,
+            'current_prod_to': prod_to,
+            'current_res_from': res_from,
+            'current_res_to': res_to,
+            'has_active_filters': has_active_filters,
+
+            # Список статусов для выпадающего списка.
+            'status_choices': PartyStatusChoices.choices,
         })
 
         return context
