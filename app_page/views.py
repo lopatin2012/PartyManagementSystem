@@ -2,6 +2,9 @@
 
 import logging
 
+from django.contrib.admin.views.decorators import staff_member_required
+from django.http import JsonResponse
+from django.utils.decorators import method_decorator
 from django.views.generic import TemplateView
 from django.shortcuts import render
 from django.views import View
@@ -9,6 +12,8 @@ from django.core.paginator import Paginator
 from django.db.models import Q
 
 from app_cz.models import CISCode
+from app_cz.services.party_service import sync_parties_from_cz
+
 from app_uip.models import UIP, ProductionParty
 
 from app_helper.search_helper import detect_search_type
@@ -178,3 +183,24 @@ class UIPListView(TemplateView):
         })
 
         return context
+
+
+@method_decorator(staff_member_required, name='dispatch')
+class SyncPartiesView(View):
+    """Синхронизация УИП из Честного Знака (только для админов)."""
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return JsonResponse({
+                'is_error': True,
+                'message': 'Доступ только для администраторов'
+            }, status=403)
+
+        result = sync_parties_from_cz()
+
+        status_code = (
+            502
+            if result.get('is_error')
+            else 200
+        )
+        return JsonResponse(result, status=status_code)

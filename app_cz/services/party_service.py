@@ -2,18 +2,24 @@
 import json
 import logging
 import re
+from datetime import datetime
 
 import requests
 from django.utils import timezone
 from django.db.models import Q, ObjectDoesNotExist
+from django.db import transaction
 
 from app_cz.models import SUZAccount
 from app_cz.suz_config import SUZ
 from app_cz.enums import TypeProduct
 from app_cz.services.suz_client import get_true_api_session_token, get_true_api_auth_key
 from app_cz.services.code_client import send_application_report
+
+from app_factory.models import ProductSKU
+
 from app_helper.sign_helper import unpinned_signed_data
-from app_uip.models import UIP, PartyStatusChoices
+
+from app_uip.models import UIP, PartyStatusChoices, PartyNumberTypeChoices
 
 logger = logging.getLogger(__name__)
 
@@ -390,4 +396,127 @@ def close_party_reservation(
             'has_error': True,
             'status_close': False,
             'message': f'Внутренняя ошибка: {str(e)}'
+        }
+
+
+def sync_parties_from_cz() -> dict:
+    """
+    Синхронизирует список зарезервированных партий из Честного Знака с локальной базой.
+
+    Returns:
+        dict: {
+            'is_error': bool,
+            'message': str,
+            'created': int,
+            'updated': int,
+            'total': int
+        }
+    """
+    # Получаем список партий из ЧЗ
+    result = get_all_reserved_parties()
+
+    if result.get('is_error'):
+        return {
+            'is_error': True,
+            'message': result.get(
+                'message_error',
+                'Ошибка получения данных из ЧЗ'
+            ),
+            'created': 0,
+            'updated': 0,
+            'total': 0
+        }
+
+    lst_party_info = result.get('lst_party_number_info', [])
+
+    if not lst_party_info:
+        return {
+            'is_error': False,
+            'message': 'В ЧЗ нет зарезервированных партий',
+            'created': 0,
+            'updated': 0,
+            'total': 0
+        }
+
+    created_count = 0
+    updated_count = 0
+
+    try:
+        with transaction.atomic():
+            for party_info in lst_party_info:
+                party_number = party_info.get('partyNumber', '')
+
+                if not party_number:
+                    logger.warning(
+                        f'Пропущена запись без номера партии: {party_info}'
+                    )
+                    continue
+
+                # Парсим дату производства (формат: YYMMDD из первых 6 цифр после GTIN).
+                production_date = None
+                if len(party_number) >= 20:
+                    try:
+                        date_str = party_number[14:20]  # 6 цифр после GTIN
+                        production_date = datetime.strptime(date_str, '%y%m%d').date()
+                    except ValueError:
+                        pass
+
+                # Определяем статус на основе данных из ЧЗ
+                # По умолчанию считаем зарезервированным в ЧЗ.
+                status = PartyStatusChoices.RESERVED_CZ
+
+                # Пытаемся найти соответствующий SKU по GTIN.
+                product_sku = None
+                if len(party_number) >= 14:
+                    gtin = party_number[:14]
+                    product_sku = ProductSKU.objects.filter(
+                        product__packagings__gtin=gtin,
+                        is_active=True
+                    ).first()
+
+                # Создаём или обновляем УИП.
+                uip, created = UIP.objects.update_or_create(
+                    number=party_number,
+                    defaults={
+                        'product_sku': product_sku,
+                        'number_type': PartyNumberTypeChoices.CZ_AUTO,
+                        'status': status,
+                        'production_date': production_date,
+                        'reservation_date': timezone.now().date(),
+                        'planned_quantity': party_info.get('expectedQuantity', 0),
+                        'description': f'Синхронизировано из ЧЗ: '
+                                       f'{timezone.now().strftime("%d.%m.%Y %H:%M")}'
+                    }
+                )
+
+                if created:
+                    created_count += 1
+                    logger.info(f'Создан УИП: {party_number}')
+                else:
+                    updated_count += 1
+                    logger.info(f'Обновлён УИП: {party_number}')
+
+        message = (f'Синхронизация завершена. Создано: {created_count},'
+                   f' обновлено: {updated_count}')
+        logger.info(message)
+
+        return {
+            'is_error': False,
+            'message': message,
+            'created': created_count,
+            'updated': updated_count,
+            'total': len(lst_party_info)
+        }
+
+    except Exception as e:
+        logger.error(
+            f'Ошибка при синхронизации партий: {e}',
+            exc_info=True
+        )
+        return {
+            'is_error': True,
+            'message': f'Ошибка при сохранении данных: {str(e)}',
+            'created': created_count,
+            'updated': updated_count,
+            'total': len(lst_party_info)
         }

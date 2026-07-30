@@ -309,10 +309,83 @@
     letter-spacing: 2px;
 }
 
+/* === КНОПКА СИНХРОНИЗАЦИИ === */
+.sync-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1rem;
+    justify-content: center;
+}
+
+.btn-sync {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.7rem 1.5rem;
+    background: var(--accent-green);
+    color: var(--bg-dark);
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-sync:hover:not(:disabled) {
+    background: #d4e84b;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(187, 207, 50, 0.3);
+}
+
+.btn-sync:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-sync svg {
+    animation: none;
+}
+
+.btn-sync.syncing svg {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.sync-status {
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    animation: fadeIn 0.3s ease;
+}
+
+.sync-status.success {
+    background: rgba(187, 207, 50, 0.15);
+    color: var(--accent-green);
+    border: 1px solid rgba(187, 207, 50, 0.4);
+}
+
+.sync-status.error {
+    background: rgba(220, 53, 69, 0.15);
+    color: #ff6b7a;
+    border: 1px solid rgba(220, 53, 69, 0.4);
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
 /* === АДАПТИВНОСТЬ === */
 @media (max-width: 1200px) {
     .uip-page {
-        padding: 1.5rem;
+        padding: 0.5rem;
     }
 
     .uip-table th,
