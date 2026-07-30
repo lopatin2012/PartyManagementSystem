@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 
 from .models import UIP, ProductionParty, PartyStatusChoices
 
@@ -25,6 +26,34 @@ def status_colored(obj):
         'border-radius: 4px; font-size: 0.85rem; font-weight: 600;">{}</span>',
         color,
         obj.get_status_display()
+    )
+
+
+def render_plan_fact(planned: int, produced: int):
+    """
+    Универсальный рендер 'План/Факт' с мини-прогрессбаром.
+    """
+    # Если плана нет — возвращаем статичный HTML через mark_safe.
+    if planned == 0:
+        return mark_safe('<span style="color: #999;">—</span>')
+
+    percentage = min((produced / planned) * 100, 100)
+
+    # Цвет в зависимости от процента выполнения.
+    if percentage >= 100:
+        color = '#BBCF32'  # Зелёный — план выполнен.
+    elif percentage >= 50:
+        color = '#FABB1C'  # Жёлтый — в процессе.
+    else:
+        color = '#ff6b7a'  # Красный — низкий процент.
+
+    return format_html(
+        '<div style="min-width: 90px;">'
+        '<div style="font-weight: 600;">{} <span style="color: #999; font-weight: 400;">/ {}</span></div>'
+        '<div style="background: rgba(255,255,255,0.15); border-radius: 3px; height: 4px; margin-top: 3px;">'
+        '<div style="background: {}; width: {}%; height: 100%; border-radius: 3px;"></div>'
+        '</div></div>',
+        produced, planned, color, percentage
     )
 
 
@@ -96,8 +125,8 @@ class UIPAdmin(admin.ModelAdmin):
 
     @admin.display(description='План/Факт')
     def planned_and_produced(self, obj):
-        """Объединение плана и факта производства в один столбец."""
-        return f'{obj.planned_quantity}/{obj.produced_quantity}'
+        """План/Факт с мини-прогрессбаром."""
+        return render_plan_fact(obj.planned_quantity, obj.produced_quantity)
 
 
 # ==========================================
@@ -168,8 +197,8 @@ class ProductionPartyAdmin(admin.ModelAdmin):
 
     @admin.display(description='План/Факт')
     def planned_and_produced(self, obj):
-        """Объединение плана и факта производства в один столбец."""
-        return f'{obj.planned_quantity}/{obj.produced_quantity}'
+        """План/Факт с мини-прогрессбаром."""
+        return render_plan_fact(obj.planned_quantity, obj.produced_quantity)
 
     @admin.display(description='Завод')
     def factory_name(self, obj):
