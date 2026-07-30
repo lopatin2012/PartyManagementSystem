@@ -31,33 +31,27 @@ class UIPStatusViewSet(viewsets.ViewSet):
 
     # permission_classes = [IsAuthenticated]
 
+    lookup_field = 'number'
+    queryset = UIP.objects.all()
+
     @extend_schema(
         tags=['УИП'],
         operation_id='status_parties_retrieve',
-        summary='Проверка статуса одного УИП',
-        parameters=[
-            OpenApiParameter(
-                name='id',
-                type=OpenApiTypes.STR,
-                location=OpenApiParameter.PATH,
-                description='Номер УИП (partyNumber)',
-            )
-        ],
         responses={
             200: UIPStatusSerializer,
             404: UIPStatusSerializer,
         },
     )
-    def retrieve(self, request, pk=None):
+    def retrieve(self, request, number=None):
         """
         GET /api/v1/status_parties/{number}/
         Проверка статуса одного УИП.
         """
         try:
-            uip = UIP.objects.get(number=pk)
+            uip = UIP.objects.get(number=number)
         except UIP.DoesNotExist:
             return Response({
-                'number': pk,
+                'number': number,
                 'is_active': False,
                 'detail': 'УИП не найден в системе'
             }, status=status.HTTP_404_NOT_FOUND)
