@@ -183,9 +183,11 @@ class ProductPackaging(UUIDModel):
     )
     gtin = models.CharField(
         max_length=14,
+        blank=False, null=False,
         unique=True,
         validators=[RegexValidator(regex=r'^\d{14}$', message='GTIN должен состоять ровно из 14 цифр')],
-        verbose_name='GTIN упаковки',
+        verbose_name='GTIN',
+        help_text='14-значный номер GTIN для данной упаковки'
     )
     quantity_inside = models.PositiveIntegerField(
         verbose_name='Количество в упаковке',
@@ -196,6 +198,7 @@ class ProductPackaging(UUIDModel):
     )
     code_tnved = models.CharField(
         blank=True, null=True,
+        max_length=50,
         verbose_name='Код ТНВЭД', help_text='Ветеринарный номер'
     )
     is_active = models.BooleanField(default=True, verbose_name='Активна')
