@@ -69,10 +69,10 @@ class ProductAdmin(admin.ModelAdmin):
 
 @admin.register(ProductPackaging)
 class ProductPackagingAdmin(admin.ModelAdmin):
-    list_display = ('name', 'product', 'level', 'gtin', 'quantity_inside', is_active_display)
+    list_display = ('product__name', 'product', 'level', 'gtin', 'quantity_inside', is_active_display)
     list_filter = ('level', 'is_active', 'product__group')
     autocomplete_fields = ('product', )
-    search_fields = ('name', 'gtin', 'product__name')
+    search_fields = ('gtin', 'product__name')
     ordering = ('product', 'level')
     list_per_page = 25
 
@@ -82,10 +82,10 @@ class ProductPackagingAdmin(admin.ModelAdmin):
 
 @admin.register(ProductSKU)
 class ProductSKUAdmin(admin.ModelAdmin):
-    list_display = ('sku_code', 'name', 'product', is_active_display)
+    list_display = ('sku_code', 'product__name', 'product', is_active_display)
     list_filter = ('is_active', 'product__group')
     autocomplete_fields = ('product', )
-    search_fields = ('sku_code', 'name', 'product__name')
+    search_fields = ('sku_code', 'product__name')
     ordering = ('product', 'sku_code')
     list_per_page = 50
 
@@ -100,7 +100,7 @@ class ProductProductionLocationAdmin(admin.ModelAdmin):
     autocomplete_fields = ('product_sku', 'line')
     search_fields = (
         'product_sku__sku_code',
-        'product_sku__name',
+        'product_sku__product__name',
         'line__name'
     )
     ordering = ('-id',)

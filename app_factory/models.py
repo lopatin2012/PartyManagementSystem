@@ -181,11 +181,6 @@ class ProductPackaging(UUIDModel):
         choices=PackagingLevelChoices.choices,
         verbose_name='Уровень упаковки'
     )
-    name = models.CharField(
-        max_length=150,
-        verbose_name='Наименование упаковки',
-        help_text='Например: "Бутылка 1л", "Коробка 12 шт.", "Паллет 1200 шт."'
-    )
     gtin = models.CharField(
         max_length=14,
         unique=True,
@@ -235,7 +230,6 @@ class ProductSKU(UUIDModel):
         help_text='Уникальный код внутри организации (например, из 1С)',
         verbose_name='Код внутри организации'
     )
-    name = models.CharField(max_length=150, verbose_name='Наименование в 1С')
     is_active = models.BooleanField(default=True, verbose_name='Используется')
 
     class Meta:
@@ -245,7 +239,7 @@ class ProductSKU(UUIDModel):
 
     def __str__(self):
         status = 'Исп.' if self.is_active else 'Выведен'
-        return f'{self.sku_code} | {self.name} [{status}]'
+        return f'{self.sku_code} | {self.product.name} [{status}]'
 
 
 # ==========================================
