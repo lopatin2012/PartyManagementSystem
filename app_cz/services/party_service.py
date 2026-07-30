@@ -19,7 +19,7 @@ from app_factory.models import ProductSKU
 
 from app_helper.sign_helper import unpinned_signed_data
 
-from app_uip.models import UIP, PartyStatusChoices, PartyNumberTypeChoices
+from app_uip.models import UIP, PartyStatusChoices
 
 logger = logging.getLogger(__name__)
 
@@ -479,7 +479,6 @@ def sync_parties_from_cz() -> dict:
                     number=party_number,
                     defaults={
                         'product_sku': product_sku,
-                        'number_type': PartyNumberTypeChoices.CZ_AUTO,
                         'status': status,
                         'production_date': production_date,
                         'reservation_date': timezone.now().date(),

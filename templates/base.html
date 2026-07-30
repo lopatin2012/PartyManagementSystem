@@ -49,9 +49,14 @@
                 <span class="user-name user-name-guest">Гость</span>
             {% endif %}
 
-            <a href="{% url 'login' %}" class="btn-login">
-                {% if is_authenticated %}Выйти{% else %}Войти в систему{% endif %}
-            </a>
+            {% if is_authenticated %}
+                <form action="{% url 'logout' %}" method="post">
+                    {% csrf_token %}
+                    <button class="btn-login" type="submit">Выйти</button>
+                </form>
+            {% else %}
+                <a href="{% url 'login' %}" class="btn-login">Войти</a>
+            {% endif %}
         </div>
     </header>
 

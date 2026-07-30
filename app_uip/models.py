@@ -14,19 +14,13 @@ party_number_validator = RegexValidator(
 
 class PartyStatusChoices(models.TextChoices):
     """Статусы производственной партии (согласно ТЗ)."""
-    DRAFT = 'draft', 'Черновик, не отправлен в ЧЗ' # Не возвращать в 1С. # NOT TRUE.
-    RESERVED_CZ = 'reserved_cz', 'Зарезервирован в ЧЗ (сгенерирован)' # TRUE
-    RESERVED_LOCAL = 'reserved_local', 'Зарезервирован в ЧЗ (собственный)' # TRUE
-    REGISTERED = 'registered', 'Отчёт о нанесении отправлен, партия зарегистрирована' # TRUE
+    DRAFT = 'draft', 'Черновик' # Не возвращать в 1С. # NOT TRUE.
+    RESERVED_CZ = 'reserved_cz', 'Сгенерирован' # TRUE
+    RESERVED_LOCAL = 'reserved_local', 'Зарезервирован' # TRUE
+    REGISTERED = 'registered', 'Зарегистрирован' # TRUE
     CLOSED = 'closed', 'Партия закрыта' # Нет новых заданий по УИП в течении 3-х дней после даты производства. # TRUE
-    DELETED = 'deleted', 'Удалён по истечению времени' # УИП сгорел по истечению 30 дней. # NOT TRUE.
+    DELETED = 'deleted', 'Удалён' # УИП сгорел по истечению 30 дней. # NOT TRUE.
     ARCHIVED = 'archived', 'В архиве' # Если не было активных заданий в течение 30 дней. # TRUE
-
-
-class PartyNumberTypeChoices(models.TextChoices):
-    """Тип номера партии."""
-    CZ_AUTO = 'cz_auto', 'Сгенерирован ЧЗ'
-    LOCAL = 'local', 'Собственный номер'
 
 
 # Уникальный Идентификатор Партии.
@@ -57,11 +51,6 @@ class UIP(UUIDModel):
         validators=[party_number_validator],
         verbose_name='Номер УИП (partyNumber)',
         help_text='Формат: 14 цифр GTIN + 6 цифр даты (ГГММДД) + 1-12 символов серийного номера'
-    )
-    number_type = models.CharField(
-        max_length=20,
-        choices=PartyNumberTypeChoices.choices,
-        verbose_name='Тип номера'
     )
 
     # Статус.
@@ -154,23 +143,6 @@ class ProductionParty(UUIDModel):
         related_name='production_parties'
     )
 
-    # Место производства.
-    factory = models.ForeignKey(
-        to=Factory,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        verbose_name='Завод',
-        related_name='production_parties'
-    )
-    workshop = models.ForeignKey(
-        to=Workshop,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        verbose_name='Цех',
-        related_name='production_parties'
-    )
     line = models.ForeignKey(
         to=Line,
         on_delete=models.SET_NULL,
@@ -185,7 +157,7 @@ class ProductionParty(UUIDModel):
         max_length=64,
         unique=True,
         blank=True,
-        null=True,
+        default='',
         verbose_name='Номер задания во внешней системе',
         help_text='Например, номер задания в "Молвест.Маркировка"'
     )
