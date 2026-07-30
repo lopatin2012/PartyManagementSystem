@@ -1,6 +1,8 @@
 # app_page/views.py
 
 import logging
+import json
+from datetime import datetime
 
 from django.contrib.admin.views.decorators import staff_member_required
 from django.http import JsonResponse
@@ -12,16 +14,12 @@ from django.core.paginator import Paginator
 from django.db.models import Q
 
 from app_cz.models import CISCode
-from app_cz.services.party_service import sync_parties_from_cz
+from app_cz.services.party_service import sync_parties_from_cz, generate_uip, get_available_products
 
 from app_uip.models import UIP, ProductionParty
 
 from app_helper.search_helper import detect_search_type
-from app_helper.user_helper import get_user_name
 
-from config.settings import (
-    DEBUG, SERVICE_MODE_TEXT, SERVICE_MODE_COLOR, SERVICE_VERSION
-)
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +178,7 @@ class UIPListView(TemplateView):
             'status_counts': status_counts,
             'start_item': start_item,
             'end_item': end_item,
+            'available_products': get_available_products(),
         })
 
         return context
@@ -202,5 +201,62 @@ class SyncPartiesView(View):
             502
             if result.get('is_error')
             else 200
+        )
+        return JsonResponse(result, status=status_code)
+
+@method_decorator(staff_member_required, name='dispatch')
+class GenerateUIPView(View):
+    """Генерация УИП вручную (только для администраторов)."""
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return JsonResponse(
+                {
+                    'is_error': True,
+                    'message': 'Доступ только для администраторов.'
+                },
+                status=403
+            )
+
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse(
+                {
+                    'is_error': True,
+                    'message': 'Некорректный формат данных.'
+                },
+                status=400
+            )
+
+        product_sku_id = data.get('product_sku_id')
+        production_date_str = data.get('production_date')
+        mode = data.get('mode', 'local')
+
+        if not product_sku_id or not production_date_str:
+            return JsonResponse(
+                {
+                    'is_error': True,
+                    'message': 'Не указаны обязательные параметры.'
+                },
+                status=400
+            )
+
+        try:
+            production_date = datetime.strptime(production_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            return JsonResponse(
+                {
+                    'is_error': True,
+                    'message': 'Некорректный формат даты (ожидается ГГГГ-ММ-ДД).'
+                },
+                status=400
+            )
+
+        result = generate_uip(product_sku_id, production_date, mode)
+        status_code = (
+            200
+            if not result.get('is_error')
+            else 400
         )
         return JsonResponse(result, status=status_code)

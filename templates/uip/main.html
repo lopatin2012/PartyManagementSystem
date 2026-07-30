@@ -13,24 +13,90 @@
         <h1>{{ page_name }}</h1>
         <p class="subtitle">Всего найдено: <span class="highlight">{{ total_count }}</span> УИП</p>
 
-        {% if user.is_superuser %}
-            <div class="sync-controls">
-                <button
-                        id="syncBtn"
-                        class="btn-sync"
-                        data-url="{% url 'uip_sync' %}"
-                        data-csrf="{{ csrf_token }}"
-                        onclick="syncParties()">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="23 4 23 10 17 10"></polyline>
-                        <polyline points="1 20 1 14 7 14"></polyline>
-                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                    </svg>
-                    Синхронизировать с ЧЗ
-                </button>
-                <div id="syncStatus" class="sync-status" style="display: none;"></div>
+    {% if user.is_superuser %}
+        <div class="sync-controls">
+            <!-- Кнопка синхронизации -->
+            <button id="syncBtn" class="btn-sync" data-url="{% url 'uip_sync' %}" data-csrf="{{ csrf_token }}" onclick="syncParties()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                </svg>
+                Синхронизировать с ЧЗ
+            </button>
+
+            <!-- кнопка генерации -->
+            <button id="generateBtn" class="btn-generate" onclick="openGenerateModal()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                Сгенерировать УИП
+            </button>
+
+            <div id="syncStatus" class="sync-status" style="display: none;"></div>
+        </div>
+
+        <!-- Данные продуктов для JS -->
+        {{ available_products|json_script:"available-products-data" }}
+
+        <!-- МОДАЛЬНОЕ ОКНО ГЕНЕРАЦИИ -->
+        <div id="generateModal" class="modal-overlay" style="display: none;">
+            <div class="modal-content generate-modal">
+                <div class="modal-header">
+                    <h3>Генерация УИП</h3>
+                    <button class="modal-close" onclick="closeGenerateModal()">&times;</button>
+                </div>
+
+                <div class="modal-body">
+                    <!-- Выбор продукта -->
+                    <div class="form-group">
+                        <label>Продукт:</label>
+                        <div class="product-list" id="productList"></div>
+                    </div>
+
+                    <!-- Дата производства -->
+                    <div class="form-group">
+                        <label for="productionDate">Дата производства:</label>
+                        <input type="date" id="productionDate" class="form-input">
+                    </div>
+
+                    <!-- Способ генерации -->
+                    <div class="form-group">
+                        <label>Способ генерации:</label>
+                        <div class="mode-switch">
+                            <label class="mode-option">
+                                <input type="radio" name="genMode" value="local" checked onchange="updatePreview()">
+                                <span>Локальный номер партии</span>
+                            </label>
+                            <label class="mode-option">
+                                <input type="radio" name="genMode" value="cz" onchange="updatePreview()">
+                                <span>Честный Знак</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Предпросмотр номера -->
+                    <div class="preview-block">
+                        <div class="preview-label">Предпросмотр номера:</div>
+                        <div class="preview-number" id="previewNumber">—</div>
+                        <div class="preview-hint" id="previewHint"></div>
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <div id="generateStatus" class="sync-status" style="display: none;"></div>
+                    <button class="btn-secondary" onclick="closeGenerateModal()">Отмена</button>
+                    <button id="generateSubmitBtn" class="btn-sync"
+                            data-url="{% url 'uip_generate' %}"
+                            data-csrf="{{ csrf_token }}"
+                            onclick="submitGenerate()">
+                        Сгенерировать
+                    </button>
+                </div>
             </div>
-        {% endif %}
+        </div>
+    {% endif %}
     </div>
 
     <!-- ФИЛЬТР ПО СТАТУСАМ -->

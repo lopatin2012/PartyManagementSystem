@@ -2,7 +2,7 @@
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, date
 
 import requests
 from django.utils import timezone
@@ -35,6 +35,43 @@ def validate_party_number(party_number: str) -> bool:
     # Строгая проверка по регулярному выражению
     pattern = r'^\d{14}\d{6}[A-Za-z0-9/.,\-]{1,12}$'
     return bool(re.match(pattern, party_number))
+
+
+def build_local_party_number(gtin: str, production_date: date, article: str) -> str:
+    """
+    Формирует локальный номер УИП:
+    GTIN(14) + дата ГГММДД(6) + артикул(5) + добивка нулями до 32.
+    Пример: 04601751029980260724143620000000
+    """
+    date_str = production_date.strftime('%y%m%d')
+    article_part = (article or '')[:5].ljust(5, '0')
+    base = f'{gtin}{date_str}{article_part}'  # 25 символов
+    return base.ljust(32, '0')[:32]  # добивка до 32
+
+def get_available_products() -> list[dict]:
+    """Список продуктов, доступных для генерации УИП (с GTIN и артикулом)."""
+    products = []
+    skus = (
+        ProductSKU.objects.filter(is_active=True)
+        .select_related('product')
+        .order_by('product__name', 'sku_code')
+    )
+    for sku in skus:
+        gtin = sku.product.consumer_gtin
+        if not gtin:
+            # пропускаем продукты без GTIN потребительской упаковки.
+            continue
+        products.append({
+            'sku_id': str(sku.id),
+            'name': sku.product.name,
+            'sku_code': sku.sku_code,
+            'gtin': gtin,
+            'group': sku.product.group,
+        })
+    return products
+
+
+
 
 
 def generate_party_numbers(
@@ -165,11 +202,7 @@ def reserve_parties_honest_sign(
     existing_parties = set(
         UIP.objects.filter(
             number__in=party_numbers,
-            status__in=[
-                PartyStatusChoices.RESERVED_CZ,
-                PartyStatusChoices.RESERVED_LOCAL,
-                PartyStatusChoices.ACTIVE
-            ]
+            status__in=UIP.ACTIVE_STATUSES
         ).values_list('number', flat=True)
     )
 
@@ -372,9 +405,9 @@ def close_party_reservation(
         # 4. Если отчёт отправлен успешно, обновляем статус УИП в нашей БД.
         uip = UIP.objects.filter(number=batch_number).first()
         if uip:
-            uip.status = PartyStatusChoices.ACTIVE
+            uip.status = PartyStatusChoices.REGISTERED
             uip.save(update_fields=['status', 'updated_at'])
-            logger.info(f"Партия {batch_number} успешно закрыта и переведена в статус ACTIVE.")
+            logger.info(f"Партия {batch_number} успешно закрыта и переведена в статус REGISTERED.")
         else:
             logger.warning(f"УИП {batch_number} не найден в локальной БД, но отчёт в ЧЗ отправлен успешно.")
 
@@ -519,3 +552,154 @@ def sync_parties_from_cz() -> dict:
             'updated': updated_count,
             'total': len(lst_party_info)
         }
+
+def _generate_local_uip(sku: ProductSKU, gtin: str, production_date: date) -> dict:
+    """
+    Создаёт УИП в локальном согласованном формате И резервирует его в ЧЗ.
+
+    Собственный источник Номера партии: (GTIN + дата + артикул + нули),
+    но резервирование всё равно проходит на стороне Честного Знака.
+    """
+    number = build_local_party_number(gtin, production_date, sku.sku_code)
+
+    # 1. Проверка на дубликат в локальной БД.
+    if UIP.objects.filter(number=number).exists():
+        return {
+            'is_error': True,
+            'message': f'УИП с номером {number} уже существует.'
+        }
+
+    # 2. Резервируем сформированный номер в Честном Знаке.
+    reserve_result = reserve_parties_honest_sign(
+        product_group=sku.product.group,
+        party_numbers=[number],
+    )
+
+    if reserve_result.get('is_error'):
+        return {
+            'is_error': True,
+            'message': (
+                f'ЧЗ отклонил резервирование номера: '
+                f'{reserve_result.get("message_error", "неизвестная ошибка")}'
+            )
+        }
+
+    # 3. ЧЗ подтвердил резервирование — сохраняем УИП локально.
+    try:
+        with transaction.atomic():
+            UIP.objects.create(
+                product_sku=sku,
+                number=number,
+                status=PartyStatusChoices.RESERVED_LOCAL,
+                production_date=production_date,
+                reservation_date=timezone.now().date(),
+                description='Сгенерирован вручную (локальный формат), зарезервирован в ЧЗ',
+            )
+        logger.info(f'Создан и зарезервирован в ЧЗ локальный УИП: {number}')
+        return {
+            'is_error': False,
+            'message': f'УИП сгенерирован и зарезервирован в ЧЗ: {number}',
+            'number': number,
+        }
+    except Exception as e:
+        logger.error(
+            f'Ошибка сохранения локального УИП: {e}',
+            exc_info=True
+        )
+        return {'is_error': True, 'message': f'Ошибка сохранения УИП: {str(e)}'}
+
+
+def _generate_cz_uip(sku: ProductSKU, gtin: str, production_date: date) -> dict:
+    """Генерирует УИП через Честный Знак (статус RESERVED_CZ)."""
+    party_info = [{
+        'gtin': gtin,
+        'productionDate': production_date.strftime('%Y-%m-%d'),
+        'count': 1,
+    }]
+
+    result = generate_party_numbers(
+        party_info_list=party_info,
+        product_group=sku.product.group,
+    )
+
+    if result.get('is_error'):
+        return {
+            'is_error': True,
+            'message': result.get('message_error', 'Ошибка генерации в ЧЗ.')
+        }
+
+    lst = result.get('lst_party_number_info', [])
+    if not lst:
+        return {
+            'is_error': True,
+            'message': 'ЧЗ не вернул номера партий.'
+        }
+
+    created = []
+    try:
+        with transaction.atomic():
+            for info in lst:
+                number = info.get('partyNumber', '')
+                if not number:
+                    continue
+                UIP.objects.update_or_create(
+                    number=number,
+                    defaults={
+                        'product_sku': sku,
+                        'status': PartyStatusChoices.RESERVED_CZ,
+                        'production_date': production_date,
+                        'reservation_date': timezone.now().date(),
+                        'description': 'Сгенерирован вручную через Честный Знак',
+                    }
+                )
+                created.append(number)
+
+        if not created:
+            return {
+                'is_error': True,
+                'message': 'Не удалось сохранить полученные номера.'
+            }
+
+        logger.info(f'Создано УИП через ЧЗ: {len(created)} шт.')
+        return {
+            'is_error': False,
+            'message': f'Сгенерировано УИП через ЧЗ: {len(created)} шт.',
+            'number': (
+                created[0]
+                if len(created) == 1
+                else ', '.join(created),
+            )
+        }
+    except Exception as e:
+        logger.error(f'Ошибка сохранения УИП из ЧЗ: {e}', exc_info=True)
+        return {
+            'is_error': True,
+            'message': f'Ошибка сохранения: {str(e)}'
+        }
+
+
+def generate_uip(product_sku_id: str, production_date: date, mode: str) -> dict:
+    """
+    Точка входа генерации УИП.
+    mode: 'local' — локальный согласованный формат, 'cz' — через Честный Знак.
+    """
+    try:
+        sku = ProductSKU.objects.select_related('product').get(
+            id=product_sku_id, is_active=True
+        )
+    except ProductSKU.DoesNotExist:
+        return {'is_error': True, 'message': 'Продукт не найден или неактивен.'}
+
+    gtin = sku.product.consumer_gtin
+    if not gtin:
+        return {
+            'is_error': True,
+            'message': 'У продукта не заполнен GTIN потребительской упаковки.'
+        }
+
+    if mode == 'local':
+        return _generate_local_uip(sku, gtin, production_date)
+    if mode == 'cz':
+        return _generate_cz_uip(sku, gtin, production_date)
+
+    return {'is_error': True, 'message': 'Неизвестный режим генерации.'}

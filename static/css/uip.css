@@ -382,6 +382,206 @@
     to { opacity: 1; transform: translateY(0); }
 }
 
+/* === КНОПКА ГЕНЕРАЦИИ === */
+.btn-generate {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.7rem 1.5rem;
+    background: transparent;
+    color: var(--accent-yellow);
+    border: 1px solid var(--accent-yellow);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-generate:hover {
+    background: rgba(250, 187, 28, 0.15);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(250, 187, 28, 0.25);
+}
+
+/* === МОДАЛЬНОЕ ОКНО ГЕНЕРАЦИИ === */
+.generate-modal {
+    max-width: 560px;
+    width: 100%;
+    padding: 1em;
+}
+
+/* Список продуктов */
+.product-list {
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.15);
+    padding: 0.4rem;
+}
+
+.product-item {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.product-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.product-item input[type="radio"] {
+    accent-color: var(--accent-green);
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.product-item input[type="radio"]:checked + .product-info .product-name {
+    color: var(--accent-green);
+}
+
+.product-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    text-align: left;
+}
+
+.product-name {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-main);
+}
+
+.product-meta {
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.5);
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.empty-products {
+    padding: 1.5rem;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.9rem;
+}
+
+/* Переключатель режима */
+.mode-switch {
+    display: flex;
+    gap: 0.6rem;
+}
+
+.mode-option {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.7rem 1rem;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.9rem;
+}
+
+.mode-option:hover {
+    border-color: var(--accent-green);
+}
+
+.mode-option input[type="radio"] {
+    accent-color: var(--accent-green);
+}
+
+.mode-option input[type="radio"]:checked ~ span {
+    color: var(--accent-green);
+    font-weight: 600;
+}
+
+/* Предпросмотр номера */
+.preview-block {
+    margin-top: 0.5rem;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    text-align: left;
+}
+
+.preview-label {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.6);
+    margin-bottom: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.preview-number {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--accent-green);
+    word-break: break-all;
+    margin-bottom: 0.6rem;
+}
+
+.preview-hint {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.8rem;
+    word-break: break-all;
+    line-height: 1.6;
+}
+
+.preview-hint small {
+    font-family: 'Segoe UI', sans-serif;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.78rem;
+}
+
+/* Подсветка частей номера */
+.part-gtin { color: #6495ED; }
+.part-date { color: var(--accent-yellow); }
+.part-article { color: var(--accent-green); }
+.part-zeros { color: rgba(255, 255, 255, 0.35); }
+
+/* Кнопка "Отмена" */
+.btn-secondary {
+    padding: 0.6rem 1.4rem;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.8);
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-main);
+}
+
+.modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+}
+
+.modal-footer .sync-status {
+    width: 100%;
+    text-align: center;
+}
+
 /* === АДАПТИВНОСТЬ === */
 @media (max-width: 1200px) {
     .uip-page {

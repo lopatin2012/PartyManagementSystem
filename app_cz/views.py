@@ -151,7 +151,7 @@ class ReservedPartyViewSet(viewsets.ReadOnlyModelViewSet):
                 status__in=[
                     PartyStatusChoices.RESERVED_CZ,
                     PartyStatusChoices.RESERVED_LOCAL,
-                    PartyStatusChoices.ACTIVE,
+                    PartyStatusChoices.REGISTERED,
                 ]
             )
 
