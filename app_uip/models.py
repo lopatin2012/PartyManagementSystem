@@ -333,5 +333,20 @@ class ProductionParty(UUIDModel):
             models.Index(fields=['line', '-production_datetime_start'])
         ]
 
+    @property
+    def product_sku(self):
+        """Номенклатура (SKU) — через УИП."""
+        return self.uip.product_sku
+
+    @property
+    def product(self):
+        """Продукт — через УИП."""
+        return self.uip.product_sku.product
+
+    @property
+    def gtin(self) -> str:
+        """GTIN потребительской упаковки — через УИП."""
+        return self.uip.gtin
+
     def __str__(self) -> str:
         return f'{self.uip.number} | Партия {self.production_party}'
