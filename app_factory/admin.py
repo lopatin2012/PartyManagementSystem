@@ -28,7 +28,7 @@ def is_active_display(obj):
 # ==========================================
 @admin.register(Factory)
 class FactoryAdmin(admin.ModelAdmin):
-    list_display = ('name', is_active_display)
+    list_display = ('id', 'name', is_active_display)
     list_filter = ('is_active',)
     search_fields = ('name',)
     ordering = ('name',)
@@ -37,7 +37,7 @@ class FactoryAdmin(admin.ModelAdmin):
 
 @admin.register(Workshop)
 class WorkshopAdmin(admin.ModelAdmin):
-    list_display = ('name', 'factory', is_active_display)
+    list_display = ('id', 'name', 'factory', is_active_display)
     list_filter = ('factory', 'is_active')
     autocomplete_fields = ('factory',)
     search_fields = ('name', 'factory__name')
@@ -47,7 +47,7 @@ class WorkshopAdmin(admin.ModelAdmin):
 
 @admin.register(Line)
 class LineAdmin(admin.ModelAdmin):
-    list_display = ('name', 'workshop', 'factory_name', is_active_display)
+    list_display = ('id', 'name', 'workshop', 'factory_name', is_active_display)
     list_filter = ('workshop__factory', 'workshop', 'is_active')
     autocomplete_fields = ('workshop',)
     search_fields = ('name', 'workshop__name', 'workshop__factory__name')
@@ -93,7 +93,7 @@ class ProductPackagingInline(admin.TabularInline):
 # ==========================================
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ('name', 'group', 'item_condition', 'card_status', is_active_display)
+    list_display = ('id', 'name', 'group', 'item_condition', 'card_status', is_active_display)
     list_filter = ('group', 'item_condition', 'card_status', 'is_active')
     search_fields = ('name',)
     ordering = ('group', 'name')
@@ -132,7 +132,7 @@ class ProductAdmin(admin.ModelAdmin):
 
 @admin.register(ProductPackaging)
 class ProductPackagingAdmin(admin.ModelAdmin):
-    list_display = ('product__name', 'product', 'level', 'gtin', 'quantity_inside', is_active_display)
+    list_display = ('id', 'product__name', 'product', 'level', 'gtin', 'quantity_inside', is_active_display)
     list_filter = ('level', 'is_active', 'product__group')
     autocomplete_fields = ('product',)
     search_fields = ('gtin', 'product__name')
@@ -142,7 +142,7 @@ class ProductPackagingAdmin(admin.ModelAdmin):
 
 @admin.register(ProductSKU)
 class ProductSKUAdmin(admin.ModelAdmin):
-    list_display = ('sku_code', 'product__name', 'product', is_active_display)
+    list_display = ('id', 'sku_code', 'product__name', 'product', is_active_display)
     list_filter = ('is_active', 'product__group')
     autocomplete_fields = ('product',)
     search_fields = ('sku_code', 'product__name')
@@ -155,7 +155,7 @@ class ProductSKUAdmin(admin.ModelAdmin):
 # ==========================================
 @admin.register(ProductProductionLocation)
 class ProductProductionLocationAdmin(admin.ModelAdmin):
-    list_display = ('product_sku', 'line', 'workshop_name', 'factory_name', is_active_display)
+    list_display = ('id', 'product_sku', 'line', 'workshop_name', 'factory_name', is_active_display)
     list_filter = ('is_active', 'line__workshop__factory', 'line__workshop', 'line')
     autocomplete_fields = ('product_sku', 'line')
     search_fields = (
