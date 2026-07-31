@@ -16,7 +16,7 @@ party_number_validator = RegexValidator(
 
 
 class PartyStatusChoices(models.TextChoices):
-    """Статусы производственной партии (согласно ТЗ)."""
+    """Статусы УИП (согласно ТЗ)."""
     DRAFT = 'draft', 'Черновик'  # Не возвращать в 1С. # NOT TRUE.
     RESERVED_CZ = 'reserved_cz', 'Сгенерирован'  # TRUE
     RESERVED_LOCAL = 'reserved_local', 'Зарезервирован'  # TRUE
@@ -24,6 +24,18 @@ class PartyStatusChoices(models.TextChoices):
     CLOSED = 'closed', 'Партия закрыта'  # Нет новых заданий по УИП в течении 3-х дней после даты производства. # TRUE
     DELETED = 'deleted', 'Удалён'  # УИП сгорел по истечению 30 дней. # NOT TRUE.
     ARCHIVED = 'archived', 'В архиве'  # Если не было активных заданий в течение 30 дней. # TRUE
+
+
+class ProductionPartyStatusChoices(models.TextChoices):
+    """Статусы производственной партии (согласно ТЗ)."""
+    CHECK = 'check', 'Проверка'  # Задание создано в предварительном статусе. #.
+    CREATED = 'created', 'Создан'  # Первичный активный статус.
+    WORK = 'work', 'В работе'  # Задание партии открыто на линии.
+    CLOSED = 'closed', 'Закрыто'  # Задание партии было закрыто на линии.
+    COMPLETED = 'completed', 'Завершено'  # Мастер производства подтвердил что задание партии завершено.
+    DELETED = 'deleted', 'Удалено'  # Задание партии удалено.
+    ARCHIVED = 'archived', 'Архив'  # Задание партии в архиве.
+    ERROR = 'error', 'Ошибка'  # Задание в ошибке.
 
 
 # Уникальный Идентификатор Партии.
@@ -239,6 +251,7 @@ class ProductionParty(UUIDModel):
         related_name='production_parties'
     )
 
+    # Связь с производством.
     line = models.ForeignKey(
         to=Line,
         on_delete=models.SET_NULL,
@@ -261,8 +274,18 @@ class ProductionParty(UUIDModel):
     # Внутренний номер производственной партии.
     production_party = models.CharField(
         max_length=32,
-        verbose_name='Производственная партия',
+        verbose_name='Партия',
         help_text='Внутренний номер партии (обычно 0-999)'
+    )
+
+    # Статус.
+    status = models.CharField(
+        max_length=20,
+        choices=ProductionPartyStatusChoices.choices,
+        default=ProductionPartyStatusChoices.CREATED,
+        verbose_name='Статус',
+        help_text='Задание производственной партии',
+        db_index=True
     )
 
     # Даты.

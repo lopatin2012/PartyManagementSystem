@@ -192,9 +192,10 @@ class UIPAdmin(admin.ModelAdmin):
 @admin.register(ProductionParty)
 class ProductionPartyAdmin(admin.ModelAdmin):
     list_display = (
-        'production_party', 'uip_number',
+        'production_party',
         'line', 'workshop_name', 'factory_name',
         'planned_and_produced',
+        'status',
         'production_datetime_start'
     )
     list_filter = (
@@ -217,7 +218,7 @@ class ProductionPartyAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ('Основная информация', {
-            'fields': ('uip', 'production_party', 'external_number_task')
+            'fields': ('uip', 'production_party', 'external_number_task', 'status')
         }),
         ('Место производства', {
             'fields': ('line', 'workshop_name', 'factory_name')
