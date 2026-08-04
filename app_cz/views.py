@@ -17,14 +17,16 @@ from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 
-from app_cz.serializers import CISCodeSerializer, UIPSerializer, ProductionPartySerializer
+from app_cz.serializers import (
+    CISCodeSerializer, UIPSerializer, ProductionPartySerializer, GenerateUIPSerializer
+)
 from app_cz.models import CISCode, SUZAccount
 from app_cz.services.suz_client import get_true_api_auth_key, refresh_suz_dynamic_token
 from app_cz.services.party_service import (
     generate_party_numbers,
     reserve_parties_honest_sign,
     get_all_reserved_parties,
-    close_party_reservation,
+    close_party_reservation, generate_uip, find_sku_by_gtin,
 )
 from app_cz.services.code_sync import sync_codes_task
 from app_cz.serializers import (
@@ -42,6 +44,7 @@ from app_cz.serializers import (
     ReservedPartyDetailSerializer,
     ReservedPartyCodesSerializer
 )
+from app_factory.models import ProductSKU
 
 from app_uip.models import UIP, ProductionParty, PartyStatusChoices
 
@@ -586,3 +589,63 @@ def api_sync_codes_task(request):
         return Response(result, status=status.HTTP_400_BAD_REQUEST)
 
     return Response(result, status=status.HTTP_200_OK)
+
+# Добавить токен для предотвращения случайной генерации.
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Генерация УИП по запросу извне",
+    request=GenerateUIPSerializer,
+    responses={
+        200: OpenApiTypes.OBJECT,
+        400: OpenApiTypes.OBJECT,
+        404: OpenApiTypes.OBJECT
+    }
+)
+@api_view(['POST'])
+def api_generate_uip(request):
+    """Внешний API для генерации одного УИП с резервированием в Честном Знаке."""
+    serializer = GenerateUIPSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(
+            {
+                'is_error': True,
+                'message_error': serializer.errors
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    data = serializer.validated_data
+
+    # Поиск продукта по артикулу или GTIN.
+    sku = None
+    if data.get('sku_code'):
+        sku = ProductSKU.objects.filter(
+            sku_code=data['sku_code'], is_active=True
+        ).select_related('product').first()
+
+    elif data.get('gtin'):
+        sku = find_sku_by_gtin(data['gtin'])
+
+    if not sku:
+        return Response(
+            {
+                'is_error': True,
+                'message': 'Продукт не найден или неактивен.'
+            },
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    # Используем единый генератор УИП. Единичное количество, без множества.
+    result = generate_uip(
+        product_sku_id=str(sku.id),
+        production_date=data['production_date'],
+        mode=data['mode'],
+        is_external_service=True,
+        skip_cz=data.get('draft', True) # Черновик на время ввода разработки.
+    )
+
+    if result.get('is_error'):
+        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(result, status=status.HTTP_200_OK)
+

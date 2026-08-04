@@ -37,9 +37,13 @@ urlpatterns = [
         name='close-party-reservation'
     ),
 
+    # Синхронизация кодов задания.
     path(
         'api/codes/sync-task/',
         view=views.api_sync_codes_task,
         name='api-sync-codes-task'
     ),
+
+    # Для общения с другими модулями.
+    path('api/generate-uip/', view=views.api_generate_uip, name='generate-uip'),
 ]

@@ -81,7 +81,7 @@ class ReservePartySerializer(serializers.Serializer):
             min_length=21, max_length=32
         ),
         min_length=1,
-        max_length=100
+        max_length=50
     )
 
 
@@ -498,3 +498,30 @@ class ReservedPartyCodesSerializer(serializers.ModelSerializer):
                 ).data
 
         return result
+
+class GenerateUIPSerializer(serializers.Serializer):
+    """Генерация одного УИП по запросу извне."""
+    sku_code = serializers.CharField(
+        max_length=100, required=False, allow_blank=True,
+        help_text='Артикул продукта (укажите sku_code или gtin)'
+    )
+    gtin = serializers.CharField(
+        max_length=14, required=False, allow_blank=True,
+        help_text='GTIN потребительской упаковки (укажите sku_code или gtin)'
+    )
+    production_date = serializers.DateField(
+        help_text='Дата производства (ГГГГ-ММ-ДД)'
+    )
+    mode = serializers.ChoiceField(
+        choices=['local', 'cz'], default='local',
+        help_text='local — согласованный формат, cz — формирует Честный Знак'
+    )
+    draft = serializers.BooleanField(
+        default=False,
+        help_text='Создать черновик'
+    )
+
+    def validate(self, attrs):
+        if not attrs.get('sku_code') and not attrs.get('gtin'):
+            raise serializers.ValidationError('Укажите sku_code или gtin.')
+        return attrs
