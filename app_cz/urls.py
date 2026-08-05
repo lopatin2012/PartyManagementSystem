@@ -45,5 +45,5 @@ urlpatterns = [
     ),
 
     # Для общения с другими модулями.
-    path('api/generate-uip/', view=views.api_generate_uip, name='generate-uip'),
+    path('api/v1/generate-uip/', view=views.api_generate_uip, name='generate-uip'),
 ]

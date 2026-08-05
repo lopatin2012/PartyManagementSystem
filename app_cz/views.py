@@ -617,16 +617,20 @@ def api_generate_uip(request):
     data = serializer.validated_data
 
     # Поиск продукта по артикулу или GTIN.
-    sku = None
+    product_sku = None
     if data.get('sku_code'):
-        sku = ProductSKU.objects.filter(
+        product_sku = ProductSKU.objects.filter(
             sku_code=data['sku_code'], is_active=True
         ).select_related('product').first()
 
     elif data.get('gtin'):
         sku = find_sku_by_gtin(data['gtin'])
 
-    if not sku:
+    if not product_sku:
+        logger.error(
+            f"Критическая ошибка. Отсутствует запрошенный продукт: {data.get('sku_code')}",
+            exc_info=True
+        )
         return Response(
             {
                 'is_error': True,
@@ -637,7 +641,7 @@ def api_generate_uip(request):
 
     # Используем единый генератор УИП. Единичное количество, без множества.
     result = generate_uip(
-        product_sku_id=str(sku.id),
+        product_sku=product_sku,
         production_date=data['production_date'],
         mode=data['mode'],
         is_external_service=True,
@@ -648,4 +652,3 @@ def api_generate_uip(request):
         return Response(result, status=status.HTTP_400_BAD_REQUEST)
 
     return Response(result, status=status.HTTP_200_OK)
-
