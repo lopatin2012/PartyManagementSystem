@@ -15,6 +15,7 @@ urlpatterns = [
     path('factory/', include('app_factory.urls')), # Модуль производства.
     path('cz/', include('app_cz.urls')), # Взаимодействие с Честным Знаком.
     path('uip/', include('app_uip.urls')), # Взаимодействие с УИП.
+    path('helper/', include('app_helper.urls')), # Помощник сервиса.
 
     # Документация API.
     # Ссылка на схему (JSON/YAML файл).

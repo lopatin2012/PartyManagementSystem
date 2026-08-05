@@ -4,10 +4,6 @@ import uuid
 from datetime import datetime
 import logging
 
-from django.shortcuts import render
-from django.db.models import Q
-from django.utils import timezone
-
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 

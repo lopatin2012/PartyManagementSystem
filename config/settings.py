@@ -127,7 +127,17 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'app_helper.middleware.LoadTrackingMiddleware'
 ]
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        #FIXME Настроить Redis:
+        # 'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        # 'LOCATION': 'redis://127.0.0.1:6379/1',
+    }
+}
 
 ROOT_URLCONF = 'config.urls'
 
