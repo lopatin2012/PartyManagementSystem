@@ -624,7 +624,7 @@ def api_generate_uip(request):
         ).select_related('product').first()
 
     elif data.get('gtin'):
-        sku = find_sku_by_gtin(data['gtin'])
+        product_sku = find_sku_by_gtin(data['gtin'])
 
     if not product_sku:
         logger.error(
@@ -645,7 +645,7 @@ def api_generate_uip(request):
         production_date=data['production_date'],
         mode=data['mode'],
         is_external_service=True,
-        skip_cz=data.get('draft', True) # Черновик на время ввода разработки.
+        skip_cz=data.get('skip_cz', True) # Черновик на время ввода разработки.
     )
 
     if result.get('is_error'):

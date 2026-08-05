@@ -516,7 +516,7 @@ class GenerateUIPSerializer(serializers.Serializer):
         choices=['local', 'cz'], default='local',
         help_text='local — согласованный формат, cz — формирует Честный Знак'
     )
-    draft = serializers.BooleanField(
+    skip_cz = serializers.BooleanField(
         default=False,
         help_text='Создать черновик'
     )
