@@ -656,7 +656,6 @@ def _generate_local_uip(
                           Если None: DRAFT при skip_cz, иначе RESERVED_LOCAL.
     :param skip_cz: Если True — НЕ резервировать в ЧЗ (черновик для тестов).
     """
-    print(product_sku)
     number = build_local_party_number(gtin, production_date, product_sku)
 
     # Определяем целевой статус.
