@@ -116,7 +116,7 @@ class UIPAdmin(admin.ModelAdmin):
         'created_at'
     )
     list_filter = ('status', 'product_sku__product__group', 'product_sku')
-    search_fields = ('number', 'product_sku__sku_code', 'product_sku__product__name')
+    search_fields = ('number', 'product_sku__article', 'product_sku__product__name')
     autocomplete_fields = ('product_sku',)
     ordering = ('-created_at',)
     list_per_page = 25
@@ -208,7 +208,7 @@ class ProductionPartyAdmin(admin.ModelAdmin):
     )
     search_fields = (
         'production_party', 'external_number_task',
-        'uip__number', 'uip__product_sku__sku_code'
+        'uip__number', 'uip__product_sku__article'
     )
     autocomplete_fields = ('uip', 'line')
     ordering = ('-created_at',)

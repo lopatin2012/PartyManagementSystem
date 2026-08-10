@@ -114,7 +114,7 @@ function filterProducts(query) {
         filteredProducts = availableProducts;
     } else {
         filteredProducts = availableProducts.filter(p =>
-            p.sku_code.toLowerCase().includes(q) ||
+            p.article.toLowerCase().includes(q) ||
             p.name.toLowerCase().includes(q)
         );
     }
@@ -142,11 +142,11 @@ function renderProductList() {
     list.innerHTML = visible.map((p, i) => `
         <label class="product-item">
             <input type="radio" name="product" value="${p.sku_id}"
-                   data-gtin="${p.gtin}" data-article="${escapeHtml(p.sku_code)}"
+                   data-gtin="${p.gtin}" data-article="${escapeHtml(p.article)}"
                    ${i === checkedIndex ? 'checked' : ''} onchange="onProductSelect(this)">
             <div class="product-info">
                 <span class="product-name">${highlightMatch(p.name, lastQuery)}</span>
-                <span class="product-meta">GTIN: ${p.gtin} · Арт: ${highlightMatch(p.sku_code, lastQuery)}</span>
+                <span class="product-meta">GTIN: ${p.gtin} · Арт: ${highlightMatch(p.article, lastQuery)}</span>
             </div>
         </label>
     `).join('');

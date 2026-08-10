@@ -64,7 +64,7 @@ class UIPActiveListSerializer(serializers.ModelSerializer):
     """Сериализатор для списка действующих УИП."""
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     product_name = serializers.CharField(source='product_sku.name', read_only=True)
-    product_article = serializers.CharField(source='product_sku.sku_code', read_only=True)
+    product_article = serializers.CharField(source='product_sku.article', read_only=True)
 
     class Meta:
         model = UIP

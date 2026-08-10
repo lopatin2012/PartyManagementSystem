@@ -130,7 +130,7 @@ class UIPListView(TemplateView):
         if number_filter:
             queryset = queryset.filter(number__icontains=number_filter)
         if article_filter:
-            queryset = queryset.filter(product_sku__sku_code__icontains=article_filter)
+            queryset = queryset.filter(product_sku__article__icontains=article_filter)
         if prod_from:
             queryset = queryset.filter(production_date__gte=prod_from)
         if prod_to:

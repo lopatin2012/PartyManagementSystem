@@ -219,7 +219,7 @@ class ReservedPartyListSerializer(serializers.ModelSerializer):
 
         product = sku.product
         articles = list(
-            product.skus.filter(is_active=True).values_list('sku_code', flat=True)
+            product.skus.filter(is_active=True).values_list('article', flat=True)
         )
 
         # GTIN берём из первой активной упаковки.
@@ -276,6 +276,7 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
     # === Основная информация ===
     party_number = serializers.CharField(source='number')
     status = serializers.CharField(source='get_status_display')
+    status_code = serializers.CharField(source='status')
     number_type_display = serializers.CharField(source='get_number_type_display')
     description = serializers.CharField(read_only=True)
 
@@ -304,6 +305,7 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
             'id',
             'party_number',
             'status',
+            'status_code',
             'number_type_display',
             'description',
             'product',
@@ -332,7 +334,7 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
 
         product = sku.product
         articles = list(
-            product.skus.filter(is_active=True).values_list('sku_code', flat=True)
+            product.skus.filter(is_active=True).values_list('article', flat=True)
         )
         gtin = product.packagings.filter(is_active=True).values_list('gtin', flat=True).first()
 
@@ -501,13 +503,13 @@ class ReservedPartyCodesSerializer(serializers.ModelSerializer):
 
 class GenerateUIPSerializer(serializers.Serializer):
     """Генерация одного УИП по запросу извне."""
-    sku_code = serializers.CharField(
+    article = serializers.CharField(
         max_length=100, required=False, allow_blank=True,
-        help_text='Артикул продукта (укажите sku_code или gtin)'
+        help_text='Артикул продукта'
     )
     gtin = serializers.CharField(
         max_length=14, required=False, allow_blank=True,
-        help_text='GTIN потребительской упаковки (укажите sku_code или gtin)'
+        help_text='GTIN потребительской упаковки'
     )
     production_date = serializers.DateField(
         help_text='Дата производства (ГГГГ-ММ-ДД)'
@@ -522,6 +524,6 @@ class GenerateUIPSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
-        if not attrs.get('sku_code') and not attrs.get('gtin'):
-            raise serializers.ValidationError('Укажите sku_code или gtin.')
+        if not attrs.get('article') and not attrs.get('gtin'):
+            raise serializers.ValidationError('Укажите article или gtin.')
         return attrs

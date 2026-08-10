@@ -85,7 +85,7 @@ class ProductSerializer(serializers.ModelSerializer):
     def get_articles(self, obj):
         """Список артикулов (SKU из 1С)."""
         return list(
-            obj.skus.filter(is_active=True).values_list('sku_code', flat=True)
+            obj.skus.filter(is_active=True).values_list('article', flat=True)
         )
 
     def _get_packaging(self, obj, level):

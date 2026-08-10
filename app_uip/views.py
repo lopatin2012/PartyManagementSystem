@@ -123,6 +123,13 @@ class UIPStatusViewSet(viewsets.ViewSet):
         operation_id='status_parties_active',
         summary='Список действующих УИП',
         parameters=[
+            OpenApiParameter(
+                name='include_all_statuses',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description='Если true — вернуть ВСЕ УИПы, '
+                            'без фильтра по действующим статусам'
+            ),
             OpenApiParameter(name='product_id', type=OpenApiTypes.UUID, location=OpenApiParameter.QUERY),
             OpenApiParameter(name='product_article', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
             OpenApiParameter(name='gtin', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
@@ -142,9 +149,17 @@ class UIPStatusViewSet(viewsets.ViewSet):
 
         По умолчанию: зарезервированные УИП + зарегистрированные за последние 7 дней.
         """
-        queryset = UIP.objects.filter(
-            status__in=UIP.ACTIVE_STATUSES
-        ).select_related('product_sku').order_by('-created_at')
+        include_all = str(request.query_params.get(
+            'include_all_statuses', 'false'
+        )).lower() == 'true'
+
+        # Базовый queryset: либо все, либо только действующие.
+        if include_all:
+            queryset = UIP.objects.select_related('product_sku').order_by('-created_at')
+        else:
+            queryset = UIP.objects.filter(
+                status__in=UIP.ACTIVE_STATUSES
+            ).select_related('product_sku').order_by('-created_at')
 
         # Фильтры по продукту.
         product_id = request.query_params.get('product_id')
@@ -153,7 +168,7 @@ class UIPStatusViewSet(viewsets.ViewSet):
 
         product_article = request.query_params.get('product_article')
         if product_article:
-            queryset = queryset.filter(product_sku__sku_code__icontains=product_article)
+            queryset = queryset.filter(product_sku__article__icontains=product_article)
 
         gtin = request.query_params.get('gtin')
         if gtin:
@@ -179,10 +194,18 @@ class UIPStatusViewSet(viewsets.ViewSet):
         if reservation_date_to:
             queryset = queryset.filter(reservation_date__lte=reservation_date_to)
 
-        # Если НЕ указаны фильтры по датам, применяем дефолтную логику:
-        # показать все зарезервированные + зарегистрированные за последние 7 дней.
-        if not (production_date_from or production_date_to or
-                reservation_date_from or reservation_date_to):
+        # Дефолтная логика "7 дней" применяется ТОЛЬКО если:
+        #  - не запрошены все статусы, И
+        #  - не указаны фильтры по датам.
+        if (
+                not include_all
+                and not (
+                        production_date_from
+                        or production_date_to
+                        or reservation_date_from
+                        or reservation_date_to
+                )
+        ):
             seven_days_ago = timezone.now().date() - timedelta(days=7)
             queryset = queryset.filter(
                 Q(status__in=[

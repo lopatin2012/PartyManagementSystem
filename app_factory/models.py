@@ -159,8 +159,12 @@ class Product(UUIDModel):
         ordering = ('group', 'name')
 
     def __str__(self):
-        status = 'Активен' if self.is_active else 'Выведен'
-        return f'{self.get_group_display()} - {self.name} ({status})'
+        product_name = (
+            f"{self.name[:20]}..."
+            if len(self.name) > 20
+            else self.name
+        )
+        return f'{product_name}'
 
     @property
     def consumer_gtin(self):
@@ -227,7 +231,7 @@ class ProductSKU(UUIDModel):
         verbose_name='Продукт',
         related_name='skus',
     )
-    sku_code = models.CharField(
+    article = models.CharField(
         max_length=100,
         unique=True,
         help_text='Уникальный код внутри организации (например, из 1С)',
@@ -238,11 +242,16 @@ class ProductSKU(UUIDModel):
     class Meta:
         verbose_name = 'Номенклатура (SKU)'
         verbose_name_plural = '6. Номенклатуры (SKUs)'
-        ordering = ('product', 'sku_code')
+        ordering = ('product', 'article')
 
     def __str__(self):
         status = 'Исп.' if self.is_active else 'Выведен'
-        return f'{self.sku_code} | {self.product.name} [{status}]'
+        product_name = (
+            f"{self.product.name[:20]}..."
+            if len(self.product.name) > 20
+            else self.product.name
+        )
+        return f'{self.article} | {product_name} [{status}]'
 
 
 # ==========================================
@@ -275,7 +284,7 @@ class ProductProductionLocation(UUIDModel):
         ]
 
     def __str__(self):
-        return f'{self.product_sku.product.name} | {self.product_sku.sku_code}'
+        return f'{self.product_sku.product.name} | {self.product_sku.article}'
 
     @property
     def product(self):

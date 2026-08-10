@@ -95,7 +95,7 @@ def get_available_products() -> list[dict]:
     skus = (
         ProductSKU.objects.filter(is_active=True)
         .select_related('product')
-        .order_by('product__name', 'sku_code')
+        .order_by('product__name', 'article')
     )
     for sku in skus:
         gtin = sku.product.consumer_gtin
@@ -105,7 +105,7 @@ def get_available_products() -> list[dict]:
         products.append({
             'sku_id': str(sku.id),
             'name': sku.product.name,
-            'sku_code': sku.sku_code,
+            'article': sku.article,
             'gtin': gtin,
             'group': sku.product.group,
         })
@@ -638,7 +638,7 @@ def sync_parties_from_cz() -> dict:
 
 
 def _generate_local_uip(
-        product_sku: str,
+        article: str,
         gtin: str,
         production_date: date,
         is_external_service: bool,
@@ -656,7 +656,14 @@ def _generate_local_uip(
                           Если None: DRAFT при skip_cz, иначе RESERVED_LOCAL.
     :param skip_cz: Если True — НЕ резервировать в ЧЗ (черновик для тестов).
     """
-    number = build_local_party_number(gtin, production_date, product_sku)
+    number = build_local_party_number(gtin, production_date, article=article)
+    print(f'Приходящие данные:\n'
+          f'article: {article},\n'
+          f'gtin: {gtin}\n'
+          f'production_date: {production_date}\n'
+          f'is_external_service: {is_external_service}\n'
+          f'target_status: {target_status}\n'
+          f'skip_cz: {skip_cz}')
 
     # Определяем целевой статус.
     if target_status is None:
@@ -696,6 +703,16 @@ def _generate_local_uip(
             f'УИП с номером {number} не найден в локальной базе. '
             f'Будет произведена попытка генерации'
         )
+
+    # Получить продукт по его артикулу.
+    try:
+        product_sku = ProductSKU.objects.get(article=article)
+    except ObjectDoesNotExist:
+        logger.error(f'Отсутствует продукт указанный в запросе: {article}')
+        return {
+            'is_error': True,
+            'message': f'Проверьте артикул продукта или наличие продукта в базе СУП.'
+        }
 
     # 2. Резервируем сформированный номер в Честном Знаке.
     if not skip_cz:
@@ -888,12 +905,12 @@ def generate_uip(
             'message': 'Продукт не найден или неактивен.'
         }
 
-    sku_code = product_sku.sku_code
+    article = product_sku.article
     gtin = product_sku.product.consumer_gtin
 
     if mode == 'local':
         return _generate_local_uip(
-            sku_code, gtin, production_date,
+            article, gtin, production_date,
             is_external_service, target_status, skip_cz
         )
     if mode == 'cz':
@@ -902,7 +919,7 @@ def generate_uip(
                 'is_error': True,
                 'message': 'Черновая генерация (skip_cz) доступна только в режиме local.'
             }
-        return _generate_cz_uip(sku_code, gtin, production_date)
+        return _generate_cz_uip(article, gtin, production_date)
 
     return {
         'is_error': True,

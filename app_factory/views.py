@@ -112,7 +112,7 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         # Поиск по артикулу (SKU)
         article = self.request.query_params.get('article')
         if article:
-            qs = qs.filter(skus__sku_code__icontains=article).distinct()
+            qs = qs.filter(skus__article__icontains=article).distinct()
 
         # Поиск по GTIN.
         gtin = self.request.query_params.get('gtin')

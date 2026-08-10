@@ -201,7 +201,7 @@ class ReservedPartyViewSet(viewsets.ReadOnlyModelViewSet):
 
         article = params.get('article')
         if article:
-            qs = qs.filter(product_sku__sku_code__icontains=article)
+            qs = qs.filter(product_sku__article__icontains=article)
 
         # === ПОИСК ===
         search = params.get('search')
@@ -614,9 +614,9 @@ def api_generate_uip(request):
 
     # Поиск продукта по артикулу или GTIN.
     product_sku = None
-    if data.get('sku_code'):
+    if data.get('article'):
         product_sku = ProductSKU.objects.filter(
-            sku_code=data['sku_code'], is_active=True
+            article=data['article'], is_active=True
         ).select_related('product').first()
 
     elif data.get('gtin'):
@@ -624,7 +624,7 @@ def api_generate_uip(request):
 
     if not product_sku:
         logger.error(
-            f"Критическая ошибка. Отсутствует запрошенный продукт: {data.get('sku_code')}",
+            f"Критическая ошибка. Отсутствует запрошенный продукт: {data.get('article')}",
             exc_info=True
         )
         return Response(

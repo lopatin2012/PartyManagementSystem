@@ -96,7 +96,7 @@ class ProductAdmin(admin.ModelAdmin):
     list_display = ('id', 'name', 'group', 'item_condition', 'card_status', is_active_display)
     list_filter = ('group', 'item_condition', 'card_status', 'is_active')
     search_fields = ('name',)
-    ordering = ('group', 'name')
+    ordering = ('-id', 'group', 'name')
     list_per_page = 25
     inlines = [ProductPackagingInline]
 
@@ -132,21 +132,21 @@ class ProductAdmin(admin.ModelAdmin):
 
 @admin.register(ProductPackaging)
 class ProductPackagingAdmin(admin.ModelAdmin):
-    list_display = ('id', 'product__name', 'product', 'level', 'gtin', 'quantity_inside', is_active_display)
+    list_display = ('id', 'product', 'level', 'gtin', 'quantity_inside', is_active_display)
     list_filter = ('level', 'is_active', 'product__group')
     autocomplete_fields = ('product',)
     search_fields = ('gtin', 'product__name')
-    ordering = ('product', 'level')
+    ordering = ('-id', 'product', 'level')
     list_per_page = 25
 
 
 @admin.register(ProductSKU)
 class ProductSKUAdmin(admin.ModelAdmin):
-    list_display = ('id', 'sku_code', 'product__name', 'product', is_active_display)
+    list_display = ('id', 'article', 'product', is_active_display)
     list_filter = ('is_active', 'product__group')
     autocomplete_fields = ('product',)
-    search_fields = ('sku_code', 'product__name')
-    ordering = ('product', 'sku_code')
+    search_fields = ('article', 'product__name')
+    ordering = ('-id', 'product', 'article')
     list_per_page = 50
 
 
@@ -159,7 +159,7 @@ class ProductProductionLocationAdmin(admin.ModelAdmin):
     list_filter = ('is_active', 'line__workshop__factory', 'line__workshop', 'line')
     autocomplete_fields = ('product_sku', 'line')
     search_fields = (
-        'product_sku__sku_code',
+        'product_sku__article',
         'product_sku__product__name',
         'line__name'
     )
