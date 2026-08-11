@@ -359,6 +359,98 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
+// Резервирование УИП в ЧЗ, если он в статусе Черновик.
+async function reserveDraftUip(btn) {
+    if (btn.disabled) return;
+
+    const uipId = btn.dataset.uipId;
+    const uipNumber = btn.dataset.uipNumber;
+    const url = btn.dataset.url;
+    const csrf = btn.dataset.csrf;
+
+    // Подтверждение.
+    if (!confirm(`Зарезервировать УИП ${uipNumber} в Честном Знаке?`)) {
+        return;
+    }
+
+    const cell = btn.closest('td');
+
+    // Убираем предыдущий статус, блокируем кнопку, показываем спиннер.
+    const oldStatus = cell.querySelector('.row-status');
+    if (oldStatus) oldStatus.remove();
+
+    btn.disabled = true;
+    btn.classList.add('loading');
+    btn.textContent = 'Резервирую…';
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': csrf,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ uip_id: uipId })
+        });
+
+        // === Проверка HTTP-статуса ===
+        if (response.status === 403) {
+            showError(btn, cell, 'Недостаточно прав для этой операции');
+            return;
+        }
+
+        if (response.status === 401) {
+            showError(btn, cell, 'Сессия истекла, обновите страницу');
+            return;
+        }
+
+        // Пытаемся распарсить JSON.
+        let result;
+        try {
+            result = await response.json();
+        } catch (parseError) {
+            // Сервер вернул не-JSON (например, HTML-страницу ошибки).
+            showError(btn, cell, `Ошибка сервера (${response.status})`);
+            console.error('Non-JSON response:', parseError);
+            return;
+        }
+
+        // === Проверка флага ошибки в JSON ===
+        if (!response.ok || result.is_error) {
+            const message = result.message
+                || result.message_error
+                || `Ошибка: ${response.status} ${response.statusText}`;
+            showError(btn, cell, message);
+            return;
+        }
+
+        // === Успех ===
+        cell.innerHTML = '<span class="row-status success">✓ Зарезервирован</span>';
+        setTimeout(() => window.location.reload(), 1200);
+
+    } catch (error) {
+        showError(btn, cell, 'Ошибка соединения с сервером');
+        console.error('Reserve draft error:', error);
+    }
+}
+
+// Показать ошибку рядом с кнопкой и вернуть её в исходное состояние.
+function showError(btn, cell, message) {
+    btn.disabled = false;
+    btn.classList.remove('loading');
+    btn.textContent = 'Зарезервировать';
+
+    // Убираем предыдущий статус, если был.
+    const oldStatus = cell.querySelector('.row-status');
+    if (oldStatus) oldStatus.remove();
+
+    const errSpan = document.createElement('span');
+    errSpan.className = 'row-status error';
+    errSpan.textContent = message;
+    errSpan.title = message;
+    cell.appendChild(errSpan);
+}
+
 // ==========================================
 // ФИЛЬТРЫ ТАБЛИЦЫ УИП
 // ==========================================
@@ -383,7 +475,7 @@ function toggleFilter(col) {
     closeAllFilterPanels();
 
     if (!isVisible) {
-        // Убираем inline-скрытие — CSS сам задаст block/flex.
+        // Убираем inline-скрытие — задаём block/flex.
         panel.style.display = '';
         if (th) th.classList.add('open');
         const firstInput = panel.querySelector('input, select');

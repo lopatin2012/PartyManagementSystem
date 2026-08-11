@@ -229,6 +229,9 @@
 
                         <!-- Создан: без фильтра -->
                         <th>Создан</th>
+
+                        <!-- Кнопки для взаимодействуя с УИП -->
+                        <th>Взаимодействие</th>
                     </tr>
                     </thead>
                     <tbody>
@@ -263,6 +266,30 @@
                                 {% endif %}
                             </td>
                             <td class="date-cell">{{ uip.created_at|date:"d.m.Y H:i" }}</td>
+                            <td class="actions-cell">
+                                {% if user.is_superuser %}
+                                    <!-- Кнопки для взаимодействуя с УИП -->
+                                    {% if uip.status == 'draft' %}
+                                        <button
+                                            class="btn-row-action btn-reserve"
+                                            data-uip-id="{{ uip.id }}"
+                                            data-uip-number="{{ uip.number }}"
+                                            data-url="{% url 'api-reserve-draft-uip' %}"
+                                            data-csrf="{{ csrf_token }}"
+                                            onclick="reserveDraftUip(this)">
+                                            Зарезервировать
+                                        </button>
+                                    {% elif uip.status == 'reserved_local' %}
+                                        <span class="action-hint action-hint-ok" title="Уже зарезервирован">✓</span>
+                                    {% elif uip.status == 'reserved_cz' %}
+                                        <span class="action-hint action-hint-ok" title="Создан через ЧЗ">✓</span>
+                                    {% else %}
+                                        <span class="action-hint action-hint-muted">—</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="action-hint action-hint-muted">—</span>
+                                {% endif %}
+                            </td>
                         </tr>
                     {% endfor %}
                     </tbody>

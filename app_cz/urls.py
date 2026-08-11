@@ -30,6 +30,11 @@ urlpatterns = [
         view=views.api_get_all_reserved_parties,
         name='get-all-reserved-parties'
     ),
+    path(
+        'api/reserve-draft-uip/',
+        views.api_reserve_draft_uip,
+        name='api-reserve-draft-uip'
+    ),
     # Снятие с резерва партии.
     path(
         'api/close-party-reservation/',

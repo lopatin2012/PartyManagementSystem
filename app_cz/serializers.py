@@ -527,3 +527,9 @@ class GenerateUIPSerializer(serializers.Serializer):
         if not attrs.get('article') and not attrs.get('gtin'):
             raise serializers.ValidationError('Укажите article или gtin.')
         return attrs
+
+class ReserveDraftUIPSerializer(serializers.Serializer):
+    """Запрос резервирования черновой УИП в Честном Знаке."""
+    uip_id = serializers.UUIDField(
+        help_text='UUID черновой УИП, который нужно зарезервировать'
+    )

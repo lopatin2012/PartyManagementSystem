@@ -4,6 +4,8 @@ import uuid
 from datetime import datetime
 import logging
 
+from django.utils import timezone
+
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 
@@ -38,7 +40,9 @@ from app_cz.serializers import (
     # с большей информацией и возможностями.
     ReservedPartyListSerializer,
     ReservedPartyDetailSerializer,
-    ReservedPartyCodesSerializer
+    ReservedPartyCodesSerializer,
+    # Резервирование чернового УИП.
+    ReserveDraftUIPSerializer
 )
 from app_factory.models import ProductSKU
 
@@ -648,3 +652,115 @@ def api_generate_uip(request):
         return Response(result, status=status.HTTP_400_BAD_REQUEST)
 
     return Response(result, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Резервирование черновой УИП в Честном Знаке",
+    request=ReserveDraftUIPSerializer,
+    responses={
+        200: OpenApiTypes.OBJECT,
+        400: OpenApiTypes.OBJECT,
+        403: OpenApiTypes.OBJECT,
+        404: OpenApiTypes.OBJECT,
+    }
+)
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def api_reserve_draft_uip(request):
+    """
+    Резервирует черновую УИП в Честном Знаке и переводит её в статус RESERVED_LOCAL.
+    Доступно только администраторам.
+    """
+    serializer = ReserveDraftUIPSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(
+            {
+                'is_error': True,
+                'message': 'Некорректные данные запроса',
+                'errors': serializer.errors,
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    uip_id = serializer.validated_data['uip_id']
+
+    # 1. Ищем УИП.
+    try:
+        uip = UIP.objects.select_related('product_sku__product').get(id=uip_id)
+    except UIP.DoesNotExist:
+        return Response(
+            {'is_error': True, 'message': 'УИП не найден.'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    # 2. Проверяем, что он в черновике.
+    if uip.status != PartyStatusChoices.DRAFT:
+        return Response(
+            {
+                'is_error': True,
+                'message': (
+                    f'УИП уже в статусе "{uip.get_status_display()}". '
+                    f'Резервировать можно только черновики.'
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # 3. Базовые проверки данных УИП.
+    if not uip.number:
+        return Response(
+            {'is_error': True, 'message': 'У УИП отсутствует номер.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    product_group = uip.product_sku.product.group
+    if not product_group:
+        return Response(
+            {'is_error': True, 'message': 'У продукта не указана товарная группа.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # 4. Резервируем в ЧЗ.
+    result = reserve_parties_honest_sign(
+        product_group=product_group,
+        party_numbers=[uip.number],
+    )
+
+    if result.get('is_error'):
+        return Response(
+            {
+                'is_error': True,
+                'message': (
+                    f'ЧЗ отклонил резервирование: '
+                    f'{result.get("message_error", "неизвестная ошибка")}'
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # 5. Успех: меняем статус и ставим reservation_date.
+    uip.reservation_date = timezone.now().date()
+    uip.description = 'Зарезервирован вручную из черновика через API'
+    uip.save(update_fields=['reservation_date', 'description', 'updated_at'])
+
+    uip.change_status(
+        PartyStatusChoices.RESERVED_LOCAL,
+        source='api',
+        note='Зарезервирован вручную из черновика через API',
+        changed_by=(
+            request.user
+            if request.user.is_authenticated
+            else None
+        ),
+    )
+
+    return Response(
+        {
+            'is_error': False,
+            'message': f'УИП {uip.number} успешно зарезервирован в ЧЗ.',
+            'number': uip.number,
+            'new_status': PartyStatusChoices.RESERVED_LOCAL,
+        },
+        status=status.HTTP_200_OK
+    )

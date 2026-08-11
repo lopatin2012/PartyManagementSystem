@@ -1,7 +1,7 @@
 /* === СТРАНИЦА СПИСКА УИП === */
 .uip-page {
     width: 100%;
-    max-width: 1400px;
+    max-width: 1700px;
     margin: 0 auto;
     padding: 2rem 3rem;
 }
@@ -77,6 +77,96 @@
 
 .uip-table tbody tr:last-child td {
     border-bottom: none;
+}
+
+/* === ДЕЙСТВИЯ В СТРОКАХ ТАБЛИЦЫ === */
+.actions-cell {
+    white-space: nowrap;
+}
+
+.btn-row-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.35rem 0.75rem;
+    background: var(--accent-yellow);
+    color: var(--bg-dark);
+    border: none;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    line-height: 1;
+}
+
+.btn-row-action:hover:not(:disabled) {
+    background: #fcd44a;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(250, 187, 28, 0.3);
+}
+
+.btn-row-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-row-action.loading {
+    position: relative;
+    color: transparent;
+}
+
+.btn-row-action.loading::after {
+    content: '';
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--bg-dark);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+.action-hint {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+
+.action-hint-ok {
+    background: rgba(187, 207, 50, 0.2);
+    color: var(--accent-green);
+    border: 1px solid rgba(187, 207, 50, 0.4);
+}
+
+.action-hint-muted {
+    color: rgba(255, 255, 255, 0.3);
+}
+
+/* Мини-статус рядом с кнопкой (ошибка/успех) */
+.row-status {
+    display: inline-block;
+    margin-left: 0.5rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    animation: fadeIn 0.3s ease;
+}
+
+.row-status.success {
+    color: var(--accent-green);
+    background: rgba(187, 207, 50, 0.15);
+}
+
+.row-status.error {
+    color: #ff6b7a;
+    background: rgba(220, 53, 69, 0.15);
 }
 
 /* Номер УИП */
