@@ -5,7 +5,6 @@ import re
 from datetime import datetime, date
 
 import requests
-from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import ObjectDoesNotExist
 from django.db import transaction
@@ -14,12 +13,12 @@ from django.utils.dateparse import parse_datetime, parse_date
 from app_cz.models import SUZAccount
 from app_cz.suz_config import SUZ
 from app_cz.enums import TypeProduct
-from app_cz.services.suz_client import get_true_api_session_token, get_true_api_auth_key
+from app_cz.services.suz_client import get_true_api_session_token
 from app_cz.services.code_client import send_application_report
 
-from app_factory.models import ProductSKU, Product, PackagingLevelChoices
-
-from app_helper.sign_helper import unpinned_signed_data
+from app_factory.models import (
+    ProductSKU, Product, PackagingLevelChoices, TypeFormationUIP
+)
 
 from app_uip.models import UIP, PartyStatusChoices, UIPStatusLog
 
@@ -63,16 +62,51 @@ def parse_cz_date(value: str):
     return parse_date(value)
 
 
-def build_local_party_number(gtin: str, production_date: date, article: str) -> str:
+def build_local_party_number(
+        gtin: str,
+        production_date: date,
+        article: str,
+        party: str,
+        type_formation_uip: int
+) -> str:
     """
     Формирует локальный номер УИП:
     GTIN(14) + дата ГГММДД(6) + артикул(5) + добивка нулями до 32.
     Пример: 04601751029980260724143620000000
     """
+    uip = '' # Начальный УИП.
     date_str = production_date.strftime('%y%m%d')
-    article_part = (article or '')[:5].ljust(5, '0')
-    base = f'{gtin}{date_str}{article_part}'  # 25 символов
-    return base.ljust(32, '0')[:32]  # добивка до 32
+    article_part = article
+
+    if party is None:
+      return uip
+
+    match type_formation_uip:
+        case TypeFormationUIP.general.value:
+            base = f'{gtin}{date_str}{article_part}'  # 25 символов
+            return base.ljust(32, '0')[:32] # добивка до 32.
+
+        case TypeFormationUIP.party_beginning.value:
+            base = f'{gtin}{date_str}{article_part}{party}'
+            return base.ljust(32, '0')[:32] # добивка до 32.
+
+        case TypeFormationUIP.party_end.value:
+            base = f'{gtin}{date_str}{article_part}'
+            base_l_just = base.ljust(29, '0') # добивка до 29.
+            prepared_party = party.rjust(3, '0') # добивка до 3.
+            return base_l_just + prepared_party # Добивка до 32.
+
+        case TypeFormationUIP.natura.value:
+            base = f'{gtin}{date_str}'.ljust(24, '0') # Добивка до 24.
+            base += '-'
+            today = date.today()
+            year = str(today.year)[2:] # Сокращённый год.
+            week = today.isocalendar()[1] # Номер недели.
+            day_of_week = today.isocalendar()[2] # День недели.
+            return f"{base}{year}{week}{day_of_week}{party}"
+
+        case _:
+            return uip
 
 
 def find_sku_by_gtin(gtin: str):
@@ -642,8 +676,10 @@ def _generate_local_uip(
         gtin: str,
         production_date: date,
         is_external_service: bool,
+        party: str = None,
         target_status: str = None,
         skip_cz: bool = False,
+        type_formation_uip: int = TypeFormationUIP.general.value
 ) -> dict:
     """
     Создаёт УИП в локальном согласованном формате И резервирует его в ЧЗ.
@@ -656,14 +692,20 @@ def _generate_local_uip(
                           Если None: DRAFT при skip_cz, иначе RESERVED_LOCAL.
     :param skip_cz: Если True — НЕ резервировать в ЧЗ (черновик для тестов).
     """
-    number = build_local_party_number(gtin, production_date, article=article)
-    print(f'Приходящие данные:\n'
-          f'article: {article},\n'
-          f'gtin: {gtin}\n'
-          f'production_date: {production_date}\n'
-          f'is_external_service: {is_external_service}\n'
-          f'target_status: {target_status}\n'
-          f'skip_cz: {skip_cz}')
+    number = build_local_party_number(
+        gtin,
+        production_date,
+        party=party,
+        article=article,
+        type_formation_uip=type_formation_uip
+    )
+
+    if not number:
+        return {
+            'is_error': True,
+            'message': f'Не удалось сформировать УИП. '
+                       f'Тип формирования {type_formation_uip}'
+        }
 
     # Определяем целевой статус.
     if target_status is None:
@@ -684,17 +726,17 @@ def _generate_local_uip(
         if is_external_service:
             return {
                 'is_error': False,
-                'uuid_uip': uip.id,
+                'uuid_uip': str(uip.id),
                 'reservation_date': uip.reservation_date,
-                'status': uip.status,
+                'status': str(uip.status),
                 'number': number,
                 'message': f'УИП с номером {number} уже существует.'
             }
         return {
             'is_error': True,
-            'uuid_uip': uip.id,
+            'uuid_uip': str(uip.id),
             'reservation_date': uip.reservation_date,
-            'status': uip.status,
+            'status': str(uip.status),
             'number': number,
             'message': f'УИП с номером {number} уже существует.'
         }
@@ -762,10 +804,10 @@ def _generate_local_uip(
         logger.info(f'Создан УИП: {number} (статус: {target_status}, skip_cz: {skip_cz})')
         return {
             'is_error': False,
-            'uuid_uip': uip.id,
+            'uuid_uip': str(uip.id),
             'reservation_date': uip.reservation_date,
             'number': number,
-            'status': target_status,
+            'status': str(target_status),
             'message': f'УИП создан: {number} (статус: {target_status})',
         }
     except Exception as e:
@@ -881,18 +923,20 @@ def generate_uip(
         product_sku: ProductSKU,
         production_date: date,
         mode: str,
+        party: str = '000',
         is_external_service: bool = False,
         target_status: str = None,
         skip_cz: bool = False,
 ) -> dict:
     """
     Точка входа генерации УИП внутри сервиса.
-    :param product_sku: артикул продукта.
-    :param production_date: дата маркировки (производства).
+    :param product_sku: Артикул продукта.
+    :param production_date: Дата маркировки (производства).
     :param mode: 'local' — локальный согласованный формат, 'cz' — через Честный Знак.
-    :param is_external_service: запрос УИП из внешней системы.
-    :param target_status: переопределить статус создаваемого УИП.
-    :param skip_cz: не взаимодействовать с ЧЗ (черновик для тестов, только для local).
+    :param party: Номер партии.
+    :param is_external_service: Запрос УИП из внешней системы.
+    :param target_status: Переопределить статус создаваемого УИП.
+    :param skip_cz: Не взаимодействовать с ЧЗ (черновик для тестов, только для local).
     """
 
     if not product_sku:
@@ -907,11 +951,13 @@ def generate_uip(
 
     article = product_sku.article
     gtin = product_sku.product.consumer_gtin
+    type_formation_uip = product_sku.type_formation_uip
 
     if mode == 'local':
         return _generate_local_uip(
             article, gtin, production_date,
-            is_external_service, target_status, skip_cz
+            is_external_service, party, target_status, skip_cz,
+            type_formation_uip
         )
     if mode == 'cz':
         if skip_cz:

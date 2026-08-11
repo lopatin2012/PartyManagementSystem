@@ -355,9 +355,52 @@
 
 /* === МОДАЛЬНОЕ ОКНО ГЕНЕРАЦИИ === */
 .generate-modal {
-    max-width: 560px;
+    max-width: 900px;
     width: 100%;
     padding: 1em;
+}
+
+/* === ДВУХКОЛОНОЧНАЯ СЕТКА В МОДАЛЬНОМ ОКНЕ === */
+.form-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.2rem;
+    align-items: start;
+}
+
+.form-column {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-width: 0;
+}
+
+/* Левая колонка — чуть шире под список продуктов */
+.form-column-left {
+    flex: 1.1;
+}
+
+/* Правая колонка — под способ генерации и предпросмотр */
+.form-column-right {
+    flex: 1;
+}
+
+/* Вертикальный вариант переключателя режимов */
+.mode-switch-vertical {
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+/* Предпросмотр растягивается на всю правую колонку */
+.form-column-right .preview-block {
+    margin-top: 0.75rem;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.form-column-right .preview-hint {
+    flex: 1;
 }
 
 /* === ПОИСК ПРОДУКТА === */
@@ -810,6 +853,20 @@ th.filterable.open .filter-caret {
         font-size: 1.6rem;
     }
 
+    .form-columns {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+
+    .mode-switch-vertical {
+        flex-direction: row;
+    }
+
+    .generate-modal {
+        max-width: 100%;
+        margin: 0.5rem;
+    }
+
     .status-filter {
         padding: 0.8rem;
     }
@@ -839,7 +896,7 @@ th.filterable.open .filter-caret {
         font-size: 0.85rem;
     }
 
-        .table-toolbar {
+    .table-toolbar {
         flex-direction: column;
         align-items: stretch;
     }

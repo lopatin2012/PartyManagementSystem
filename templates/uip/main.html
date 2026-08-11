@@ -52,45 +52,66 @@
                 </div>
 
                 <div class="modal-body">
-                    <!-- Выбор продукта -->
-                    <div class="form-group">
-                        <label>Продукт:</label>
-                        <div class="product-search">
-                            <input type="text" id="productSearch" class="form-input"
-                                   placeholder="Поиск по артикулу или названию…"
-                                   autocomplete="off"
-                                   oninput="filterProducts(this.value)">
-                            <span class="product-count" id="productCount"></span>
+                    <div class="form-columns">
+                        <!-- ЛЕВАЯ КОЛОНКА: поля ввода -->
+                        <div class="form-column form-column-left">
+                            <!-- Выбор продукта -->
+                            <div class="form-group">
+                                <label>Продукт:</label>
+                                <div class="product-search">
+                                    <input type="text" id="productSearch" class="form-input"
+                                           placeholder="Поиск по артикулу или названию…"
+                                           autocomplete="off"
+                                           oninput="filterProducts(this.value)">
+                                    <span class="product-count" id="productCount"></span>
+                                </div>
+                                <div class="product-list" id="productList"></div>
+                            </div>
+
+                            <!-- Дата производства -->
+                            <div class="form-group">
+                                <label for="productionDate">Дата производства:</label>
+                                <input type="date" id="productionDate" class="form-input">
+                            </div>
+
+                            <!-- Производственная партия -->
+                            <div class="form-group">
+                                <label for="party">Производственная партия:</label>
+                                <input type="text"
+                                       id="party"
+                                       class="form-input"
+                                       placeholder="0-999 (необязательно)"
+                                       inputmode="numeric"
+                                       maxlength="3"
+                                       autocomplete="off"
+                                       oninput="validatePartyInput(this)">
+                            </div>
                         </div>
-                        <div class="product-list" id="productList"></div>
-                    </div>
 
-                    <!-- Дата производства -->
-                    <div class="form-group">
-                        <label for="productionDate">Дата производства:</label>
-                        <input type="date" id="productionDate" class="form-input">
-                    </div>
+                        <!-- ПРАВАЯ КОЛОНКА: способ генерации и предпросмотр -->
+                        <div class="form-column form-column-right">
+                            <!-- Способ генерации -->
+                            <div class="form-group">
+                                <label>Способ генерации:</label>
+                                <div class="mode-switch mode-switch-vertical">
+                                    <label class="mode-option">
+                                        <input type="radio" name="genMode" value="local" checked onchange="updatePreview()">
+                                        <span>Локальный номер партии</span>
+                                    </label>
+                                    <label class="mode-option">
+                                        <input type="radio" name="genMode" value="cz" onchange="updatePreview()">
+                                        <span>Честный Знак</span>
+                                    </label>
+                                </div>
+                            </div>
 
-                    <!-- Способ генерации -->
-                    <div class="form-group">
-                        <label>Способ генерации:</label>
-                        <div class="mode-switch">
-                            <label class="mode-option">
-                                <input type="radio" name="genMode" value="local" checked onchange="updatePreview()">
-                                <span>Локальный номер партии</span>
-                            </label>
-                            <label class="mode-option">
-                                <input type="radio" name="genMode" value="cz" onchange="updatePreview()">
-                                <span>Честный Знак</span>
-                            </label>
+                            <!-- Предпросмотр номера -->
+                            <div class="preview-block">
+                                <div class="preview-label">Предпросмотр номера:</div>
+                                <div class="preview-number" id="previewNumber">—</div>
+                                <div class="preview-hint" id="previewHint"></div>
+                            </div>
                         </div>
-                    </div>
-
-                    <!-- Предпросмотр номера -->
-                    <div class="preview-block">
-                        <div class="preview-label">Предпросмотр номера:</div>
-                        <div class="preview-number" id="previewNumber">—</div>
-                        <div class="preview-hint" id="previewHint"></div>
                     </div>
                 </div>
 

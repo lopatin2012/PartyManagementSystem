@@ -34,6 +34,20 @@ class PackagingLevelChoices(models.IntegerChoices):
     TRANSPORT = 3, 'Транспортная (Паллет)'
 
 
+class TypeFormationUIP(models.IntegerChoices):
+    """Тип формата УИПа"""
+    general = 1, 'Обычный'
+        # GTIN(14) + дата ГГММДД(6) + артикул(5) + добивка нулями до 32.'
+        # Пример: 04601751029980260724143620000000'
+    party_beginning = 2, 'Обычный + партия в начале'
+        # Пример: 04601751029980260724143629990000'
+    party_end = 3, 'Обычный + партия в конце' # До 3-х символов. 999
+        # Пример: 04601751029980260724143620000999'
+    natura = 4, 'НатураПРО'
+        # Партия формируется: 26(год) + 19(неделя) + 5(день недели) + 20(партия за день)'
+        # Пример: 046017510299802607240000-2619520'
+
+
 class StateConditionChoices(models.TextChoices):
     """Состояние товара"""
     NOT_READY_ORDER_KM = 'not_ready_order_km', 'Не готов к заказу КМ'
@@ -236,6 +250,11 @@ class ProductSKU(UUIDModel):
         unique=True,
         help_text='Уникальный код внутри организации (например, из 1С)',
         verbose_name='Код внутри организации'
+    )
+    type_formation_uip = models.PositiveSmallIntegerField(
+        default=TypeFormationUIP.general,
+        choices=TypeFormationUIP.choices,
+        verbose_name='Тип формирования УИП'
     )
     is_active = models.BooleanField(default=True, verbose_name='Используется')
 

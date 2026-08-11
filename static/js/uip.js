@@ -87,6 +87,8 @@ let lastQuery = '';           // последний поисковый запр�
 const MAX_VISIBLE_PRODUCTS = 50;  // сколько элементов рендерим за раз
 
 function initGenerateModal() {
+    updateGenerateButtonState();
+
     const dataEl = document.getElementById('available-products-data');
     if (dataEl) {
         try {
@@ -190,6 +192,7 @@ function highlightMatch(text, query) {
 function onProductSelect(radio) {
     selectedSkuId = radio.value;
     updatePreview();
+    updateGenerateButtonState();
 }
 
 function buildLocalNumber(gtin, dateStr, article) {
@@ -253,12 +256,24 @@ function openGenerateModal() {
     const searchInput = document.getElementById('productSearch');
     if (searchInput) searchInput.value = '';
     filterProducts('');
-
+    updateGenerateButtonState();
     updatePreview();
 }
 
 function closeGenerateModal() {
     document.getElementById('generateModal').style.display = 'none';
+}
+
+function updateGenerateButtonState() {
+    const btn = document.getElementById('generateSubmitBtn');
+    if (!btn) return;
+    const radio = document.querySelector('input[name="product"]:checked');
+    btn.disabled = !radio;
+    btn.title = radio ? '' : 'Сначала выберите продукт';
+}
+
+function validatePartyInput(input) {
+    input.value = input.value.replace(/\D/g, '').slice(0, 3);
 }
 
 async function submitGenerate() {
@@ -267,15 +282,35 @@ async function submitGenerate() {
     const radio = document.querySelector('input[name="product"]:checked');
     const dateInput = document.getElementById('productionDate');
     const mode = document.querySelector('input[name="genMode"]:checked').value;
+    const partyInput = document.getElementById('party');
 
+    // 1. Проверка выбора продукта.
     if (!radio) {
         showGenerateStatus('Выберите продукт', true);
         return;
     }
+
+    // 2. Проверка даты производства.
     if (!dateInput.value) {
         showGenerateStatus('Укажите дату производства', true);
         return;
     }
+
+    // 3. Валидация номера партии.
+    const partyRaw = partyInput ? partyInput.value.trim() : '';
+    let partyValue = null;
+    if (partyRaw !== '') {
+        const partyNum = parseInt(partyRaw, 10);
+        if (isNaN(partyNum) || partyNum < 0 || partyNum > 999) {
+            showGenerateStatus('Партия должна быть числом от 0 до 999', true);
+            partyInput.focus();
+            return;
+        }
+
+        // Дополняем нулями слева: "5" → "005", "42" → "042".
+        partyValue = partyRaw.padStart(3, '0');
+    }
+    // Если поле пустое — отправим null, сервер использует дефолт '000'.
 
     btn.disabled = true;
     btn.textContent = 'Генерация...';
@@ -291,7 +326,8 @@ async function submitGenerate() {
             body: JSON.stringify({
                 product_sku_id: radio.value,
                 production_date: dateInput.value,
-                mode: mode
+                mode: mode,
+                party: partyValue
             })
         });
 

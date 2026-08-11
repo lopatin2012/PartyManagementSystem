@@ -15,6 +15,7 @@ from django.db.models import Q
 
 from app_cz.models import CISCode
 from app_cz.services.party_service import sync_parties_from_cz, generate_uip, get_available_products
+from app_factory.models import ProductSKU
 
 from app_uip.models import UIP, PartyStatusChoices
 
@@ -255,6 +256,7 @@ class GenerateUIPView(View):
         product_sku_id = data.get('product_sku_id')
         production_date_str = data.get('production_date')
         mode = data.get('mode', 'local')
+        party = data.get('party', '000')
 
         if not product_sku_id or not production_date_str:
             return JsonResponse(
@@ -266,7 +268,9 @@ class GenerateUIPView(View):
             )
 
         try:
-            production_date = datetime.strptime(production_date_str, '%Y-%m-%d').date()
+            production_date = datetime.strptime(
+                production_date_str, '%Y-%m-%d'
+            ).date()
         except ValueError:
             return JsonResponse(
                 {
@@ -276,7 +280,24 @@ class GenerateUIPView(View):
                 status=400
             )
 
-        result = generate_uip(product_sku_id, production_date, mode)
+        # Получаем объект продукта из БД.
+        try:
+            product_sku = ProductSKU.objects.get(id=product_sku_id)
+
+        except ProductSKU.DoesNotExist:
+            return JsonResponse(
+                {
+                    'is_error': True,
+                    'message': 'Не найден указанный продукт по id'
+                },
+                status=400
+            )
+
+        result = generate_uip(
+            product_sku, production_date, mode,
+            party=party
+        )
+
         status_code = (
             200
             if not result.get('is_error')
