@@ -16,6 +16,7 @@ urlpatterns = [
     path('cz/', include('app_cz.urls')), # Взаимодействие с Честным Знаком.
     path('uip/', include('app_uip.urls')), # Взаимодействие с УИП.
     path('helper/', include('app_helper.urls')), # Помощник сервиса.
+    path('scheduler/', include('app_scheduler.urls')), # Периодические задачи.
 
     # Документация API.
     # Ссылка на схему (JSON/YAML файл).

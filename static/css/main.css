@@ -128,7 +128,6 @@ main {
     flex: 1;
     display: flex;
     flex-direction: column;
-    justify-content: center;
     align-items: center;
     padding: 0.5rem;
     text-align: center;
@@ -252,6 +251,393 @@ footer {
     font-weight: 700;
     font-size: 0.8rem;
     letter-spacing: 0.5px;
+}
+
+/* ==========================================
+   ВИДЖЕТ ФОНОВЫХ ЗАДАЧ (компактный)
+   ========================================== */
+.scheduler-widget {
+    max-width: 1400px;
+    margin: 1rem auto;
+    padding: 0 3rem;
+}
+
+.scheduler-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 1rem;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    backdrop-filter: blur(5px);
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.scheduler-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.85);
+    font-weight: 500;
+}
+
+.scheduler-icon {
+    font-size: 1rem;
+}
+
+.scheduler-stats {
+    display: inline-flex;
+    gap: 0.3rem;
+    margin-left: 0.4rem;
+}
+
+.stat-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.stat-total {
+    background: rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.stat-errors {
+    background: rgba(220, 53, 69, 0.25);
+    color: #ff6b7a;
+    border: 1px solid rgba(220, 53, 69, 0.5);
+    animation: pulseError 2s ease-in-out infinite;
+}
+
+@keyframes pulseError {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.4); }
+    50% { box-shadow: 0 0 0 4px rgba(220, 53, 69, 0); }
+}
+
+.scheduler-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    font-size: 0.85rem;
+}
+
+.scheduler-next {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.scheduler-next .next-label {
+    color: rgba(255, 255, 255, 0.5);
+    margin-right: 0.3rem;
+}
+
+.scheduler-next strong {
+    color: var(--accent-green);
+    font-weight: 600;
+}
+
+.scheduler-next .next-time {
+    color: var(--accent-yellow);
+    font-size: 0.8rem;
+    margin-left: 0.3rem;
+}
+
+.btn-scheduler-details {
+    padding: 0.35rem 0.9rem;
+    background: transparent;
+    color: var(--accent-green);
+    border: 1px solid rgba(187, 207, 50, 0.4);
+    border-radius: 6px;
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-scheduler-details:hover {
+    background: rgba(187, 207, 50, 0.15);
+    border-color: var(--accent-green);
+}
+
+/* ==========================================
+   МОДАЛЬНОЕ ОКНО РАСПИСАНИЯ
+   ========================================== */
+.scheduler-modal {
+    max-width: 900px;
+    width: 90%;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.scheduler-toolbar {
+    display: flex;
+    gap: 0.8rem;
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid var(--input-border);
+    flex-wrap: wrap;
+}
+
+.scheduler-toolbar .form-input {
+    flex: 1;
+    min-width: 200px;
+    padding: 0.5rem 0.8rem;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 6px;
+    color: var(--text-main);
+    font-size: 0.9rem;
+    outline: none;
+}
+
+.scheduler-toolbar .form-input:focus {
+    border-color: var(--accent-green);
+}
+
+.scheduler-filters {
+    display: flex;
+    gap: 0.3rem;
+}
+
+.filter-btn {
+    padding: 0.45rem 0.8rem;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.7);
+    border: 1px solid var(--input-border);
+    border-radius: 6px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.filter-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-main);
+}
+
+.filter-btn.active {
+    background: rgba(187, 207, 50, 0.2);
+    color: var(--accent-green);
+    border-color: var(--accent-green);
+}
+
+.filter-btn span {
+    margin-left: 0.3rem;
+    font-weight: 700;
+}
+
+.scheduler-modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem 1rem 1rem;
+}
+
+.scheduler-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+}
+
+.scheduler-group-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.4rem 0;
+    margin-top: 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--accent-yellow);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid rgba(250, 187, 28, 0.2);
+}
+
+.group-count {
+    background: rgba(250, 187, 28, 0.2);
+    color: var(--accent-yellow);
+    padding: 0.15rem 0.5rem;
+    border-radius: 10px;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+.scheduler-task-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-top: 0.4rem;
+}
+
+.scheduler-task-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 0.8rem;
+    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--input-border);
+    border-radius: 6px;
+    gap: 1rem;
+    transition: all 0.2s ease;
+    flex-wrap: wrap;
+}
+
+.scheduler-task-card:hover {
+    background: rgba(0, 0, 0, 0.25);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.scheduler-task-card.has-error {
+    border-color: rgba(220, 53, 69, 0.5);
+    background: rgba(220, 53, 69, 0.08);
+}
+
+.task-main {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    flex: 1;
+    min-width: 0;
+}
+
+.task-status {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+
+.task-status.status-ok {
+    background: rgba(187, 207, 50, 0.2);
+    color: var(--accent-green);
+    border: 1px solid rgba(187, 207, 50, 0.4);
+}
+
+.task-status.status-error {
+    background: rgba(220, 53, 69, 0.25);
+    color: #ff6b7a;
+    border: 1px solid rgba(220, 53, 69, 0.5);
+    animation: pulseError 2s ease-in-out infinite;
+}
+
+.task-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.task-name {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-main);
+    margin-bottom: 0.2rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.task-meta {
+    display: flex;
+    gap: 0.8rem;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.5);
+    flex-wrap: wrap;
+}
+
+.task-next {
+    text-align: right;
+    flex-shrink: 0;
+}
+
+.task-next .next-label {
+    font-size: 0.72rem;
+    color: rgba(255, 255, 255, 0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.task-next .next-value {
+    font-size: 0.85rem;
+    color: var(--accent-green);
+    font-weight: 500;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.scheduler-empty {
+    padding: 2rem;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.9rem;
+}
+
+.scheduler-loading {
+    padding: 2rem;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.scheduler-updated {
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.5);
+    margin-right: auto;
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+    .scheduler-widget {
+        padding: 0 1rem;
+    }
+
+    .scheduler-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .scheduler-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .scheduler-task-card {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .task-next {
+        text-align: left;
+        padding-top: 0.4rem;
+        border-top: 1px solid var(--input-border);
+    }
+}
+
+/* Кнопка "Отмена" */
+.btn-secondary {
+    padding: 0.6rem 1.4rem;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.8);
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-main);
 }
 
 /* Адаптивность для мобильных */

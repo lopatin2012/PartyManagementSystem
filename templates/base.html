@@ -126,6 +126,70 @@
         </div>
     </div>
 
+    <!-- ВИДЖЕТ ФОНОВЫХ ЗАДАЧ -->
+    {% if user.is_superuser %}
+    <div class="scheduler-widget" id="schedulerWidget">
+        <div class="scheduler-header">
+            <div class="scheduler-title">
+                <span class="scheduler-icon">⏱</span>
+                <span>Фоновые задачи</span>
+                <span class="scheduler-stats" id="schedulerStats">
+                    <span class="stat-pill stat-total" title="Всего задач">
+                        <span class="stat-value">0</span>
+                    </span>
+                    <span class="stat-pill stat-errors" title="С ошибками">
+                        <span class="stat-value">0</span>
+                    </span>
+                </span>
+            </div>
+            <div class="scheduler-actions">
+                <span class="scheduler-next" id="schedulerNext">—</span>
+                <button class="btn-scheduler-details" onclick="openSchedulerModal()">
+                    Подробности
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- МОДАЛЬНОЕ ОКНО РАСПИСАНИЯ -->
+    <div id="schedulerModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content scheduler-modal">
+            <div class="modal-header">
+                <h3>Расписание фоновых задач</h3>
+                <button class="modal-close" onclick="closeSchedulerModal()">&times;</button>
+            </div>
+
+            <div class="scheduler-toolbar">
+                <input type="text" id="schedulerSearch" class="form-input"
+                       placeholder="Поиск по названию задачи..."
+                       oninput="filterSchedulerTasks(this.value)">
+                <div class="scheduler-filters">
+                    <button class="filter-btn active" data-filter="all" onclick="setSchedulerFilter('all')">
+                        Все <span id="countAll">0</span>
+                    </button>
+                    <button class="filter-btn" data-filter="errors" onclick="setSchedulerFilter('errors')">
+                        С ошибками <span id="countErrors">0</span>
+                    </button>
+                    <button class="filter-btn" data-filter="soon" onclick="setSchedulerFilter('soon')">
+                        Скоро <span id="countSoon">0</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="scheduler-modal-body">
+                <div class="scheduler-groups" id="schedulerGroups">
+                    <div class="scheduler-loading">Загрузка...</div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <span class="scheduler-updated" id="schedulerUpdated">—</span>
+                <button class="btn-secondary" onclick="closeSchedulerModal()">Закрыть</button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- ОСНОВНОЙ КОНТЕНТ -->
     <main>
         {% block content %}
@@ -199,5 +263,6 @@
     {% endblock %}
 
     <script src="{% static 'js/suz_status.js' %}"></script>
+    <script src="{% static 'js/main.js' %}"></script>
 </body>
 </html>

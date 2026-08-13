@@ -22,3 +22,8 @@ TIME_ZONE -> Часовой пояс.
 
 # Документация API.
 http://domen:port/api/docs/
+
+# Корректный запуск сервера.
+1. Запуск сервера. uvicorn config.asgi:application --host 0.0.0.0 --port 8888
+2. Запуск периодических заданий. python manage.py run_scheduler
+3. Запуск воркера. python manage.py run_tasks_worker

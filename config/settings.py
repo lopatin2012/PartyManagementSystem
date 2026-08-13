@@ -52,7 +52,9 @@ SERVICE_MODE_COLOR = (
     if DEBUG
     else '#BBCF32'
 )
-print(f'Запущена версия {SERVICE_VERSION} в режиме {SERVICE_MODE_TEXT}')
+
+if os.environ.get('PROCESS_TYPE') != 'worker' and os.environ.get('PROCESS_TYPE') != 'scheduler':
+    print(f'Запущена версия {SERVICE_VERSION} в режиме {SERVICE_MODE_TEXT}')
 
 ALLOWED_HOSTS = ['*']
 CSRF_TRUSTED_ORIGINS = [
@@ -72,6 +74,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django_tasks',
+    'django_tasks_db',
     'rest_framework',
     'drf_spectacular',
     'app_uip.apps.AppUipConfig',
@@ -80,6 +84,7 @@ INSTALLED_APPS = [
     'app_factory.apps.AppFactoryConfig',
     'app_helper.apps.AppHelperConfig',
     'app_page.apps.AppPageConfig',
+    'app_scheduler.apps.AppSchedulerConfig',
 
 ]
 
@@ -93,9 +98,17 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.AllowAny',
-        #'rest_framework.permissions.IsAuthenticated',
+        # 'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+# Конфигурация задач.
+TASKS = {
+    'default': {
+        "BACKEND": "django_tasks_db.DatabaseBackend",
+        "QUEUES": ["default", "emails", "high-priority"],
+    }
 }
 
 SPECTACULAR_SETTINGS = {
@@ -133,7 +146,7 @@ MIDDLEWARE = [
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        #FIXME Настроить Redis:
+        # FIXME Настроить Redis:
         # 'BACKEND': 'django.core.cache.backends.redis.RedisCache',
         # 'LOCATION': 'redis://127.0.0.1:6379/1',
     }
@@ -163,9 +176,11 @@ TEMPLATES = [
 ]
 
 STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
     "staticfiles": {
-        "BACKEND":
-            "django.contrib.staticfiles.storage.ManifestStaticFilesStorage",
+        "BACKEND": "django.contrib.staticfiles.storage.ManifestStaticFilesStorage",
     },
 }
 
