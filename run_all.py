@@ -1,12 +1,17 @@
 """
 Запускает web, scheduler и worker в одном терминале.
 """
+
+import socket
 import os
 import signal
 import subprocess
 import sys
 import threading
 import time
+
+HOSTNAME = socket.gethostname()
+LOCAL_IP = socket.gethostbyname(HOSTNAME)
 
 # Цвета ANSI
 COLORS = {
@@ -18,7 +23,7 @@ COLORS = {
 }
 
 PROCESSES = [
-    ('web', ['uvicorn', 'config.asgi:application', '--host', '0.0.0.0', '--port', '8888', '--reload']),
+    ('web', ['uvicorn', 'config.asgi:application', '--host', LOCAL_IP, '--port', '8888', '--reload']),
     ('scheduler', ['python', 'manage.py', 'run_scheduler']),
     ('worker', ['python', 'manage.py', 'run_tasks_worker']),
 ]
@@ -53,8 +58,10 @@ def main():
     if sys.platform == 'win32':
         os.system('')  # активирует ANSI escape sequences
 
+    # Настройка виртуального окружения.
     env = os.environ.copy()
     env['PYTHONIOENCODING'] = 'utf-8'
+    env['PYTHONUNBUFFERED'] = '1'
 
     procs = []
     threads = []
@@ -62,6 +69,9 @@ def main():
     try:
         for name, cmd in PROCESSES:
             log_system(f'Starting {name}...')
+
+            if cmd[0] == 'python':
+                cmd.insert(1, '-u')
 
             # Создаём процесс с отдельными stdout/stderr
             p = subprocess.Popen(
@@ -87,8 +97,8 @@ def main():
 
             time.sleep(0.3)
 
-        log_system('All processes started. Press Ctrl+C to stop.')
-        log_system(f'Web: http://localhost:8888')
+        log_system('Все процессы запущено. Для остановки нажмите сочетание клавиш Ctrl+C для остановки.')
+        log_system(f'Web: http://{LOCAL_IP}:8888')
         print()
 
         # Ждём, пока все процессы живы
@@ -101,27 +111,27 @@ def main():
 
     except KeyboardInterrupt:
         print()
-        log_system('Shutting down all processes...')
+        log_system('Завершение всех процессов...')
 
         for name, p in procs:
             if p.poll() is None:
                 log_system(f'Stopping {name} (pid={p.pid})')
                 p.terminate()
 
-        # Даём время на graceful shutdown
+        # Даём время на graceful shutdown.
         time.sleep(2)
 
-        # Принудительно добиваем, если остались
+        # Принудительно добиваем, если остались.
         for name, p in procs:
             if p.poll() is None:
-                log_system(f'Killing {name} (pid={p.pid})')
+                log_system(f'Остановка {name} (pid={p.pid})')
                 p.kill()
 
-        # Ждём потоки вывода
+        # Ждём потоки вывода.
         for t in threads:
             t.join(timeout=1)
 
-        log_system('All processes stopped.')
+        log_system('Все процессы остановлены.')
 
 
 if __name__ == '__main__':
