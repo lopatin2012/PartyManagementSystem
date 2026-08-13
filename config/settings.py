@@ -53,7 +53,7 @@ SERVICE_MODE_COLOR = (
     else '#BBCF32'
 )
 
-if os.environ.get('PROCESS_TYPE') != 'worker' and os.environ.get('PROCESS_TYPE') != 'scheduler':
+if os.environ.get('PROCESS_TYPE') == 'web':
     print(f'Запущена версия {SERVICE_VERSION} в режиме {SERVICE_MODE_TEXT}')
 
 ALLOWED_HOSTS = ['*']

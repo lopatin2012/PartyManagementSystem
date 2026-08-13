@@ -68,7 +68,7 @@ def main():
 
     try:
         for name, cmd in PROCESSES:
-            log_system(f'Starting {name}...')
+            log_system(f'Запуск {name}...')
 
             if cmd[0] == 'python':
                 cmd.insert(1, '-u')
