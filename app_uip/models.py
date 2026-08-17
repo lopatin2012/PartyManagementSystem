@@ -5,7 +5,7 @@ from django.conf import settings
 from django.utils import timezone
 from django.core.validators import RegexValidator
 
-from app_helper.models import UUIDModel, UUID7Field
+from app_helper.models import UUIDModel
 
 from app_factory.models import Line, ProductSKU
 
@@ -73,16 +73,6 @@ class UIP(UUIDModel):
         validators=[party_number_validator],
         verbose_name='Номер УИП (partyNumber)',
         help_text='Формат: 14 цифр GTIN + 6 цифр даты (ГГММДД) + 1-12 символов серийного номера'
-    )
-
-    # Уникальный идентификатор операции генерации (для синхронизации с внешними сервисами).
-    operation_uuid = UUID7Field(
-        null=True,
-        blank=True,
-        unique=True,
-        verbose_name='UUID операции генерации',
-        help_text='Уникальный идентификатор операции генерации УИП. '
-                  'Возвращается внешним системам, чтобы они могли сослаться на него в своём задании.'
     )
 
     # Статус.

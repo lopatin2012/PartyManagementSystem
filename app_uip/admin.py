@@ -121,7 +121,7 @@ class UIPAdmin(admin.ModelAdmin):
     ordering = ('-created_at',)
     list_per_page = 25
 
-    readonly_fields = ('created_at', 'updated_at', 'closed_at', 'archived_at', 'operation_uuid')
+    readonly_fields = ('created_at', 'updated_at', 'closed_at', 'archived_at')
 
     fieldsets = (
         ('Основная информация', {
@@ -130,12 +130,8 @@ class UIPAdmin(admin.ModelAdmin):
         ('Количества', {
             'fields': ('planned_quantity', 'produced_quantity')
         }),
-        ('Синхронизация', {
-            'fields': ('operation_uuid', 'is_desync'),
-            'classes': ('collapse',)
-        }),
         ('Дополнительно', {
-            'fields': ('description',),
+            'fields': ('description', 'is_desync'),
             'classes': ('collapse',)
         }),
         ('Аудит', {

@@ -10,7 +10,8 @@
 
 Схема обмена:
 1. Внешний сервис генерирует задание и запрашивает у нас УИП (api/v1/generate-uip/),
-   получая в ответе number (номер УИП), uuid_uip (id УИП) и operation_id (uuid операции).
+   получая в ответе number (номер УИП) и uuid_uip (id УИП).
+   Для связи с УИПом внешний сервис сохраняет uuid_uip в задании.
 2. Внешний сервис периодически «пушит» задание в наш приёмник (api/tasks/receive/).
 3. Мы периодически забираем коды из внешнего сервиса по заданию (sync_codes_task).
 4. Активные статусы задания («Создано», «В работе», «Закрыто») — синхронизируем коды.
@@ -167,8 +168,8 @@ def find_uip_for_external_task(data: dict):
 
     Приоритет:
     1. По номеру УИП (поле `uip`), если он присвоен (не заглушка).
-    2. По UUID операции генерации (operation_id/uuid_str), если внешний сервис
-       сохранил его в задании.
+    2. По id УИП (поле `uuid_uip`) — внешний сервис сохраняет uuid_uip
+       в задании для связи с УИПом.
     """
     number = str(data.get('uip') or '').strip()
     if number and number != NUMBER_PARTY_REGISTRATION:
@@ -176,12 +177,10 @@ def find_uip_for_external_task(data: dict):
         if uip:
             return uip
 
-    operation_id = str(
-        data.get('operation_id') or data.get('uuid_str') or ''
-    ).strip()
-    if operation_id:
+    uuid_uip = str(data.get('uuid_uip') or '').strip()
+    if uuid_uip:
         try:
-            uip = UIP.objects.filter(operation_uuid=operation_id).first()
+            uip = UIP.objects.filter(id=uuid_uip).first()
         except (ValueError, TypeError):
             uip = None
         if uip:

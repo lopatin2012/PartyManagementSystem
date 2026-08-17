@@ -152,9 +152,9 @@ class ReceiveExternalTaskSerializer(serializers.Serializer):
     line = serializers.JSONField(required=False, allow_null=True)
     product = serializers.JSONField(required=False, allow_null=True)
 
-    # УИП: номер партии и/или uuid операции генерации.
+    # УИП: номер партии и/или id УИП (uuid_uip) для связи с заданием.
     uip = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    operation_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    uuid_uip = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     # Параметры задания.
     party = serializers.CharField(required=False, allow_blank=True, allow_null=True)
