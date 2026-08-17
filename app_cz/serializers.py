@@ -69,6 +69,7 @@ class ProductionPartySerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_uip_number(self, obj):
         return obj.uip.number if obj.uip else None
 
@@ -132,21 +133,6 @@ class SyncCodesTaskSerializer(serializers.Serializer):
     )
 
 
-class FlexibleField(serializers.Field):
-    """
-    Поле-«передаватель»: принимает и возвращает значение без преобразований.
-
-    Используется для полей, формат которых ещё уточняется
-    (например, связь line/workshop/product может прийти строкой или словарём).
-    """
-
-    def to_representation(self, value):
-        return value
-
-    def to_internal_value(self, data):
-        return data
-
-
 class ReceiveExternalTaskSerializer(serializers.Serializer):
     """
     Приёмник задания из внешнего сервиса (Молвест.Маркировка).
@@ -161,10 +147,10 @@ class ReceiveExternalTaskSerializer(serializers.Serializer):
     task_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
-    # Связи (названия или словари с name/id).
-    workshop = FlexibleField(required=False, allow_null=True)
-    line = FlexibleField(required=False, allow_null=True)
-    product = FlexibleField(required=False, allow_null=True)
+    # Связи (названия или словари с name/id — произвольный JSON).
+    workshop = serializers.JSONField(required=False, allow_null=True)
+    line = serializers.JSONField(required=False, allow_null=True)
+    product = serializers.JSONField(required=False, allow_null=True)
 
     # УИП: номер партии и/или uuid операции генерации.
     uip = serializers.CharField(required=False, allow_blank=True, allow_null=True)

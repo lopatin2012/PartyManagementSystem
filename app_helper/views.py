@@ -1,5 +1,6 @@
 # app_helper/views.py
 
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 
 from rest_framework.decorators import api_view
@@ -12,7 +13,8 @@ from app_helper.service_helper import diagnose_service
 
 @extend_schema(
     tags=["Помощник"],
-    summary="Возвращает текущее состояние сервиса"
+    summary="Возвращает текущее состояние сервиса",
+    responses={200: OpenApiTypes.OBJECT},
 )
 @api_view(['GET'])
 def api_status_service(request):

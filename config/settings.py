@@ -118,6 +118,18 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': 'API для работы с кодами маркировки и УИП',
     'VERSION': SERVICE_VERSION,
     'SERVE_INCLUDE_SCHEMA': False,
+    # Явные имена enum-компонентов, чтобы избежать коллизий имён
+    # (несколько наборов выборок с одинаковым именем поля, например «status»).
+    'ENUM_NAME_OVERRIDES': {
+        'UIPStatusEnum': 'app_uip.models.PartyStatusChoices',
+        'ProductionPartyStatusEnum': 'app_uip.models.ProductionPartyStatusChoices',
+        'ProductionPartySyncStatusEnum': 'app_uip.models.ProductionPartySyncStatusChoices',
+        'CISCodesCzStatusEnum': 'app_cz.models.CISCodesStatusChoices',
+        'ProductionCodeStatusEnum': 'app_cz.models.ProductionCodeStatusChoices',
+        'PackagingLevelEnum': 'app_factory.models.PackagingLevelChoices',
+        'TypeFormationUIPEnum': 'app_factory.models.TypeFormationUIP',
+        'TypeProductEnum': 'app_cz.enums.TypeProduct',
+    },
     'TAGS': [
         {
             'name': 'Честный Знак',
