@@ -5,6 +5,9 @@
 # Версионность.
 config/_version.py
 
+# Миграции.
+**/migrations/*.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -221,3 +224,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+/.idea/.gitignore
