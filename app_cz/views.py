@@ -26,13 +26,21 @@ from app_cz.services.party_service import (
     get_all_reserved_parties,
     close_party_reservation, generate_uip, find_sku_by_gtin,
 )
-from app_cz.services.code_sync import sync_codes_task
+from app_cz.services.code_sync import (
+    sync_codes_task,
+    receive_external_task,
+    sync_codes_for_party,
+)
 from app_cz.serializers import (
     # Взаимодействие УИП через ЧЗ.
     GeneratePartySerializer, ReservePartySerializer, ClosePartySerializer,
 
     # Синхронизация кодов из задания.
     SyncCodesTaskSerializer,
+    # Приёмник задания из внешнего сервиса.
+    ReceiveExternalTaskSerializer,
+    # Ручная синхронизация кодов партии.
+    SyncTaskCodesRequestSerializer,
     # Подробная информация о коде.
     CISCodeDetailSerializer,
 
@@ -134,9 +142,7 @@ class ReservedPartyViewSet(viewsets.ReadOnlyModelViewSet):
         qs = UIP.objects.select_related(
             'product_sku__product'
         ).prefetch_related(
-            'production_parties__factory',
-            'production_parties__workshop',
-            'production_parties__line',
+            'production_parties__line__workshop__factory',
             'product_sku__product__skus',
             'product_sku__product__packagings'
         )
@@ -244,7 +250,7 @@ class ReservedPartyViewSet(viewsets.ReadOnlyModelViewSet):
 class ProductionPartyViewSet(viewsets.ReadOnlyModelViewSet):
     """API для просмотра производственных партий (только чтение)."""
     queryset = ProductionParty.objects.select_related(
-        'uip', 'factory', 'line'
+        'uip', 'line__workshop__factory'
     ).order_by('-created_at')
     serializer_class = ProductionPartySerializer
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
@@ -764,3 +770,95 @@ def api_reserve_draft_uip(request):
         },
         status=status.HTTP_200_OK
     )
+
+
+# ==========================================
+# Синхронизация с внешним сервисом (Молвест.Маркировка).
+# ==========================================
+
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Приёмник задания из внешнего сервиса",
+    request=ReceiveExternalTaskSerializer,
+    responses={
+        200: OpenApiTypes.OBJECT,
+        400: OpenApiTypes.OBJECT,
+    }
+)
+@api_view(['POST'])
+def api_receive_external_task(request):
+    """
+    Приёмник производственной партии (задания) из внешнего сервиса.
+
+    Внешний сервис периодически «пушит» сюда данные своего задания
+    (поля модели Task). Задание создаётся/обновляется в локальной БД,
+    после чего по нему можно синхронизировать коды маркировки.
+    """
+    serializer = ReceiveExternalTaskSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(
+            {
+                'has_error': True,
+                'message': 'Некорректные данные задания',
+                'errors': serializer.errors,
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    result = receive_external_task(serializer.validated_data)
+
+    if result.get('has_error'):
+        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(result, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Ручная синхронизация кодов задания из внешнего сервиса",
+    request=SyncTaskCodesRequestSerializer,
+    responses={
+        200: OpenApiTypes.OBJECT,
+        400: OpenApiTypes.OBJECT,
+    }
+)
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def api_sync_task_codes(request):
+    """
+    Синхронизация кодов маркировки для производственной партии
+    по её заданию во внешнем сервисе.
+    """
+    serializer = SyncTaskCodesRequestSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(
+            {
+                'has_error': True,
+                'message': serializer.errors,
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        party = ProductionParty.objects.get(
+            id=serializer.validated_data['production_party_id']
+        )
+    except ProductionParty.DoesNotExist:
+        return Response(
+            {
+                'has_error': True,
+                'message': 'Производственная партия не найдена.'
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    result = sync_codes_for_party(
+        party,
+        url=serializer.validated_data.get('url'),
+        token=serializer.validated_data.get('token'),
+    )
+
+    if result.get('has_error'):
+        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(result, status=status.HTTP_200_OK)

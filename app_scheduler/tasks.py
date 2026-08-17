@@ -274,3 +274,87 @@ def cleanup_old_logs_task() -> dict:
 
     logger.info(f'Удалено старых логов: {deleted_count}')
     return {'deleted': deleted_count}
+
+
+# ==========================================
+# Синхронизация с внешним сервисом (Молвест.Маркировка).
+# ==========================================
+
+@task(queue_name='default')
+def sync_external_tasks_task() -> dict:
+    """
+    Периодическая синхронизация кодов маркировки с внешними сервисами заводов.
+
+    - Синхронизирует коды для заданий в активных статусах
+      («Создано», «В работе», «Закрыто»).
+    - Для заданий в финальном статусе («Завершено») выполняет последнюю
+      синхронизацию данных.
+
+    Адрес сервера маркировки берётся из модели Factory (ip_address/port_address).
+    """
+    from app_cz.services.code_sync import sync_all_external_tasks
+
+    return sync_all_external_tasks()
+
+
+# ==========================================
+# Мониторинг резерва УИП.
+# ==========================================
+
+@task(queue_name='default')
+def check_uip_reserve_task() -> dict:
+    """
+    Периодическая проверка заполнения резерва УИП и уведомления по почте.
+
+    - >50% — предупреждение, >80% — тревога.
+    - >90% — снятие с резерва устаревших УИП через отчёт о нанесении
+      (кодами DataMatrix из заданий, либо кодом по GTIN из внешнего сервиса).
+    """
+    from app_cz.services.reserve_monitor import check_uip_reserve_and_notify
+
+    return check_uip_reserve_and_notify()
+
+
+# ==========================================
+# Электронная почта (очередь 'emails').
+# ==========================================
+
+@task(queue_name='emails')
+def send_email_task(
+        subject: str,
+        message: str,
+        recipient_list: list,
+        html_message: str = None,
+) -> dict:
+    """
+    Отправка электронного письма в фоне (очередь 'emails').
+
+    :param subject: Тема письма.
+    :param message: Текст письма.
+    :param recipient_list: Список получателей.
+    :param html_message: HTML-версия письма (опционально).
+    :return: Словарь с результатом.
+    """
+    from django.conf import settings
+    from django.core.mail import send_mail
+
+    recipients = [r for r in (recipient_list or []) if r]
+    if not recipients:
+        warning = 'Не указаны получатели письма.'
+        logger.warning(warning)
+        return {'sent': False, 'message': warning}
+
+    try:
+        sent = send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=recipients,
+            html_message=html_message,
+            fail_silently=False,
+        )
+        logger.info(f'Email отправлен: «{subject}» -> {recipients}')
+        return {'sent': True, 'count': sent, 'recipients': recipients}
+    except Exception as e:
+        logger.error(f'Ошибка отправки email «{subject}»: {e}', exc_info=True)
+        raise

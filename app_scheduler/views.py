@@ -32,6 +32,8 @@ class SchedulerStatusView(View):
             close_unused_registered_uips_task,
             archive_stale_closed_uips_task,
             cleanup_old_logs_task,
+            sync_external_tasks_task,
+            check_uip_reserve_task,
         )
 
         task_map = {
@@ -40,6 +42,8 @@ class SchedulerStatusView(View):
             'close_unused_registered': close_unused_registered_uips_task,
             'archive_stale_closed': archive_stale_closed_uips_task,
             'cleanup_old_logs': cleanup_old_logs_task,
+            'sync_external_tasks': sync_external_tasks_task,
+            'check_uip_reserve': check_uip_reserve_task,
         }
 
         now = timezone.now()

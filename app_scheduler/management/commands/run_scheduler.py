@@ -42,6 +42,14 @@ SCHEDULE = [
     # Очистка данных.
     ('cleanup_old_logs', 1 * DAY, 'Очистка старых логов статусов (700 дней)'),
 
+    # Синхронизация с внешним сервисом (Молвест.Маркировка).
+    # Задания и коды маркировки.
+    ('sync_external_tasks', 30 * MINUTE, 'Синхронизация заданий и кодов с внешним сервисом'),
+
+    # Мониторинг резерва УИП.
+    # >50% — предупреждение, >80% — тревога, >90% — снятие устаревших УИП.
+    ('check_uip_reserve', 1 * DAY, 'Проверка резерва УИП и уведомления по почте'),
+
     # # Каждые 30 минут — синхронизация УИП с ЧЗ
     # ('sync_parties', 30 * 60, 'Синхронизация УИП с ЧЗ'),
     #
@@ -128,6 +136,8 @@ class Command(BaseCommand):
             close_unused_registered_uips_task,
             archive_stale_closed_uips_task,
             cleanup_old_logs_task,
+            sync_external_tasks_task,
+            check_uip_reserve_task,
         )
         from django_tasks_db.models import DBTaskResult
         from django_tasks.base import TaskResultStatus
@@ -139,6 +149,8 @@ class Command(BaseCommand):
             'close_unused_registered': close_unused_registered_uips_task,
             'archive_stale_closed': archive_stale_closed_uips_task,
             'cleanup_old_logs': cleanup_old_logs_task,
+            'sync_external_tasks': sync_external_tasks_task,
+            'check_uip_reserve': check_uip_reserve_task,
         }
 
         check_interval = options['interval']

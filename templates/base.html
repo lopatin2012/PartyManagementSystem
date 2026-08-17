@@ -31,6 +31,11 @@
             <a href="{% url 'uip_list' %}" class="nav-link {% if request.resolver_match.url_name == 'uip_list' %}nav-link-active{% endif %}">
                 УИП
             </a>
+            {% if user.is_superuser %}
+                <a href="{% url 'sync_tasks' %}" class="nav-link {% if request.resolver_match.url_name == 'sync_tasks' %}nav-link-active{% endif %}">
+                    Синхронизация
+                </a>
+            {% endif %}
             {% if debug %}
                 <a href="/api/docs/" class="nav-link" target="_blank" rel="noopener">
                     Документация API
@@ -100,13 +105,16 @@
                 <span class="status-title">Молвест.Маркировка</span>
             </div>
             <div class="status-body">
-                {% for workshop in status_factories.workshops %}
+                {% for factory in status_factories.factories %}
                     <div class="workshop-status">
-                        <span class="workshop-name">{{ workshop.name }}</span>
-                        <span class="status-badge-small {% if workshop.is_ok %}status-success{% else %}status-danger{% endif %}">
-                            {% if workshop.is_ok %}Работает{% else %}Недоступно{% endif %}
+                        <span class="workshop-name">{{ factory.name }}</span>
+                        <span class="status-badge-small {% if factory.is_ok %}status-success{% else %}status-danger{% endif %}"
+                              title="{% if factory.is_ok %}Доступен: {{ factory.message }}{% else %}{{ factory.message }}{% endif %}">
+                            {% if factory.is_ok %}Работает{% else %}Недоступно{% endif %}
                         </span>
                     </div>
+                {% empty %}
+                    <p class="status-text">Заводы не настроены</p>
                 {% endfor %}
             </div>
         </div>

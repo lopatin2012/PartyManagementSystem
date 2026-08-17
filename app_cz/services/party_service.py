@@ -10,6 +10,8 @@ from django.db.models import ObjectDoesNotExist
 from django.db import transaction
 from django.utils.dateparse import parse_datetime, parse_date
 
+from uuid_utils import uuid7
+
 from app_cz.models import SUZAccount
 from app_cz.suz_config import SUZ
 from app_cz.enums import TypeProduct
@@ -600,6 +602,7 @@ def sync_parties_from_cz() -> dict:
                         status=PartyStatusChoices.RESERVED_CZ,
                         production_date=production_date,
                         reservation_date=reservation_date,
+                        operation_uuid=uuid7(),
                         planned_quantity=party_info.get('expectedQuantity', 0),
                         is_desync=False,
                         description='Создан при синхронизации с ЧЗ',
@@ -727,6 +730,7 @@ def _generate_local_uip(
             return {
                 'is_error': False,
                 'uuid_uip': str(uip.id),
+                'operation_id': str(uip.operation_uuid) if uip.operation_uuid else None,
                 'reservation_date': uip.reservation_date,
                 'status': str(uip.status),
                 'number': number,
@@ -735,6 +739,7 @@ def _generate_local_uip(
         return {
             'is_error': True,
             'uuid_uip': str(uip.id),
+            'operation_id': str(uip.operation_uuid) if uip.operation_uuid else None,
             'reservation_date': uip.reservation_date,
             'status': str(uip.status),
             'number': number,
@@ -786,6 +791,7 @@ def _generate_local_uip(
                 number=number,
                 status=target_status,
                 production_date=production_date,
+                operation_uuid=uuid7(),
                 # Для черновика даты резервирования нет.
                 reservation_date=(
                     None
@@ -805,6 +811,7 @@ def _generate_local_uip(
         return {
             'is_error': False,
             'uuid_uip': str(uip.id),
+            'operation_id': str(uip.operation_uuid),
             'reservation_date': uip.reservation_date,
             'number': number,
             'status': str(target_status),
@@ -867,6 +874,7 @@ def _generate_cz_uip(
                         status=PartyStatusChoices.RESERVED_CZ,
                         production_date=production_date,
                         reservation_date=reservation_date,
+                        operation_uuid=uuid7(),
                         description='Сгенерирован вручную через Честный Знак',
                     )
                     UIPStatusLog.objects.create(
@@ -908,7 +916,8 @@ def _generate_cz_uip(
                 if len(created) == 1
                 else ', '.join(created),
             ),
-            'uuid_uip': uip.id,
+            'uuid_uip': str(uip.id),
+            'operation_id': str(uip.operation_uuid) if uip.operation_uuid else None,
             'message': f'Сгенерировано УИП через ЧЗ: {len(created)} шт.',
         }
     except Exception as e:

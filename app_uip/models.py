@@ -5,7 +5,7 @@ from django.conf import settings
 from django.utils import timezone
 from django.core.validators import RegexValidator
 
-from app_helper.models import UUIDModel
+from app_helper.models import UUIDModel, UUID7Field
 
 from app_factory.models import Line, ProductSKU
 
@@ -38,6 +38,13 @@ class ProductionPartyStatusChoices(models.TextChoices):
     ERROR = 'error', 'Ошибка'  # Задание в ошибке.
 
 
+class ProductionPartySyncStatusChoices(models.TextChoices):
+    """Статусы синхронизации производственной партии с внешним сервисом."""
+    PENDING = 'pending', 'Ожидает синхронизации'
+    SYNCED = 'synced', 'Синхронизировано'
+    ERROR = 'error', 'Ошибка синхронизации'
+
+
 # Уникальный Идентификатор Партии.
 class UIP(UUIDModel):
     """УИП — резервирование в Честном Знаке."""
@@ -66,6 +73,16 @@ class UIP(UUIDModel):
         validators=[party_number_validator],
         verbose_name='Номер УИП (partyNumber)',
         help_text='Формат: 14 цифр GTIN + 6 цифр даты (ГГММДД) + 1-12 символов серийного номера'
+    )
+
+    # Уникальный идентификатор операции генерации (для синхронизации с внешними сервисами).
+    operation_uuid = UUID7Field(
+        null=True,
+        blank=True,
+        unique=True,
+        verbose_name='UUID операции генерации',
+        help_text='Уникальный идентификатор операции генерации УИП. '
+                  'Возвращается внешним системам, чтобы они могли сослаться на него в своём задании.'
     )
 
     # Статус.
@@ -243,10 +260,12 @@ class UIPStatusLog(UUIDModel):
 class ProductionParty(UUIDModel):
     """Производственная партия — задание на линии."""
 
-    # Связь с УИП.
+    # Связь с УИП (может отсутствовать, если задание ещё не получило УИП).
     uip = models.ForeignKey(
         to=UIP,
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         verbose_name='УИП',
         related_name='production_parties'
     )
@@ -286,6 +305,32 @@ class ProductionParty(UUIDModel):
         verbose_name='Статус',
         help_text='Задание производственной партии',
         db_index=True
+    )
+
+    # Синхронизация с внешним сервисом (Молвест.Маркировка).
+    is_external = models.BooleanField(
+        default=False,
+        verbose_name='Задание из внешнего сервиса',
+        help_text='Партия получена/синхронизирована с внешним сервисом заданий',
+        db_index=True
+    )
+    sync_status = models.CharField(
+        max_length=20,
+        choices=ProductionPartySyncStatusChoices.choices,
+        default=ProductionPartySyncStatusChoices.PENDING,
+        verbose_name='Статус синхронизации',
+        db_index=True
+    )
+    last_sync_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Последняя синхронизация'
+    )
+    last_sync_message = models.TextField(
+        null=True,
+        blank=True,
+        verbose_name='Сообщение синхронизации',
+        help_text='Результат последней синхронизации (данные/коды) или текст ошибки'
     )
 
     # Даты.

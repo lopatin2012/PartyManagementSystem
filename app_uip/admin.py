@@ -121,7 +121,7 @@ class UIPAdmin(admin.ModelAdmin):
     ordering = ('-created_at',)
     list_per_page = 25
 
-    readonly_fields = ('created_at', 'updated_at', 'closed_at', 'archived_at')
+    readonly_fields = ('created_at', 'updated_at', 'closed_at', 'archived_at', 'operation_uuid')
 
     fieldsets = (
         ('Основная информация', {
@@ -130,8 +130,12 @@ class UIPAdmin(admin.ModelAdmin):
         ('Количества', {
             'fields': ('planned_quantity', 'produced_quantity')
         }),
+        ('Синхронизация', {
+            'fields': ('operation_uuid', 'is_desync'),
+            'classes': ('collapse',)
+        }),
         ('Дополнительно', {
-            'fields': ('description', 'is_desync'),
+            'fields': ('description',),
             'classes': ('collapse',)
         }),
         ('Аудит', {
@@ -196,6 +200,8 @@ class ProductionPartyAdmin(admin.ModelAdmin):
         'line', 'workshop_name', 'factory_name',
         'planned_and_produced',
         'status',
+        'sync_status',
+        'last_sync_at',
         'production_datetime_start'
     )
     list_filter = (
@@ -204,6 +210,9 @@ class ProductionPartyAdmin(admin.ModelAdmin):
         'line',
         'uip__status',
         'uip__product_sku__product__group',
+        'status',
+        'sync_status',
+        'is_external',
         'production_datetime_start'
     )
     search_fields = (
@@ -214,7 +223,10 @@ class ProductionPartyAdmin(admin.ModelAdmin):
     ordering = ('-created_at',)
     list_per_page = 25
 
-    readonly_fields = ('created_at', 'updated_at', 'workshop_name', 'factory_name')
+    readonly_fields = (
+        'created_at', 'updated_at', 'workshop_name', 'factory_name',
+        'last_sync_at', 'last_sync_message'
+    )
 
     fieldsets = (
         ('Основная информация', {
@@ -232,6 +244,10 @@ class ProductionPartyAdmin(admin.ModelAdmin):
         ('Количества', {
             'fields': ('planned_quantity', 'produced_quantity')
         }),
+        ('Синхронизация', {
+            'fields': ('is_external', 'sync_status', 'last_sync_at', 'last_sync_message'),
+            'classes': ('collapse',)
+        }),
         ('Аудит', {
             'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
@@ -242,6 +258,8 @@ class ProductionPartyAdmin(admin.ModelAdmin):
     def uip_number(self, obj):
         """Показывает номер УИП с ссылкой."""
         from django.utils.html import format_html
+        if not obj.uip:
+            return '—'
         return format_html(
             '<a href="/admin/app_uip/uip/{}/change/">{}</a>',
             obj.uip.id,

@@ -1,0 +1,208 @@
+<!-- templates/sync/main.html -->
+
+{% extends 'base.html' %}
+{% load static %}
+
+{% block head %}
+<link rel="stylesheet" href="{% static 'css/sync.css' %}" type="text/css">
+{% endblock %}
+
+{% block content %}
+<div class="sync-page">
+    <div class="sync-header">
+        <h1>{{ page_name }}</h1>
+        <p class="subtitle">
+            Задания из внешнего сервиса (Молвест.Маркировка).
+            Всего: <span class="highlight">{{ stats.total }}</span>,
+            активных: <span class="highlight">{{ stats.active }}</span>
+        </p>
+
+        {% if user.is_superuser %}
+        <div class="sync-controls">
+            <button id="syncAllBtn" class="btn-sync"
+                    data-url="{% url 'sync_all_tasks' %}"
+                    data-csrf="{{ csrf_token }}"
+                    onclick="syncAllTasks(this)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                </svg>
+                Синхронизировать всё
+            </button>
+
+            <div id="syncStatus" class="sync-status" style="display: none;"></div>
+        </div>
+
+        <!-- Статистика по статусам синхронизации -->
+        <div class="sync-stats">
+            <span class="stat-pill stat-pending" title="Ожидают синхронизации">
+                Ожидают: <span class="stat-value">{{ stats.pending }}</span>
+            </span>
+            <span class="stat-pill stat-ok" title="Синхронизировано">
+                Синхронизировано: <span class="stat-value">{{ stats.synced }}</span>
+            </span>
+            <span class="stat-pill stat-err" title="Ошибки синхронизации">
+                Ошибки: <span class="stat-value">{{ stats.error }}</span>
+            </span>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ТУЛБАР -->
+    <div class="table-toolbar">
+        <form method="get" action="" class="sync-filter-form">
+            <input type="text" name="search" value="{{ current_search }}" class="form-input"
+                   placeholder="Поиск: задание, партия, УИП, артикул…">
+            <select name="status" class="form-input">
+                <option value="">Все статусы задания</option>
+                {% for value, label in status_choices %}
+                    <option value="{{ value }}" {% if current_status == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <select name="sync" class="form-input">
+                <option value="">Все статусы синхронизации</option>
+                {% for value, label in sync_status_choices %}
+                    <option value="{{ value }}" {% if current_sync == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn-apply">Применить</button>
+            {% if has_active_filters %}
+                <a href="{% url 'sync_tasks' %}" class="btn-reset">✕ Сбросить</a>
+            {% endif %}
+        </form>
+        <div class="toolbar-info">
+            Найдено: <span class="highlight">{{ total_count }}</span> заданий
+        </div>
+    </div>
+
+    <!-- ТАБЛИЦА -->
+    {% if page_obj %}
+    <div class="sync-table-container">
+        <table class="sync-table">
+            <thead>
+            <tr>
+                <th>Задание (внешнее)</th>
+                <th>Партия</th>
+                <th>УИП</th>
+                <th>Продукт / артикул</th>
+                <th>Линия</th>
+                <th>Статус задания</th>
+                <th>План / Факт</th>
+                <th>Дата маркировки</th>
+                <th>Синхронизация</th>
+                <th>Действия</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for party in page_obj %}
+                <tr>
+                    <td class="code-cell" title="{{ party.external_number_task }}">{{ party.external_number_task }}</td>
+                    <td>{{ party.production_party|default:"—" }}</td>
+                    <td>
+                        {% if party.uip %}
+                            <span class="uip-number" title="{{ party.uip.number }}">{{ party.uip.number }}</span>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if party.uip and party.uip.product_sku %}
+                            {{ party.uip.product_sku.product.name }}
+                            <span class="article-cell">{{ party.uip.product_sku.article }}</span>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ party.line.name|default:"—" }}</td>
+                    <td>
+                        <span class="status-badge status-{{ party.status }}">{{ party.get_status_display }}</span>
+                    </td>
+                    <td class="qty-cell">{{ party.produced_quantity }} / {{ party.planned_quantity }}</td>
+                    <td>
+                        {% if party.marking_datetime %}
+                            {{ party.marking_datetime|date:"d.m.Y" }}
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="sync-badge sync-{{ party.sync_status }}">
+                            {{ party.get_sync_status_display }}
+                        </span>
+                        {% if party.last_sync_at %}
+                            <div class="sync-time" title="{{ party.last_sync_message|default:'' }}">
+                                {{ party.last_sync_at|date:"d.m.Y H:i" }}
+                            </div>
+                        {% else %}
+                            <div class="sync-time text-muted">никогда</div>
+                        {% endif %}
+                        {% if party.last_sync_message %}
+                            <div class="sync-message" title="{{ party.last_sync_message }}">{{ party.last_sync_message|truncatechars:60 }}</div>
+                        {% endif %}
+                    </td>
+                    <td class="actions-cell">
+                        {% if user.is_superuser %}
+                            <button class="btn-row-action btn-sync-row"
+                                    data-party-id="{{ party.id }}"
+                                    data-url="{% url 'sync_task_codes' %}"
+                                    data-csrf="{{ csrf_token }}"
+                                    onclick="syncPartyCodes(this)">
+                                Синхронизировать коды
+                            </button>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ПАГИНАЦИЯ -->
+    <div class="pagination-wrapper">
+        <div class="pagination-info">
+            Показаны <span class="highlight">{{ start_item }}–{{ end_item }}</span> из <span class="highlight">{{ total_count }}</span>
+        </div>
+        <div class="pagination">
+            {% if page_obj.has_previous %}
+                <a href="?{% if query_string %}{{ query_string }}&{% endif %}page=1" class="page-btn">«</a>
+                <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.previous_page_number }}" class="page-btn">‹</a>
+            {% else %}
+                <span class="page-btn page-btn-disabled">«</span>
+                <span class="page-btn page-btn-disabled">‹</span>
+            {% endif %}
+
+            {% for page in page_range %}
+                {% if page == '...' %}
+                    <span class="page-ellipsis">…</span>
+                {% elif page == page_obj.number %}
+                    <span class="page-btn page-btn-active">{{ page }}</span>
+                {% else %}
+                    <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page }}" class="page-btn">{{ page }}</a>
+                {% endif %}
+            {% endfor %}
+
+            {% if page_obj.has_next %}
+                <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.next_page_number }}" class="page-btn">›</a>
+                <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ paginator.num_pages }}" class="page-btn">»</a>
+            {% else %}
+                <span class="page-btn page-btn-disabled">›</span>
+                <span class="page-btn page-btn-disabled">»</span>
+            {% endif %}
+        </div>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p class="empty-text">Заданий пока нет</p>
+        <p class="empty-subtext">Задания появятся после приёма данных из внешнего сервиса (api/tasks/receive/)</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block js %}
+<script type="text/javascript" src="{% static 'js/sync.js' %}" defer></script>
+{% endblock %}

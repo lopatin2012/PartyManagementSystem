@@ -13,6 +13,8 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 # Импорты встроенных библиотек.
 from pathlib import Path
 import os
+import random
+import string
 
 # Импорты сторонних библиотек.
 from dotenv import load_dotenv
@@ -248,6 +250,43 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles/')
 MEDIA_URL = 'media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
 
+# ==========================================
+# Почта (уведомления).
+# ==========================================
+# По умолчанию — консольный бэкенд (в разработке письма выводятся в консоль).
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = os.getenv('EMAIL_HOST', '')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', '1') == '1'
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'no-reply@localhost')
+
+# ==========================================
+# Мониторинг резерва УИП.
+# ==========================================
+# Лимит зарезервированных УИП (установлен системой «Честный Знак»).
+UIP_RESERVE_LIMIT = int(os.getenv('UIP_RESERVE_LIMIT', '10000'))
+# Получатели уведомлений о состоянии резерва УИП (через запятую).
+UIP_RESERVE_NOTIFICATION_EMAILS = [
+    email.strip()
+    for email in os.getenv('UIP_RESERVE_NOTIFICATION_EMAILS', '').split(',')
+    if email.strip()
+]
+
+# ==========================================
+# Проверка доступности внешних сервисов.
+# ==========================================
+# Адрес сервиса 1С (например, http://192.168.1.10:8080) для проверки на странице статусов.
+ONEC_URL = os.getenv('ONEC_URL', '')
+
 LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'home'
 LOGOUT_REDIRECT_URL = 'home'
+
+# Генерируем имя сессии, если он не указан в файле .env.
+letters = string.ascii_lowercase
+random_session_cookie_name = "".join(random.choices(letters, k=10))
+
+# Наименование сессии для работы разных проектов на одном сервере.
+SESSION_COOKIE_NAME = os.getenv('SESSION_COOKIE_NAME', random_session_cookie_name)

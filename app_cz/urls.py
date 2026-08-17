@@ -49,6 +49,20 @@ urlpatterns = [
         name='api-sync-codes-task'
     ),
 
+    # Синхронизация с внешним сервисом (Молвест.Маркировка).
+    # Приёмник задания (внешний сервис «пушит» сюда свои задания).
+    path(
+        'api/tasks/receive/',
+        view=views.api_receive_external_task,
+        name='api-receive-external-task'
+    ),
+    # Ручная синхронизация кодов задания.
+    path(
+        'api/tasks/sync-codes/',
+        view=views.api_sync_task_codes,
+        name='api-sync-task-codes'
+    ),
+
     # Для общения с другими модулями.
     path('api/v1/generate-uip/', view=views.api_generate_uip, name='generate-uip'),
 ]

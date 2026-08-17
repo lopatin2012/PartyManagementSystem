@@ -15,9 +15,16 @@ from django.db.models import Q
 
 from app_cz.models import CISCode
 from app_cz.services.party_service import sync_parties_from_cz, generate_uip, get_available_products
+from app_cz.services.code_sync import (
+    sync_codes_for_party,
+    sync_all_external_tasks,
+)
 from app_factory.models import ProductSKU
 
-from app_uip.models import UIP, PartyStatusChoices
+from app_uip.models import (
+    UIP, PartyStatusChoices,
+    ProductionParty, ProductionPartyStatusChoices, ProductionPartySyncStatusChoices,
+)
 
 from app_helper.search_helper import detect_search_type
 
@@ -303,4 +310,187 @@ class GenerateUIPView(View):
             if not result.get('is_error')
             else 400
         )
+        return JsonResponse(result, status=status_code)
+
+
+# ==========================================
+# Страница синхронизации с внешним сервисом (Молвест.Маркировка).
+# ==========================================
+
+@method_decorator(staff_member_required, name='dispatch')
+class SyncTasksView(TemplateView):
+    """
+    Страница отслеживания синхронизации заданий с внешним сервисом.
+
+    Показывает производственные партии, полученные из внешнего сервиса:
+    статус задания, статус синхронизации, последнюю синхронизацию и т.д.
+    """
+    template_name = 'sync/main.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        get = self.request.GET
+
+        status_filter = get.get('status', '')
+        sync_filter = get.get('sync', '')
+        search = get.get('search', '').strip()
+
+        queryset = ProductionParty.objects.filter(
+            is_external=True
+        ).select_related(
+            'uip__product_sku__product',
+            'line__workshop__factory',
+        ).order_by('-created_at')
+
+        if status_filter and status_filter != 'all':
+            queryset = queryset.filter(status=status_filter)
+        if sync_filter and sync_filter != 'all':
+            queryset = queryset.filter(sync_status=sync_filter)
+        if search:
+            queryset = queryset.filter(
+                Q(external_number_task__icontains=search)
+                | Q(production_party__icontains=search)
+                | Q(uip__number__icontains=search)
+                | Q(uip__product_sku__article__icontains=search)
+            )
+
+        paginator = Paginator(queryset, 50)
+        page_number = get.get('page', 1)
+        page_obj = paginator.get_page(page_number)
+
+        # Диапазон страниц.
+        current_page = page_obj.number
+        total_pages = paginator.num_pages
+        page_range = [1]
+        start = max(2, current_page - 2)
+        end = min(total_pages - 1, current_page + 2)
+        if start > 2:
+            page_range.append('...')
+        page_range.extend(range(start, end + 1))
+        if end < total_pages - 1:
+            page_range.append('...')
+        if total_pages > 1:
+            page_range.append(total_pages)
+
+        params = get.copy()
+        params.pop('page', None)
+        query_string = params.urlencode()
+
+        start_item = (page_obj.number - 1) * paginator.per_page + 1
+        end_item = start_item + len(page_obj) - 1
+        if paginator.count == 0:
+            start_item = 0
+            end_item = 0
+
+        # Статистика по статусам синхронизации.
+        base_stats = ProductionParty.objects.filter(is_external=True)
+        stats = {
+            'total': base_stats.count(),
+            'pending': base_stats.filter(
+                sync_status=ProductionPartySyncStatusChoices.PENDING
+            ).count(),
+            'synced': base_stats.filter(
+                sync_status=ProductionPartySyncStatusChoices.SYNCED
+            ).count(),
+            'error': base_stats.filter(
+                sync_status=ProductionPartySyncStatusChoices.ERROR
+            ).count(),
+            'active': base_stats.filter(
+                status__in=[
+                    ProductionPartyStatusChoices.CREATED,
+                    ProductionPartyStatusChoices.WORK,
+                    ProductionPartyStatusChoices.CLOSED,
+                ]
+            ).count(),
+        }
+
+        has_active_filters = bool(
+            (status_filter and status_filter != 'all')
+            or (sync_filter and sync_filter != 'all')
+            or search
+        )
+
+        context.update({
+            'title_name': 'Синхронизация заданий',
+            'page_name': 'Синхронизация заданий',
+            'page_obj': page_obj,
+            'paginator': paginator,
+            'page_range': page_range,
+            'total_count': paginator.count,
+            'query_string': query_string,
+            'start_item': start_item,
+            'end_item': end_item,
+            'stats': stats,
+            'status_choices': ProductionPartyStatusChoices.choices,
+            'sync_status_choices': ProductionPartySyncStatusChoices.choices,
+            'current_status': status_filter,
+            'current_sync': sync_filter,
+            'current_search': search,
+            'has_active_filters': has_active_filters,
+        })
+
+        return context
+
+
+@method_decorator(staff_member_required, name='dispatch')
+class SyncTaskCodesView(View):
+    """
+    Ручная синхронизация кодов для одной производственной партии.
+    POST /sync/task-codes/  {production_party_id: uuid}
+    """
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return JsonResponse(
+                {'is_error': True, 'message': 'Доступ только для администраторов'},
+                status=403
+            )
+
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse(
+                {'is_error': True, 'message': 'Некорректный формат данных.'},
+                status=400
+            )
+
+        party_id = data.get('production_party_id')
+        if not party_id:
+            return JsonResponse(
+                {'is_error': True, 'message': 'Не указан production_party_id.'},
+                status=400
+            )
+
+        try:
+            party = ProductionParty.objects.get(id=party_id)
+        except (ProductionParty.DoesNotExist, ValueError, TypeError):
+            return JsonResponse(
+                {'is_error': True, 'message': 'Производственная партия не найдена.'},
+                status=400
+            )
+
+        result = sync_codes_for_party(party)
+
+        status_code = 400 if result.get('has_error') else 200
+        return JsonResponse(result, status=status_code)
+
+
+@method_decorator(staff_member_required, name='dispatch')
+class SyncAllTasksView(View):
+    """
+    Запуск полной синхронизации с внешним сервисом вручную.
+    POST /sync/all/
+    """
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return JsonResponse(
+                {'is_error': True, 'message': 'Доступ только для администраторов'},
+                status=403
+            )
+
+        result = sync_all_external_tasks()
+
+        status_code = 502 if result.get('is_error') else 200
         return JsonResponse(result, status=status_code)

@@ -5,7 +5,6 @@ from rest_framework import serializers
 
 from app_cz.models import CISCode
 from app_cz.enums import TypeProduct
-from app_factory.models import PackagingLevelChoices
 from app_uip.models import UIP, ProductionParty
 
 
@@ -45,19 +44,33 @@ class UIPSerializer(serializers.ModelSerializer):
 
 class ProductionPartySerializer(serializers.ModelSerializer):
     """Сериализатор для производственных партий."""
-    uip_number = serializers.CharField(source='uip.number', read_only=True)
-    factory_name = serializers.CharField(source='factory.name', read_only=True, allow_null=True)
+    uip_number = serializers.SerializerMethodField()
+    factory_name = serializers.CharField(
+        source='line.workshop.factory.name', read_only=True, allow_null=True
+    )
+    workshop_name = serializers.CharField(
+        source='line.workshop.name', read_only=True, allow_null=True
+    )
     line_name = serializers.CharField(source='line.name', read_only=True, allow_null=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    sync_status_display = serializers.CharField(source='get_sync_status_display', read_only=True)
 
     class Meta:
         model = ProductionParty
         fields = [
-            'id', 'production_party', 'uip_number',
-            'factory_name', 'line_name',
+            'id', 'production_party', 'external_number_task', 'uip_number',
+            'factory_name', 'workshop_name', 'line_name',
+            'status', 'status_display',
             'planned_quantity', 'produced_quantity',
             'production_datetime_start', 'production_datetime_end',
+            'marking_datetime', 'expiration_datetime',
+            'is_external', 'sync_status', 'sync_status_display',
+            'last_sync_at', 'last_sync_message',
             'created_at', 'updated_at'
         ]
+
+    def get_uip_number(self, obj):
+        return obj.uip.number if obj.uip else None
 
 
 class PartyInfoItemSerializer(serializers.Serializer):
@@ -103,7 +116,9 @@ class SyncCodesTaskSerializer(serializers.Serializer):
         help_text="UUID производственной партии"
     )
     packaging_id = serializers.UUIDField(
-        help_text="UUID упаковки продукта (GTIN)"
+        required=False,
+        help_text="UUID упаковки продукта (GTIN). Если не указан — берётся "
+                  "потребительская упаковка продукта партии"
     )
     token = serializers.CharField(
         required=False,
@@ -113,8 +128,98 @@ class SyncCodesTaskSerializer(serializers.Serializer):
     )
     level = serializers.IntegerField(
         required=False,
-        default=PackagingLevelChoices.UNIT,
-        help_text="Уровень упаковки (по умолчанию UNIT)"
+        help_text="Уровень упаковки (опционально; приоритет — уровень упаковки)"
+    )
+
+
+class FlexibleField(serializers.Field):
+    """
+    Поле-«передаватель»: принимает и возвращает значение без преобразований.
+
+    Используется для полей, формат которых ещё уточняется
+    (например, связь line/workshop/product может прийти строкой или словарём).
+    """
+
+    def to_representation(self, value):
+        return value
+
+    def to_internal_value(self, data):
+        return data
+
+
+class ReceiveExternalTaskSerializer(serializers.Serializer):
+    """
+    Приёмник задания из внешнего сервиса (Молвест.Маркировка).
+
+    Обязателен хотя бы один идентификатор задания: uuid_str / task_uuid / task_id / id.
+    Остальные поля опциональны и соответствуют полям модели Task внешнего сервиса.
+    """
+
+    # Идентификаторы задания.
+    uuid_str = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    task_uuid = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    task_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    # Связи (названия или словари с name/id).
+    workshop = FlexibleField(required=False, allow_null=True)
+    line = FlexibleField(required=False, allow_null=True)
+    product = FlexibleField(required=False, allow_null=True)
+
+    # УИП: номер партии и/или uuid операции генерации.
+    uip = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    operation_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    # Параметры задания.
+    party = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    status = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    priority = serializers.IntegerField(required=False, allow_null=True)
+
+    # Даты (ISO 8601 / YYYY-MM-DD).
+    datetime_create = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    datetime_edit = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    start_work = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    end_work = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    date_work = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    date_marking = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    date_expiration = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    deadline = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    # Количества.
+    plan_amount = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    amount = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    vcd = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    # Прочее.
+    status_long_lived = serializers.BooleanField(required=False, allow_null=True)
+    user_edit = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def validate(self, attrs):
+        has_id = any(
+            str(attrs.get(f) or '').strip()
+            for f in ('uuid_str', 'task_uuid', 'task_id', 'id')
+        )
+        if not has_id:
+            raise serializers.ValidationError(
+                'Укажите хотя бы один идентификатор задания: uuid_str / task_uuid / task_id / id.'
+            )
+        return attrs
+
+
+class SyncTaskCodesRequestSerializer(serializers.Serializer):
+    """Запрос ручной синхронизации кодов для производственной партии."""
+    production_party_id = serializers.UUIDField(
+        help_text="UUID производственной партии"
+    )
+    url = serializers.URLField(
+        required=False,
+        help_text="Базовый URL внешнего сервиса (если не задан — берётся из настроек)"
+    )
+    token = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text="Токен авторизации (опционально)"
     )
 
 
@@ -135,9 +240,15 @@ class CISCodeDetailSerializer(serializers.ModelSerializer):
                                                  allow_null=True)
 
     # Данные о месте производства.
-    factory_name = serializers.CharField(source='production_party.factory.name', read_only=True, allow_null=True)
-    workshop_name = serializers.CharField(source='production_party.workshop.name', read_only=True, allow_null=True)
-    line_name = serializers.CharField(source='production_party.line.name', read_only=True, allow_null=True)
+    factory_name = serializers.CharField(
+        source='production_party.line.workshop.factory.name', read_only=True, allow_null=True
+    )
+    workshop_name = serializers.CharField(
+        source='production_party.line.workshop.name', read_only=True, allow_null=True
+    )
+    line_name = serializers.CharField(
+        source='production_party.line.name', read_only=True, allow_null=True
+    )
 
     # Данные об упаковке и продукте.
     gtin = serializers.CharField(source='product_packaging.gtin', read_only=True)
@@ -235,11 +346,11 @@ class ReservedPartyListSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.CharField)
     def get_workshop(self, obj):
         """Цех из первой производственной партии."""
-        party = obj.production_parties.select_related('workshop').first()
-        if party and party.workshop:
+        party = obj.production_parties.select_related('line__workshop').first()
+        if party and party.line and party.line.workshop:
             return {
-                'id': str(party.workshop.id),
-                'name': party.workshop.name
+                'id': str(party.line.workshop.id),
+                'name': party.line.workshop.name
             }
         return None
 
@@ -348,11 +459,11 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.CharField())
     def get_workshop(self, obj):
         """Цех из первой производственной партии."""
-        party = obj.production_parties.select_related('workshop').first()
-        if party and party.workshop:
+        party = obj.production_parties.select_related('line__workshop').first()
+        if party and party.line and party.line.workshop:
             return {
-                'id': str(party.workshop.id),
-                'name': party.workshop.name
+                'id': str(party.line.workshop.id),
+                'name': party.line.workshop.name
             }
         return None
 
@@ -409,7 +520,7 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
     def get_production_parties(self, obj):
         """Детальная информация о всех производственных партиях."""
         parties = obj.production_parties.select_related(
-            'factory', 'workshop', 'line'
+            'line__workshop__factory'
         ).order_by('-created_at')
 
         result = []
@@ -417,8 +528,16 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
             result.append({
                 'internal_number': party.production_party,  # Внутренний производственный номер.
                 'external_task_number': party.external_number_task,  # Номер внешнего задания.
-                'factory_name': party.factory.name if party.factory else None,  # Наименование завода.
-                'workshop_name': party.workshop.name if party.workshop else None,  # Наименование цеха.
+                'factory_name': (
+                    party.line.workshop.factory.name
+                    if party.line and party.line.workshop and party.line.workshop.factory
+                    else None
+                ),  # Наименование завода.
+                'workshop_name': (
+                    party.line.workshop.name
+                    if party.line and party.line.workshop
+                    else None
+                ),  # Наименование цеха.
                 'line_name': party.line.name if party.line else None,  # Наименование линии.
                 'planned_quantity': party.planned_quantity,  # План в штуках.
                 'produced_quantity': party.produced_quantity,  # План валидированных в штуках.

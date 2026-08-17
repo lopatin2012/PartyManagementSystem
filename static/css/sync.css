@@ -1,0 +1,456 @@
+/* ==========================================
+   Страница «Синхронизация заданий»
+   ========================================== */
+
+.sync-page {
+    width: 100%;
+    max-width: 1700px;
+    margin: 0 auto;
+    padding: 2rem 3rem;
+}
+
+.sync-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.sync-header h1 {
+    font-size: 2.2rem;
+    font-weight: 300;
+    margin-bottom: 0.5rem;
+}
+
+.sync-header .subtitle {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 1rem;
+}
+
+.subtitle .highlight {
+    color: var(--accent-yellow);
+    font-weight: 600;
+}
+
+/* Кнопка полной синхронизации */
+.sync-controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+}
+
+.btn-sync {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.7rem 1.4rem;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent-yellow);
+    color: #1a1a2e;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.1s;
+}
+
+.btn-sync:hover:not(:disabled) {
+    opacity: 0.88;
+    transform: translateY(-1px);
+}
+
+.btn-sync:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-sync.syncing svg {
+    animation: sync-spin 1s linear infinite;
+}
+
+@keyframes sync-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
+.sync-status {
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    max-width: 600px;
+}
+
+.sync-status.sync-ok {
+    background: rgba(187, 207, 50, 0.15);
+    color: #BBCF32;
+    border: 1px solid rgba(187, 207, 50, 0.4);
+}
+
+.sync-status.sync-error {
+    background: rgba(255, 107, 122, 0.15);
+    color: #ff6b7a;
+    border: 1px solid rgba(255, 107, 122, 0.4);
+}
+
+/* Статистика */
+.sync-stats {
+    display: flex;
+    justify-content: center;
+    gap: 0.8rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+}
+
+.stat-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.9rem;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--input-border);
+}
+
+.stat-pill .stat-value {
+    font-weight: 700;
+}
+
+.stat-pill.stat-ok .stat-value  { color: #BBCF32; }
+.stat-pill.stat-err .stat-value { color: #ff6b7a; }
+.stat-pill.stat-pending .stat-value { color: #FABB1C; }
+
+/* Тулбар фильтров */
+.table-toolbar {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+}
+
+.sync-filter-form {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    width: 100%;
+    max-width: 1100px;
+}
+
+/* Переопределяем глобальный .form-input (width: 100% из modal.css),
+   чтобы поля выстраивались в строку по центру. */
+.sync-filter-form .form-input {
+    width: auto;
+    flex: 0 1 auto;
+    min-width: 180px;
+    /* background-color, а не background: иначе перебьётся кастомная
+       стрелка селекта (background-image) из modal.css. */
+    background-color: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    padding: 0.5rem 0.8rem;
+    font-size: 0.9rem;
+}
+
+/* Поиск — чуть шире остальных полей. */
+.sync-filter-form input[type="text"] {
+    flex: 1 1 260px;
+    max-width: 380px;
+}
+
+.sync-filter-form .form-input:focus {
+    outline: none;
+    border-color: var(--accent-yellow);
+}
+
+.toolbar-info {
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 0.9rem;
+}
+
+.btn-apply {
+    padding: 0.5rem 1.2rem;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent-yellow);
+    color: #1a1a2e;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.btn-reset {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.8);
+    background: transparent;
+    text-decoration: none;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.btn-reset:hover {
+    border-color: #ff6b7a;
+    color: #ff6b7a;
+}
+
+/* Таблица */
+.sync-table-container {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 12px;
+    border: 1px solid var(--input-border);
+    overflow-x: auto;
+}
+
+.sync-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.92rem;
+    min-width: 1200px;
+}
+
+.sync-table thead {
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.sync-table thead th:first-child { border-top-left-radius: 11px; }
+.sync-table thead th:last-child  { border-top-right-radius: 11px; }
+
+.sync-table th {
+    padding: 0.9rem 1rem;
+    text-align: left;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 2px solid var(--input-border);
+    white-space: nowrap;
+}
+
+.sync-table td {
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    vertical-align: top;
+}
+
+.sync-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.sync-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.code-cell {
+    font-family: monospace;
+    font-size: 0.85rem;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.uip-number {
+    font-family: monospace;
+    font-size: 0.85rem;
+    color: var(--accent-yellow);
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+}
+
+.article-cell {
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 0.85rem;
+    margin-left: 0.3rem;
+}
+
+.qty-cell {
+    white-space: nowrap;
+}
+
+.text-muted {
+    color: rgba(255, 255, 255, 0.4);
+}
+
+/* Статусы задания (переопределяем палитру) */
+.status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.7rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.status-check,
+.status-error,
+.status-deleted {
+    background: rgba(255, 107, 122, 0.2);
+    color: #ff6b7a;
+}
+
+.status-created,
+.status-work {
+    background: rgba(250, 187, 28, 0.2);
+    color: #FABB1C;
+}
+
+.status-closed {
+    background: rgba(61, 82, 161, 0.3);
+    color: #9db1ff;
+}
+
+.status-completed {
+    background: rgba(187, 207, 50, 0.2);
+    color: #BBCF32;
+}
+
+.status-archived {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.6);
+}
+
+/* Статус синхронизации */
+.sync-badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.sync-pending {
+    background: rgba(250, 187, 28, 0.2);
+    color: #FABB1C;
+}
+
+.sync-synced {
+    background: rgba(187, 207, 50, 0.2);
+    color: #BBCF32;
+}
+
+.sync-error {
+    background: rgba(255, 107, 122, 0.2);
+    color: #ff6b7a;
+}
+
+.sync-time {
+    margin-top: 0.25rem;
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.sync-message {
+    margin-top: 0.2rem;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.4);
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Кнопка в строке */
+.btn-sync-row {
+    padding: 0.4rem 0.8rem;
+    border: 1px solid var(--accent-yellow);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--accent-yellow);
+    font-size: 0.8rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.2s, color 0.2s;
+}
+
+.btn-sync-row:hover:not(:disabled) {
+    background: var(--accent-yellow);
+    color: #1a1a2e;
+}
+
+.btn-sync-row:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Пустое состояние */
+.empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 12px;
+    border: 1px solid var(--input-border);
+}
+
+.empty-text {
+    font-size: 1.3rem;
+    color: rgba(255, 255, 255, 0.7);
+    margin-bottom: 0.5rem;
+}
+
+.empty-subtext {
+    color: rgba(255, 255, 255, 0.45);
+}
+
+/* Пагинация */
+.pagination-wrapper {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 1.2rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.pagination-info {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.9rem;
+}
+
+.pagination {
+    display: flex;
+    gap: 0.3rem;
+    align-items: center;
+}
+
+.page-btn {
+    min-width: 34px;
+    padding: 0.4rem 0.6rem;
+    text-align: center;
+    border: 1px solid var(--input-border);
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.8);
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+
+.page-btn:hover:not(.page-btn-disabled) {
+    border-color: var(--accent-yellow);
+    color: var(--accent-yellow);
+}
+
+.page-btn-active {
+    background: var(--accent-yellow);
+    border-color: var(--accent-yellow);
+    color: #1a1a2e;
+    font-weight: 700;
+}
+
+.page-btn-disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.page-ellipsis {
+    color: rgba(255, 255, 255, 0.5);
+    padding: 0 0.2rem;
+}

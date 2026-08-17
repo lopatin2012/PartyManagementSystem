@@ -5,6 +5,8 @@ from django.utils import timezone
 from django.conf import settings
 
 from app_helper.user_helper import get_user_name
+from app_helper.load_tracker import get_requests_per_hour
+from app_helper.service_helper import check_factories, check_onec
 from app_cz.models import SUZAccount
 from config.settings import SERVICE_MODE_TEXT, SERVICE_MODE_COLOR, SERVICE_VERSION, DEBUG
 
@@ -30,7 +32,8 @@ def global_footer_info(request):
     :param request:
     :return:
     """
-    requests_count = 1000
+    # Реальное количество запросов за последний час (считает middleware).
+    requests_count = get_requests_per_hour()
 
     return {
         'service_version': getattr(settings, 'SERVICE_VERSION', SERVICE_VERSION),
@@ -56,17 +59,14 @@ def service_status_info(request):
         delta = suz_account.token_expires_at - timezone.now()
         suz_status['expires_in_seconds'] = max(0, int(delta.total_seconds()))
 
+    # 2. Серверы маркировки заводов (Молвест.Маркировка) — реальная проверка.
+    status_factories = check_factories()
+
+    # 3. 1С: Предприятие — реальная проверка.
+    status_1c = check_onec()
+
     return {
         'status_suz': suz_status,
-        'status_factories': {
-            'is_ok': True,
-            'workshops': [
-                {'name': 'ПАО МКВ', 'is_ok': True},
-                {'name': 'Малыш', 'is_ok': True},
-            ]
-        },
-        'status_1c': {
-            'is_ok': True,
-            'message': '1С: Предприятие'
-        }
+        'status_factories': status_factories,
+        'status_1c': status_1c,
     }
