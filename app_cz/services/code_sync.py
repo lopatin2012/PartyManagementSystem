@@ -237,7 +237,7 @@ def receive_external_task(data: dict) -> dict:
     Приёмник производственной партии (задания) из внешнего сервиса.
 
     Создаёт или обновляет ProductionParty по идентификатору задания
-    (uuid_str / task_uuid / task_id / id). Статусы заданий внешнего сервиса
+    (uuid_str / uuid_task / task_id / id). Статусы заданий внешнего сервиса
     преобразуются во внутренние.
 
     :param data: Словарь с данными задания (поля модели Task внешнего сервиса).
@@ -245,7 +245,7 @@ def receive_external_task(data: dict) -> dict:
     """
     external_id = str(
         data.get('uuid_str')
-        or data.get('task_uuid')
+        or data.get('uuid_task')
         or data.get('task_id')
         or data.get('id')
         or ''
