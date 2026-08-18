@@ -122,6 +122,135 @@ class CISCode(models.Model):
         super().save(*args, **kwargs)
 
 
+class CISCodeArchive(models.Model):
+    """
+    Архивная копия кода маркировки (денормализованный снимок).
+
+    Хранится в отдельной архивной базе ('archive') через ArchiveRouter.
+    Коды старше ARCHIVE_AFTER_DAYS дней переносятся сюда командой
+    `archive_old_codes` и удаляются из рабочей таблицы — историчность
+    данных сохраняется в архиве, чистка архива выполняется вручную.
+    """
+
+    # Исходный идентификатор кода (для трассировки).
+    id = models.BigIntegerField(primary_key=True, verbose_name='Исходный ID кода')
+    code = models.CharField(
+        max_length=255,
+        unique=True,
+        verbose_name='Код маркировки'
+    )
+    level = models.PositiveSmallIntegerField(
+        choices=PackagingLevelChoices.choices,
+        verbose_name='Уровень упаковки',
+        db_index=True
+    )
+    cz_status = models.PositiveSmallIntegerField(
+        choices=CISCodesStatusChoices.choices,
+        verbose_name='Статус со стороны ЧЗ',
+        db_index=True
+    )
+    production_status = models.PositiveSmallIntegerField(
+        choices=ProductionCodeStatusChoices.choices,
+        verbose_name='Статус со стороны производства',
+        db_index=True
+    )
+    parent_code = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name='Родительский код (агрегация)'
+    )
+
+    # Привязка к производству (денормализовано — без внешних ключей).
+    production_party_id = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name='Производственная партия (ID)'
+    )
+    party_number = models.CharField(
+        max_length=32,
+        null=True,
+        blank=True,
+        verbose_name='Номер партии'
+    )
+    party_status = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        verbose_name='Статус партии'
+    )
+    uip_id = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name='УИП (ID)'
+    )
+    uip_number = models.CharField(
+        max_length=32,
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name='Номер УИП'
+    )
+    product_id = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name='Продукт (ID)'
+    )
+    product_name = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name='Наименование продукта'
+    )
+    product_sku_id = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name='Номенклатура (SKU, ID)'
+    )
+    sku_article = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name='Артикул (SKU)'
+    )
+    packaging_id = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name='Упаковка (ID)'
+    )
+    gtin = models.CharField(
+        max_length=14,
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name='GTIN'
+    )
+
+    # Даты.
+    created_at = models.DateTimeField(db_index=True, verbose_name='Создано')
+    updated_at = models.DateTimeField(verbose_name='Обновлено')
+    archived_at = models.DateTimeField(auto_now_add=True, verbose_name='Архивировано')
+
+    class Meta:
+        verbose_name = 'Код маркировки (архив)'
+        verbose_name_plural = '1. Коды маркировки (архив)'
+        ordering = ('-created_at',)
+        indexes = [
+            models.Index(fields=['production_party_id', '-created_at']),
+            models.Index(fields=['cz_status', '-created_at']),
+            models.Index(fields=['production_status', '-created_at']),
+            models.Index(fields=['level', '-created_at']),
+        ]
+
+    def __str__(self) -> str:
+        return f'{self.code[:24]}... (архив)'
+
+
 class SUZAccount(models.Model):
     """
     Учётная запись для взаимодействия с СУЗ и TrueAPI.

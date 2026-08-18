@@ -212,8 +212,21 @@ DATABASES = {
         'PASSWORD': os.getenv('DB_PASSWORD'),
         'HOST': '127.0.0.1',
         'PORT': '5432',
-    }
+    },
+    # Архивная база для устаревших кодов маркировки (историчность данных).
+    # Если переменные DB_ARCHIVE_* не заданы — используется та же база, что и default.
+    'archive': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('DB_ARCHIVE_NAME') or os.getenv('DB_NAME'),
+        'USER': 'postgres',
+        'PASSWORD': os.getenv('DB_ARCHIVE_PASSWORD') or os.getenv('DB_PASSWORD'),
+        'HOST': '127.0.0.1',
+        'PORT': '5432',
+    },
 }
+
+# Маршрутизация модели CISCodeArchive в архивную базу.
+DATABASE_ROUTERS = ['app_cz.routers.ArchiveRouter']
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators

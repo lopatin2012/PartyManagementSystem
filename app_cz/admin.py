@@ -4,7 +4,7 @@ from django.core.paginator import Paginator
 from django.db import connection
 
 from app_cz.models import (
-    CISCode, CISCodesStatusChoices, ProductionCodeStatusChoices, SUZAccount
+    CISCode, CISCodeArchive, CISCodesStatusChoices, ProductionCodeStatusChoices, SUZAccount
 )
 
 
@@ -193,6 +193,62 @@ def mark_as_applied(modeladmin, request, queryset):
 
 
 CISCodeAdmin.actions = [mark_as_rejected, mark_as_applied]
+
+
+@admin.register(CISCodeArchive)
+class CISCodeArchiveAdmin(admin.ModelAdmin):
+    """Архив кодов маркировки — только просмотр (историчность данных)."""
+
+    # Архив живёт в отдельной базе.
+    def get_queryset(self, request):
+        return CISCodeArchive.objects.using('archive').all()
+
+    list_display = (
+        'code_truncated',
+        'uip_number',
+        'gtin',
+        'level',
+        cz_status_badge,
+        production_status_badge,
+        'created_at',
+        'archived_at',
+    )
+    list_filter = (
+        'cz_status',
+        'production_status',
+        'level',
+    )
+    search_fields = ('=code',)
+    ordering = ('-created_at',)
+    list_per_page = 100
+
+    readonly_fields = tuple(
+        f.name for f in CISCodeArchive._meta.fields
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description='Код маркировки')
+    def code_truncated(self, obj):
+        code = obj.code
+        if len(code) > 30:
+            return format_html('<span title="{}">{}</span>', code, f'{code[:27]}...')
+        return code
+
+    @admin.display(description='УИП')
+    def uip_number(self, obj):
+        return obj.uip_number or '—'
+
+    @admin.display(description='GTIN')
+    def gtin(self, obj):
+        return obj.gtin or '—'
 
 
 @admin.register(SUZAccount)

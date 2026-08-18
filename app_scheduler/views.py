@@ -34,6 +34,7 @@ class SchedulerStatusView(View):
             cleanup_old_logs_task,
             sync_external_parties_codes_task,
             check_uip_reserve_task,
+            archive_old_codes_task,
         )
 
         task_map = {
@@ -44,6 +45,7 @@ class SchedulerStatusView(View):
             'cleanup_old_logs': cleanup_old_logs_task,
             'sync_external_parties_codes': sync_external_parties_codes_task,
             'check_uip_reserve': check_uip_reserve_task,
+            'archive_old_codes': archive_old_codes_task,
         }
 
         now = timezone.now()

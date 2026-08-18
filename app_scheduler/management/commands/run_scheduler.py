@@ -53,6 +53,9 @@ SCHEDULE = [
     # Синхронизация Национального каталога раз в час.
     ('sync_national_catalog', 1 * HOUR, 'Синхронизация Национального каталога (1 час)'),
 
+    # Архивация устаревших кодов маркировки раз в сутки.
+    ('archive_old_codes', 1 * DAY, 'Архивация устаревших кодов маркировки (1 сутки)'),
+
     # # Каждые 30 минут — синхронизация УИП с ЧЗ
     # ('sync_parties', 30 * 60, 'Синхронизация УИП с ЧЗ'),
     #
@@ -142,6 +145,7 @@ class Command(BaseCommand):
             sync_external_parties_codes_task,
             check_uip_reserve_task,
             sync_national_catalog_task,
+            archive_old_codes_task,
         )
         from django_tasks_db.models import DBTaskResult
         from django_tasks.base import TaskResultStatus
@@ -156,6 +160,7 @@ class Command(BaseCommand):
             'sync_external_parties_codes': sync_external_parties_codes_task,
             'check_uip_reserve': check_uip_reserve_task,
             'sync_national_catalog': sync_national_catalog_task,
+            'archive_old_codes': archive_old_codes_task,
         }
 
         check_interval = options['interval']
