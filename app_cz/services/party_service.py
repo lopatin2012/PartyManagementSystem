@@ -5,6 +5,7 @@ import re
 from datetime import datetime, date
 
 import requests
+from uuid_utils import uuid7
 from django.utils import timezone
 from django.db.models import ObjectDoesNotExist
 from django.db import transaction
@@ -728,6 +729,7 @@ def _generate_local_uip(
             return {
                 'is_error': False,
                 'uuid_uip': str(uip.id),
+                'uuid_task': str(uuid7()),
                 'reservation_date': uip.reservation_date,
                 'status': str(uip.status),
                 'number': number,
@@ -736,6 +738,7 @@ def _generate_local_uip(
         return {
             'is_error': True,
             'uuid_uip': str(uip.id),
+            'uuid_task': str(uuid7()),
             'reservation_date': uip.reservation_date,
             'status': str(uip.status),
             'number': number,
@@ -806,6 +809,7 @@ def _generate_local_uip(
         return {
             'is_error': False,
             'uuid_uip': str(uip.id),
+            'uuid_task': str(uuid7()),
             'reservation_date': uip.reservation_date,
             'number': number,
             'status': str(target_status),
@@ -910,6 +914,7 @@ def _generate_cz_uip(
                 else ', '.join(created),
             ),
             'uuid_uip': str(uip.id),
+            'uuid_task': str(uuid7()),
             'message': f'Сгенерировано УИП через ЧЗ: {len(created)} шт.',
         }
     except Exception as e:
