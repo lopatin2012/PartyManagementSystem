@@ -1,0 +1,518 @@
+<!-- templates/nk/main.html -->
+
+{% extends 'base.html' %}
+{% load static %}
+
+{% block head %}
+<style>
+.nk-page { padding: 1.5rem 3rem; }
+.nk-header { margin-bottom: 1.5rem; }
+.nk-header h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+.nk-header .subtitle { color: rgba(255,255,255,0.7); font-size: 0.9rem; }
+
+.nk-controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; margin: 1rem 0; }
+.nk-controls .form-group { display: flex; flex-direction: column; gap: 0.25rem; }
+.nk-controls label { font-size: 0.75rem; color: rgba(255,255,255,0.6); }
+.nk-controls .form-input { padding: 0.4rem 0.6rem; border-radius: 4px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--text-main); font-size: 0.85rem; }
+
+.btn-sync-nk {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.5rem 1rem; border-radius: 4px; border: none;
+    background: var(--accent-green); color: var(--bg-dark);
+    font-weight: 600; cursor: pointer; font-size: 0.85rem;
+}
+.btn-sync-nk:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-sync-nk:hover:not(:disabled) { filter: brightness(1.1); }
+
+.progress-card { display: none; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+.progress-bar-track { height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; margin-top: 0.5rem; overflow: hidden; }
+.progress-bar-fill { height: 100%; background: var(--accent-green); border-radius: 3px; transition: width 0.3s; width: 0%; }
+.progress-info { display: flex; justify-content: space-between; font-size: 0.8rem; color: rgba(255,255,255,0.7); }
+
+.nk-table-container { overflow-x: auto; margin-top: 1rem; }
+.nk-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.nk-table th { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 2px solid rgba(255,255,255,0.15); color: rgba(255,255,255,0.8); font-weight: 600; white-space: nowrap; }
+.nk-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.07); }
+.nk-table tr:hover { background: rgba(255,255,255,0.03); }
+
+.badge-sm { display: inline-block; padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
+.badge-success { background: rgba(187,207,50,0.2); color: var(--accent-green); }
+.badge-danger { background: rgba(220,53,69,0.2); color: #dc3545; }
+.badge-muted { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); }
+.badge-info { background: rgba(61,82,161,0.3); color: #8fa4d8; }
+
+.text-muted { color: rgba(255,255,255,0.5); }
+.font-mono { font-family: 'Consolas', 'Courier New', monospace; }
+
+/* Пагинация */
+.pagination-wrapper { display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; padding: 0.5rem 0; }
+.pagination { display: flex; gap: 0.25rem; }
+.page-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 2rem; height: 2rem; padding: 0 0.4rem;
+    border-radius: 4px; border: 1px solid rgba(255,255,255,0.15);
+    background: transparent; color: var(--text-main);
+    text-decoration: none; font-size: 0.8rem; cursor: pointer;
+}
+.page-btn:hover:not(.page-btn-active):not(.page-btn-disabled) { background: rgba(255,255,255,0.1); }
+.page-btn-active { background: var(--accent-green); color: var(--bg-dark); border-color: var(--accent-green); font-weight: 700; }
+.page-btn-disabled { opacity: 0.3; cursor: default; }
+.page-ellipsis { display: inline-flex; align-items: center; min-width: 1.5rem; justify-content: center; color: rgba(255,255,255,0.4); }
+
+/* Лог */
+.nk-log { background: rgba(0,0,0,0.2); border-radius: 6px; padding: 0.75rem; max-height: 200px; overflow-y: auto; font-size: 0.8rem; margin-top: 1rem; }
+.log-entry { padding: 0.2rem 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.log-time { color: rgba(255,255,255,0.4); margin-right: 0.5rem; }
+.log-info { color: rgba(255,255,255,0.7); }
+.log-success { color: var(--accent-green); }
+.log-error { color: #dc3545; }
+
+.btn-sm {
+    padding: 0.25rem 0.6rem;
+    font-size: 0.75rem;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 4px;
+    cursor: pointer;
+    background: rgba(255,255,255,0.05);
+    color: rgba(255,255,255,0.8);
+    transition: all 0.2s;
+}
+.btn-create { border-color: var(--accent-green); color: var(--accent-green); }
+.btn-create:hover { background: rgba(0,255,136,0.1); }
+.btn-create:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.empty-state { text-align: center; padding: 3rem; color: rgba(255,255,255,0.5); }
+
+.nk-section { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; }
+.nk-section-title { font-size: 0.8rem; font-weight: 700; color: rgba(255,255,255,0.55); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+.nk-section .nk-controls { margin: 0; }
+.nk-section .btn-sync-nk { align-self: flex-end; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="nk-page">
+    <div class="nk-header">
+        <h1>{{ page_name }}</h1>
+        <p class="subtitle">
+            Просмотр товаров из Национального каталога (ГИС МТ) и синхронизация.
+            Всего товаров: <span class="highlight">{{ total_count }}</span>
+        </p>
+    </div>
+
+    <!-- Секция: Синхронизация -->
+    <div class="nk-section">
+        <div class="nk-section-title">Синхронизация с Национальным каталогом</div>
+        <div class="nk-controls">
+            <div class="form-group">
+                <label for="owner_inn">ИНН владельца</label>
+                <input type="text" id="owner_inn" class="form-input" value="{{ default_inn }}" placeholder="По умолчанию — ИНН организации">
+            </div>
+            <div class="form-group">
+                <label for="brand_id">ID бренда</label>
+                <input type="text" id="brand_id" class="form-input" placeholder="Необязательно">
+            </div>
+            <div class="form-group">
+                <label for="cat_id">ID категории</label>
+                <input type="text" id="cat_id" class="form-input" placeholder="Необязательно">
+            </div>
+            <div class="form-group">
+                <button class="btn-sync-nk" id="btnSync" onclick="syncProducts()">
+                    Синхронизировать все товары
+                </button>
+            </div>
+        </div>
+        <div class="progress-card" id="syncProgressCard">
+            <div class="progress-info">
+                <span id="syncLabel">Подготовка...</span>
+                <span id="syncPercent">0%</span>
+            </div>
+            <div class="progress-bar-track">
+                <div class="progress-bar-fill" id="syncFill"></div>
+            </div>
+            <div style="margin-top:0.4rem;font-size:0.75rem;color:rgba(255,255,255,0.6);" id="syncCounts"></div>
+        </div>
+    </div>
+
+    <!-- Секция: Поиск и фильтры -->
+    <div class="nk-section">
+        <div class="nk-section-title">Поиск и фильтры</div>
+        <form method="get" class="nk-controls">
+            <div class="form-group">
+                <label for="q">Наименование</label>
+                <input type="text" id="q" name="q" class="form-input" value="{{ q }}" placeholder="Поиск по названию">
+            </div>
+            <div class="form-group">
+                <label for="gtin">GTIN</label>
+                <input type="text" id="gtin" name="gtin" class="form-input" value="{{ current_gtin }}" placeholder="Код товара (14 цифр)">
+            </div>
+            <div class="form-group">
+                <label for="product_group">Товарная группа</label>
+                <select id="product_group" name="product_group" class="form-input">
+                    <option value="">Все группы</option>
+                    {% for code, name in product_groups %}
+                        <option value="{{ code }}" {% if current_product_group == code %}selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="card_state">Состояние карточки</label>
+                <select id="card_state" name="card_state" class="form-input">
+                    <option value="">Все</option>
+                    {% for code, name in card_state_choices %}
+                        <option value="{{ code }}" {% if current_card_state == code %}selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="state_condition">Состояние товара</label>
+                <select id="state_condition" name="state_condition" class="form-input">
+                    <option value="">Все</option>
+                    {% for code, name in state_condition_choices %}
+                        <option value="{{ code }}" {% if current_state_condition == code %}selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="created_from">Создан с</label>
+                <input type="date" id="created_from" name="created_from" class="form-input" value="{{ current_created_from }}">
+            </div>
+            <div class="form-group">
+                <label for="created_to">Создан по</label>
+                <input type="date" id="created_to" name="created_to" class="form-input" value="{{ current_created_to }}">
+            </div>
+            <div class="form-group">
+                <label for="readiness">На производстве</label>
+                <select id="readiness" name="readiness" class="form-input">
+                    <option value="">Все</option>
+                    <option value="ready" {% if current_readiness == 'ready' %}selected{% endif %}>Можно использовать</option>
+                    <option value="not_ready" {% if current_readiness == 'not_ready' %}selected{% endif %}>Нельзя использовать</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <button type="submit" class="btn-sync-nk" style="background:rgba(255,255,255,0.15);color:var(--text-main);">Применить</button>
+                {% if has_active_filters %}
+                    <a href="{% url 'national_catalog' %}" class="btn-sync-nk" style="background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);">Сбросить</a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+
+    <!-- Таблица товаров -->
+    {% if products %}
+    <div class="nk-table-container">
+        <table class="nk-table">
+            <thead>
+                <tr>
+                    <th>good_id</th>
+                    <th>GTIN</th>
+                    <th>Наименование</th>
+                    <th>Товарная группа</th>
+                    <th>Состояние карточки</th>
+                    <th>Состояние товара</th>
+                    <th>На производстве</th>
+                    <th>Создан в НК</th>
+                    <th>Синхронизирован</th>
+                    {% if user.is_superuser %}<th>Действие</th>{% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for product in products %}
+                <tr>
+                    <td class="font-mono">{{ product.good_id }}</td>
+                    <td class="font-mono">{{ product.gtin|default:"—" }}</td>
+                    <td>
+                        <div>{{ product.name|default:"—" }}</div>
+                        {% if product.brand_name %}
+                            <span class="text-muted" style="font-size:0.75rem;">{{ product.brand_name }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if product.product_group_name %}
+                            <span class="badge-sm badge-info">{{ product.product_group_name }}</span>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if product.card_state %}
+                            <span class="badge-sm badge-muted">{{ product.get_card_state_display }}</span>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if product.state_condition %}
+                            <span class="badge-sm badge-muted">{{ product.get_state_condition_display }}</span>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if product.is_ready_for_production %}
+                            <span class="badge-sm badge-success">Можно</span>
+                        {% else %}
+                            <span class="badge-sm badge-danger">Нельзя</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-muted">{{ product.create_date|date:"d.m.Y"|default:"—" }}</td>
+                    <td class="text-muted">{{ product.synced_at|date:"d.m.Y H:i" }}</td>
+                    {% if user.is_superuser %}
+                    <td>
+                        {% if product.is_ready_for_production %}
+                        <button class="btn-sm btn-create"
+                                onclick="createProductFromNK('{{ product.id }}', this)"
+                                title="Создать продукт из НК">
+                            Создать
+                        </button>
+                        {% else %}
+                        <span class="text-muted" style="font-size:0.75rem;">Не готов</span>
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Пагинация -->
+    {% if paginator.num_pages > 1 %}
+    <div class="pagination-wrapper">
+        <div style="font-size:0.8rem;color:rgba(255,255,255,0.5);">
+            Показаны {{ start_item }}–{{ end_item }} из {{ total_count }}
+        </div>
+        <div class="pagination">
+            {% if page_obj.has_previous %}
+                <a href="?{% if query_string %}{{ query_string }}&{% endif %}page=1" class="page-btn">«</a>
+                <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.previous_page_number }}" class="page-btn">‹</a>
+            {% else %}
+                <span class="page-btn page-btn-disabled">«</span>
+                <span class="page-btn page-btn-disabled">‹</span>
+            {% endif %}
+
+            {% for page in page_range %}
+                {% if page == '...' %}
+                    <span class="page-ellipsis">…</span>
+                {% elif page == page_obj.number %}
+                    <span class="page-btn page-btn-active">{{ page }}</span>
+                {% else %}
+                    <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page }}" class="page-btn">{{ page }}</a>
+                {% endif %}
+            {% endfor %}
+
+            {% if page_obj.has_next %}
+                <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.next_page_number }}" class="page-btn">›</a>
+                <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ paginator.num_pages }}" class="page-btn">»</a>
+            {% else %}
+                <span class="page-btn page-btn-disabled">›</span>
+                <span class="page-btn page-btn-disabled">»</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="empty-state">
+        {% if has_active_filters %}
+            <p>Товары по заданным фильтрам не найдены.</p>
+        {% else %}
+            <p>Товары не выгружены. Нажмите «Синхронизировать все товары».</p>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Лог операций -->
+    <div style="margin-top:1.5rem;">
+        <div style="font-size:0.9rem;font-weight:600;margin-bottom:0.5rem;">Лог операций</div>
+        <div class="nk-log" id="nkLog">
+            <div class="log-entry log-info">
+                <span class="log-time">[--:--:--]</span> Ожидание операций...
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+function addLog(message, type) {
+    type = type || 'info';
+    var log = document.getElementById('nkLog');
+    if (!log) return;
+    var now = new Date();
+    var time = now.toLocaleTimeString('ru-RU');
+    var entry = document.createElement('div');
+    entry.className = 'log-entry log-' + type;
+    entry.innerHTML = '<span class="log-time">[' + time + ']</span> ' + message;
+    var placeholder = log.querySelector('.log-info');
+    if (placeholder && placeholder.textContent.indexOf('Ожидание') !== -1) {
+        placeholder.remove();
+    }
+    log.insertBefore(entry, log.firstChild);
+    while (log.children.length > 50) {
+        log.removeChild(log.lastChild);
+    }
+}
+
+function getCookie(name) {
+    var cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        var cookies = document.cookie.split(';');
+        for (var i = 0; i < cookies.length; i++) {
+            var cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+async function apiRequest(url, body, method) {
+    method = method || 'POST';
+    var init = {
+        method: method,
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
+    };
+    if (method.toUpperCase() !== 'GET') {
+        init.body = body || new FormData();
+    }
+    var response = await fetch(url, init);
+    return await response.json();
+}
+
+async function createProductFromNK(nkProductId, btn) {
+    btn.disabled = true;
+    btn.textContent = '...';
+    addLog('Создание продукта из НК (ID: ' + nkProductId + ')...', 'info');
+    try {
+        var result = await apiRequest(
+            '{% url "nk_product_create" %}',
+            new Blob([JSON.stringify({nk_product_id: nkProductId})], { type: 'application/json' })
+        );
+        if (result.is_error) {
+            addLog('✗ Ошибка: ' + result.message, 'error');
+        } else {
+            addLog('✓ ' + result.message, 'success');
+        }
+    } catch (e) {
+        addLog('✗ Ошибка сети: ' + e.message, 'error');
+    }
+    btn.disabled = false;
+    btn.textContent = 'Создать';
+}
+
+async function syncProducts() {
+    var btn = document.getElementById('btnSync');
+    btn.disabled = true;
+    btn.textContent = 'Выгрузка...';
+    addLog('Запуск синхронизации Национального каталога...', 'info');
+
+    var data = {};
+    var ownerInn = document.getElementById('owner_inn').value.trim();
+    var brandId = document.getElementById('brand_id').value.trim();
+    var catId = document.getElementById('cat_id').value.trim();
+    if (ownerInn) data.owner_inn = ownerInn;
+    if (brandId) data.brand_id = brandId;
+    if (catId) data.cat_id = catId;
+
+    try {
+        var result = await apiRequest(
+            '{% url "nk_sync_products" %}',
+            new Blob([JSON.stringify(data)], { type: 'application/json' })
+        );
+        if (result.is_error) {
+            addLog('✗ Ошибка: ' + result.message, 'error');
+            btn.disabled = false;
+            btn.textContent = 'Синхронизировать все товары';
+            return;
+        }
+        addLog('Синхронизация запущена, отслеживание хода выполнения...', 'info');
+        document.getElementById('syncProgressCard').style.display = 'block';
+        pollSyncProgress(btn);
+    } catch (e) {
+        addLog('✗ Ошибка сети: ' + e.message, 'error');
+        btn.disabled = false;
+        btn.textContent = 'Синхронизировать все товары';
+    }
+}
+
+async function pollSyncProgress(btn) {
+    var progressUrl = '{% url "nk_sync_progress" %}';
+    while (true) {
+        var progress;
+        try {
+            var result = await apiRequest(progressUrl, new FormData(), 'GET');
+            progress = result.progress || {};
+        } catch (e) {
+            addLog('✗ Ошибка получения прогресса: ' + e.message, 'error');
+            break;
+        }
+
+        var total = progress.total || 0;
+        var done = progress.done || 0;
+        var percent = total > 0 ? Math.round((done / total) * 100) : 0;
+
+        var phase = progress.phase || '';
+        if (phase === 'list') {
+            document.getElementById('syncLabel').textContent =
+                'Загрузка списка товаров из НК...';
+        } else if (done >= total) {
+            document.getElementById('syncLabel').textContent = 'Завершено';
+        } else {
+            document.getElementById('syncLabel').textContent = 'Выполняется...';
+        }
+
+        document.getElementById('syncFill').style.width = percent + '%';
+        document.getElementById('syncPercent').textContent = percent + '%';
+        var counts = document.getElementById('syncCounts');
+        if (phase === 'list') {
+            counts.textContent = 'Загружено ' + done + ' из ' + total;
+        } else if (total > 0) {
+            var errPart = progress.errors ? ', ошибок ' + progress.errors : '';
+            counts.textContent =
+                'Обработано ' + done + ' из ' + total +
+                ' (создано ' + progress.created + ', обновлено ' + progress.updated + errPart + ')';
+        } else {
+            var errPart2 = progress.errors ? ', ошибок ' + progress.errors : '';
+            counts.textContent =
+                'Обработано ' + done +
+                ' (создано ' + progress.created + ', обновлено ' + progress.updated + errPart2 + ')';
+        }
+
+        if (!progress.running) {
+            if (progress.error) {
+                addLog('✗ Ошибка: ' + progress.error, 'error');
+                addLog('Страница будет обновлена для отображения синхронизированных данных...', 'info');
+                setTimeout(function() { location.reload(); }, 2500);
+            } else {
+                var ps = progress.product_sync || {};
+                var msg = '✓ Выгрузка завершена: всего ' + progress.total +
+                    ', создано ' + progress.created + ', обновлено ' + progress.updated;
+                if (progress.errors) {
+                    msg += ', ошибок ' + progress.errors;
+                }
+                if (ps.products_created || ps.products_updated || ps.packagings_created || ps.skus_created) {
+                    msg += ' | Продукты: создано ' + ps.products_created +
+                        ', обновлено ' + ps.products_updated +
+                        ', упаковок ' + ps.packagings_created +
+                        ', SKU ' + ps.skus_created;
+                }
+                addLog(msg, 'success');
+                setTimeout(function() { location.reload(); }, 1500);
+            }
+            break;
+        }
+
+        await new Promise(function(resolve) { setTimeout(resolve, 1000); });
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Синхронизировать все товары';
+}
+
+addLog('Страница Национального каталога загружена', 'info');
+</script>
+{% endblock %}

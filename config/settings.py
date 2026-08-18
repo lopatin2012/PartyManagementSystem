@@ -87,6 +87,7 @@ INSTALLED_APPS = [
     'app_helper.apps.AppHelperConfig',
     'app_page.apps.AppPageConfig',
     'app_scheduler.apps.AppSchedulerConfig',
+    'app_event.apps.AppEventConfig',
 
 ]
 
@@ -291,6 +292,14 @@ UIP_RESERVE_NOTIFICATION_EMAILS = [
 # ==========================================
 # Адрес сервиса 1С (например, http://192.168.1.10:8080) для проверки на странице статусов.
 ONEC_URL = os.getenv('ONEC_URL', '')
+
+# ==========================================
+# Лимиты запросов.
+# ==========================================
+# Лимит количества GET/POST-параметров в одном запросе. Увеличен для
+# массовых операций в админке (например, удаление всех товаров Национального
+# каталога передаёт по одному полю на каждую выбранную строку).
+DATA_UPLOAD_MAX_NUMBER_FIELDS = int(os.getenv('DATA_UPLOAD_MAX_NUMBER_FIELDS', '5000'))
 
 LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'home'

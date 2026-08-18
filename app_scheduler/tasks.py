@@ -44,9 +44,12 @@ def refresh_suz_token_task() -> dict:
         }
 
     if account.dynamic_token and account.token_expires_at:
-        # Обновление, если осталось меньше 30 минут.
-        if account.token_expires_at > timezone.now() + timedelta(minutes=30):
-            message = f"СУЗ: токен действителен до {account.token_expires_at:%Y-%m-%d %H: %M}. Обновление не требуется"
+        # Обновление, если осталось меньше 2 часов.
+        # Ранее порог был 30 минут — при интервале планировщика 6 часов
+        # это создавало 4-часовой простой (токен живёт 8ч, на 6-м часу
+        # он ещё "валиден" по порогу 30мин, а на 8-м уже истёк).
+        if account.token_expires_at > timezone.now() + timedelta(hours=2):
+            message = f"СУЗ: токен действителен до {account.token_expires_at:%Y-%m-%d %H:%M}. Обновление не требуется"
             logger.info(message)
             return {
                 'status': 'skipped',
@@ -313,6 +316,55 @@ def check_uip_reserve_task() -> dict:
     from app_cz.services.reserve_monitor import check_uip_reserve_and_notify
 
     return check_uip_reserve_and_notify()
+
+
+# ==========================================
+# Национальный каталог.
+# ==========================================
+
+@task(queue_name='default')
+def sync_national_catalog_task() -> dict:
+    """
+    Периодическая синхронизация товаров Национального каталога (раз в час).
+
+    Выгружает товары по ИНН активной учётной записи СУЗ (owner_inn по умолчанию)
+    и обновляет локальные Product/ProductPackaging из данных НК.
+    """
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    actor = User.objects.filter(is_superuser=True).first()
+    if not actor:
+        message = (
+            'НК: нет пользователя-администратора для авторизации True API. '
+            'Синхронизация пропущена.'
+        )
+        logger.warning(message)
+        return {'status': 'skipped', 'is_error': True, 'message': message}
+
+    from app_cz.services.national_catalog_client import sync_products
+    from app_factory.services.nk_sync_service import sync_nk_to_products
+
+    nk_result = sync_products(actor)
+    product_result = sync_nk_to_products(user=actor)
+
+    message = (
+        f'НК: синхронизировано {nk_result.get("total", 0)} товаров '
+        f'(создано {nk_result.get("created", 0)}, обновлено {nk_result.get("updated", 0)}, '
+        f'ошибок {nk_result.get("errors", 0)}); '
+        f'продукты: создано {product_result.get("products_created", 0)}, '
+        f'обновлено {product_result.get("products_updated", 0)}, '
+        f'упаковок создано {product_result.get("packagings_created", 0)}, '
+        f'SKU создано {product_result.get("skus_created", 0)}'
+    )
+    logger.info(message)
+    return {
+        'status': 'ok',
+        'is_error': False,
+        'message': message,
+        'nk': nk_result,
+        'products': product_result,
+    }
 
 
 # ==========================================

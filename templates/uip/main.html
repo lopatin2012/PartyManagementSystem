@@ -75,7 +75,7 @@
                             </div>
 
                             <!-- Производственная партия -->
-                            <div class="form-group">
+                            <div class="form-group" id="partyFieldGroup">
                                 <label for="party">Производственная партия:</label>
                                 <input type="text"
                                        id="party"
@@ -84,7 +84,7 @@
                                        inputmode="numeric"
                                        maxlength="3"
                                        autocomplete="off"
-                                       oninput="validatePartyInput(this)">
+                                       oninput="validatePartyInput(this); updatePreview();">
                             </div>
                         </div>
 
@@ -103,6 +103,12 @@
                                         <span>Честный Знак</span>
                                     </label>
                                 </div>
+                            </div>
+
+                            <!-- Тип формирования УИП -->
+                            <div class="form-group">
+                                <label>Тип формирования УИП:</label>
+                                <div class="formation-type" id="formationType">—</div>
                             </div>
 
                             <!-- Предпросмотр номера -->

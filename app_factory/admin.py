@@ -10,7 +10,8 @@ from app_factory.models import (
     Product,
     ProductPackaging,
     ProductSKU,
-    ProductProductionLocation
+    ProductProductionLocation,
+    NationalCatalogProduct
 )
 
 
@@ -96,7 +97,7 @@ class ProductAdmin(admin.ModelAdmin):
     list_display = ('id', 'name', 'group', 'item_condition', 'card_status', is_active_display)
     list_filter = ('group', 'item_condition', 'card_status', 'is_active')
     search_fields = ('name',)
-    ordering = ('-id', 'group', 'name')
+    ordering = ('-id',)
     list_per_page = 25
     inlines = [ProductPackagingInline]
 
@@ -145,7 +146,7 @@ class ProductSKUAdmin(admin.ModelAdmin):
     list_display = ('id', 'article', 'product', 'type_formation_uip', is_active_display)
     list_filter = ('is_active', 'product__group')
     autocomplete_fields = ('product',)
-    search_fields = ('article', 'product__name')
+    search_fields = ('article', 'other_codes', 'product__name')
     ordering = ('-id', 'product', 'article')
     list_per_page = 50
 
@@ -173,3 +174,24 @@ class ProductProductionLocationAdmin(admin.ModelAdmin):
     @admin.display(description='Завод')
     def factory_name(self, obj):
         return obj.line.workshop.factory.name
+
+
+# ==========================================
+# Админка Национального каталога.
+# ==========================================
+@admin.register(NationalCatalogProduct)
+class NationalCatalogProductAdmin(admin.ModelAdmin):
+    list_display = (
+        'good_id', 'gtin', 'name', 'brand_name', 'product_group_name',
+        'card_state', 'state_condition', 'create_date', 'ready_badge', 'synced_at',
+    )
+    list_filter = ('card_state', 'state_condition', 'product_group')
+    search_fields = ('good_id', 'gtin', 'name', 'brand_name')
+    readonly_fields = ('good_id', 'etag', 'create_date', 'raw_data', 'synced_at')
+    date_hierarchy = 'create_date'
+    list_per_page = 50
+    ordering = ('-synced_at', 'good_id')
+
+    @admin.display(boolean=True, description='Готов к производству')
+    def ready_badge(self, obj):
+        return obj.is_ready_for_production

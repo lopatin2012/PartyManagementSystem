@@ -674,10 +674,20 @@
     font-size: 0.78rem;
 }
 
+.formation-type {
+    padding: 0.55rem 0.7rem;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    font-size: 0.9rem;
+    color: var(--accent-yellow);
+}
+
 /* Подсветка частей номера */
 .part-gtin { color: #6495ED; }
 .part-date { color: var(--accent-yellow); }
 .part-article { color: var(--accent-green); }
+.part-party { color: #E06C9F; }
 .part-zeros { color: rgba(255, 255, 255, 0.35); }
 
 .modal-footer {

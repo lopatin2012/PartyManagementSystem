@@ -35,6 +35,9 @@
                 <a href="{% url 'sync_tasks' %}" class="nav-link {% if request.resolver_match.url_name == 'sync_tasks' %}nav-link-active{% endif %}">
                     Синхронизация
                 </a>
+                <a href="{% url 'national_catalog' %}" class="nav-link {% if request.resolver_match.url_name == 'national_catalog' %}nav-link-active{% endif %}">
+                    Национальный каталог
+                </a>
             {% endif %}
             {% if debug %}
                 <a href="/api/docs/" class="nav-link" target="_blank" rel="noopener">

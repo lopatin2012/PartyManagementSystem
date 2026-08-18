@@ -165,6 +165,14 @@ class Product(UUIDModel):
     card_status = models.CharField(
         max_length=50, choices=CardStateChoices.choices, verbose_name='Состояние карточки'
     )
+    national_product = models.ForeignKey(
+        'NationalCatalogProduct',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='local_products',
+        verbose_name='Товар из Национального каталога',
+        help_text='Связь с товаром из НК (если создан из Национального каталога)',
+    )
     is_active = models.BooleanField(default=True, verbose_name='Активен')
 
     class Meta:
@@ -251,6 +259,12 @@ class ProductSKU(UUIDModel):
         help_text='Уникальный код внутри организации (например, из 1С)',
         verbose_name='Код внутри организации'
     )
+    other_codes = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='Другие коды внутри организации',
+        help_text='Все коды товара в учётной системе поставщика из Национального каталога',
+    )
     type_formation_uip = models.PositiveSmallIntegerField(
         default=TypeFormationUIP.general,
         choices=TypeFormationUIP.choices,
@@ -321,3 +335,84 @@ class ProductProductionLocation(UUIDModel):
     @property
     def cz_group_id(self):
         return ProductGroupChoices.ch_group_id(self.product.group)
+
+
+# ==========================================
+# Национальный каталог (ГИС МТ).
+# ==========================================
+class NationalCatalogProduct(UUIDModel):
+    """Товар из «Национального каталога» (кэш локальной выгрузки)."""
+
+    good_id = models.PositiveBigIntegerField(
+        unique=True, verbose_name='Идентификатор товара в Национальном каталоге'
+    )
+    etag = models.CharField(
+        max_length=64, blank=True, default='', verbose_name='Хеш содержимого карточки'
+    )
+    gtin = models.CharField(
+        max_length=14, blank=True, default='', verbose_name='Код товара (GTIN)'
+    )
+    name = models.TextField(
+        blank=True, default='', verbose_name='Наименование товара'
+    )
+    brand_name = models.TextField(
+        blank=True, default='', verbose_name='Товарный знак'
+    )
+    categories = models.JSONField(
+        default=list, blank=True, verbose_name='Категории товара'
+    )
+    product_group = models.CharField(
+        max_length=32, blank=True, default='', verbose_name='Товарная группа (код)'
+    )
+    product_group_name = models.TextField(
+        blank=True, default='', verbose_name='Товарная группа'
+    )
+    card_state = models.CharField(
+        max_length=32,
+        choices=CardStateChoices.choices,
+        blank=True, default='',
+        verbose_name='Состояние карточки',
+    )
+    state_condition = models.CharField(
+        max_length=32,
+        choices=StateConditionChoices.choices,
+        blank=True, default='',
+        verbose_name='Состояние товара',
+    )
+    image_url = models.TextField(
+        blank=True, default='', verbose_name='Изображение товара'
+    )
+    create_date = models.DateTimeField(
+        null=True, blank=True, verbose_name='Дата создания карточки в НК'
+    )
+    raw_data = models.JSONField(
+        default=dict, blank=True, verbose_name='Сырые данные из НК'
+    )
+    synced_at = models.DateTimeField(
+        auto_now=True, verbose_name='Дата синхронизации'
+    )
+
+    @property
+    def is_ready_for_production(self) -> bool:
+        """Карточка опубликована и готов к заказу КМ / вводу в оборот."""
+        return (
+            self.card_state == CardStateChoices.PUBLISHED
+            and self.state_condition in (
+                StateConditionChoices.READY_ORDER_KM,
+                StateConditionChoices.READY_COMMERCIALIZATION,
+            )
+        )
+
+    class Meta:
+        verbose_name = 'Товар Национального каталога'
+        verbose_name_plural = '8. Товары Национального каталога'
+        ordering = ('-synced_at', 'good_id')
+        indexes = [
+            models.Index(fields=['gtin']),
+            models.Index(fields=['name']),
+            models.Index(fields=['product_group']),
+            models.Index(fields=['card_state']),
+        ]
+
+    def __str__(self):
+        return f'{self.name or f"Товар #{self.good_id}"} ({self.gtin or "—"})'

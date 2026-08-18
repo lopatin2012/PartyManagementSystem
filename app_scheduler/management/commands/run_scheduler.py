@@ -50,6 +50,9 @@ SCHEDULE = [
     # >50% — предупреждение, >80% — тревога, >90% — снятие устаревших УИП.
     ('check_uip_reserve', 1 * DAY, 'Проверка резерва УИП и уведомления по почте'),
 
+    # Синхронизация Национального каталога раз в час.
+    ('sync_national_catalog', 1 * HOUR, 'Синхронизация Национального каталога (1 час)'),
+
     # # Каждые 30 минут — синхронизация УИП с ЧЗ
     # ('sync_parties', 30 * 60, 'Синхронизация УИП с ЧЗ'),
     #
@@ -138,6 +141,7 @@ class Command(BaseCommand):
             cleanup_old_logs_task,
             sync_external_tasks_task,
             check_uip_reserve_task,
+            sync_national_catalog_task,
         )
         from django_tasks_db.models import DBTaskResult
         from django_tasks.base import TaskResultStatus
@@ -151,6 +155,7 @@ class Command(BaseCommand):
             'cleanup_old_logs': cleanup_old_logs_task,
             'sync_external_tasks': sync_external_tasks_task,
             'check_uip_reserve': check_uip_reserve_task,
+            'sync_national_catalog': sync_national_catalog_task,
         }
 
         check_interval = options['interval']
@@ -180,6 +185,7 @@ class Command(BaseCommand):
 
         try:
             while True:
+                self._cleanup_stale_tasks(DBTaskResult, TaskResultStatus)
                 self._check_and_enqueue(task_map, DBTaskResult, TaskResultStatus)
                 if run_once:
                     self.stdout.write(self.style.SUCCESS('Режим --once: выход'))
@@ -188,9 +194,31 @@ class Command(BaseCommand):
         except KeyboardInterrupt:
             self.stdout.write(self.style.WARNING('\nПланировщик остановлен'))
 
+    def _cleanup_stale_tasks(self, DBTaskResult, TaskResultStatus):
+        """Очищает задачи, застрявшие в статусе RUNNING дольше 15 минут."""
+        stale_threshold = timezone.now() - timedelta(minutes=15)
+        stale_tasks = DBTaskResult.objects.filter(
+            status=TaskResultStatus.RUNNING,
+            started_at__lt=stale_threshold,
+        )
+        count = stale_tasks.count()
+        if count > 0:
+            stale_tasks.update(
+                status=TaskResultStatus.FAILED,
+                error_message='Автоматическая очистка: задача зависла дольше 15 минут',
+                finished_at=timezone.now(),
+            )
+            logger.warning(f'Планировщик: очищено {count} зависших задач')
+            self.stdout.write(
+                self.style.WARNING(f'[{timezone.now():%H:%M:%S}] Очищено {count} зависших задач')
+            )
+
     def _check_and_enqueue(self, task_map, DBTaskResult, TaskResultStatus):
         """Проверяет каждую задачу в расписании и ставит её в очередь, если нужно."""
         now = timezone.now()
+
+        # Очистка зависших задач перед проверкой расписания.
+        self._cleanup_stale_tasks(DBTaskResult, TaskResultStatus)
 
         for name, interval, description in SCHEDULE:
             task_func = task_map.get(name)

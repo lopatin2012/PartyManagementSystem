@@ -86,6 +86,43 @@ let selectedSkuId = null;     // сохранённый выбор
 let lastQuery = '';           // последний поисковый запрос (для подсветки)
 const MAX_VISIBLE_PRODUCTS = 50;  // сколько элементов рендерим за раз
 
+// Типы формирования УИП (соответствует TypeFormationUIP в модели).
+const TYPE_FORMATION_LABELS = {
+    1: 'Обычный',
+    2: 'Обычный + партия в начале',
+    3: 'Обычный + партия в конце',
+    4: 'НатураПРО'
+};
+
+/** Возвращает выбранный продукт из availableProducts (или null). */
+function getSelectedProduct() {
+    const radio = document.querySelector('input[name="product"]:checked');
+    if (!radio) return null;
+    const skuId = radio.value;
+    return availableProducts.find(p => String(p.sku_id) === String(skuId)) || null;
+}
+
+/** Показывает тип формирования УИП выбранного продукта. */
+function updateFormationType() {
+    const el = document.getElementById('formationType');
+    if (!el) return;
+    const product = getSelectedProduct();
+    const type = product ? Number(product.type_formation_uip) : 0;
+    el.textContent = product
+        ? (TYPE_FORMATION_LABELS[type] || ('Тип ' + type))
+        : '—';
+}
+
+/** Скрывает поле «Производственная партия» для типа «Обычный» (тип 1). */
+function updatePartyVisibility() {
+    const group = document.getElementById('partyFieldGroup');
+    if (!group) return;
+    const product = getSelectedProduct();
+    const type = product ? Number(product.type_formation_uip) : 0;
+    // «Обычный» (тип 1) не использует номер партии в УИП — скрываем поле.
+    group.style.display = (product && type !== 1) ? '' : 'none';
+}
+
 function initGenerateModal() {
     updateGenerateButtonState();
 
@@ -99,6 +136,8 @@ function initGenerateModal() {
     }
     filteredProducts = availableProducts;
     renderProductList();
+    updateFormationType();
+    updatePartyVisibility();
 
     const dateInput = document.getElementById('productionDate');
     if (dateInput) {
@@ -145,10 +184,12 @@ function renderProductList() {
         <label class="product-item">
             <input type="radio" name="product" value="${p.sku_id}"
                    data-gtin="${p.gtin}" data-article="${escapeHtml(p.article)}"
+                   data-type="${p.type_formation_uip}"
                    ${i === checkedIndex ? 'checked' : ''} onchange="onProductSelect(this)">
             <div class="product-info">
                 <span class="product-name">${highlightMatch(p.name, lastQuery)}</span>
                 <span class="product-meta">GTIN: ${p.gtin} · Арт: ${highlightMatch(p.article, lastQuery)}</span>
+                <span class="product-meta">Тип: ${TYPE_FORMATION_LABELS[p.type_formation_uip] || ('Тип ' + p.type_formation_uip)}</span>
             </div>
         </label>
     `).join('');
@@ -157,6 +198,8 @@ function renderProductList() {
     if (checked) {
         selectedSkuId = checked.value;
         updatePreview();
+        updateFormationType();
+        updatePartyVisibility();
     }
 }
 
@@ -192,16 +235,98 @@ function highlightMatch(text, query) {
 function onProductSelect(radio) {
     selectedSkuId = radio.value;
     updatePreview();
+    updateFormationType();
+    updatePartyVisibility();
     updateGenerateButtonState();
 }
 
-function buildLocalNumber(gtin, dateStr, article) {
+/** ISO-неделя и день недели (как date.isocalendar() в Python). */
+function getISOWeekAndDay(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    return { week: weekNo, day: dayNum };
+}
+
+/**
+ * Формирует локальный номер УИП. Зеркально повторяет
+ * build_local_party_number() из app_cz/services/party_service.py.
+ * type: 1 — Обычный, 2 — партия в начале, 3 — партия в конце, 4 — НатураПРО.
+ */
+function buildLocalNumber(gtin, dateStr, article, type, party) {
     // dateStr: YYYY-MM-DD -> ГГММДД
     const [yyyy, mm, dd] = dateStr.split('-');
     const datePart = yyyy.slice(2) + mm + dd;
-    const articlePart = (article || '').slice(0, 5).padEnd(5, '0');
-    const base = gtin + datePart + articlePart;
+    const partyPart = (party || '000').padStart(3, '0');
+
+    if (type === 2) {
+        const base = gtin + datePart + article + partyPart;
+        return base.padEnd(32, '0').slice(0, 32);
+    }
+    if (type === 3) {
+        const base = gtin + datePart + article;
+        return base.padEnd(29, '0').slice(0, 29) + partyPart;
+    }
+    if (type === 4) {
+        const base = (gtin + datePart).padEnd(24, '0').slice(0, 24);
+        const now = new Date();
+        const iso = getISOWeekAndDay(now);
+        const year = String(now.getFullYear()).slice(2);
+        return base + '-' + year + iso.week + iso.day + partyPart;
+    }
+    // Тип 1 «Обычный» (по умолчанию): партия в номере не участвует.
+    const base = gtin + datePart + article;
     return base.padEnd(32, '0').slice(0, 32);
+}
+
+/** Разбор номера по частям с подсветкой для конкретного типа формирования. */
+function buildPreviewHint(gtin, dateStr, article, type, party, number) {
+    const [yyyy, mm, dd] = dateStr.split('-');
+    const datePart = yyyy.slice(2) + mm + dd;
+    const partyPart = (party || '000').padStart(3, '0');
+
+    if (type === 2) {
+        const rest = number.slice(gtin.length + datePart.length + article.length + 3);
+        return '<span class="part-gtin">' + gtin + '</span>' +
+            '<span class="part-date">' + datePart + '</span>' +
+            '<span class="part-article">' + article + '</span>' +
+            '<span class="part-party">' + partyPart + '</span>' +
+            '<span class="part-zeros">' + rest + '</span><br>' +
+            '<small>GTIN(14) + дата ГГММДД(6) + артикул(' + article.length + ') + партия(3) + нули до 32</small>';
+    }
+    if (type === 3) {
+        const midZeros = number.slice(
+            gtin.length + datePart.length + article.length,
+            number.length - 3
+        );
+        return '<span class="part-gtin">' + gtin + '</span>' +
+            '<span class="part-date">' + datePart + '</span>' +
+            '<span class="part-article">' + article + '</span>' +
+            '<span class="part-zeros">' + midZeros + '</span>' +
+            '<span class="part-party">' + partyPart + '</span><br>' +
+            '<small>GTIN(14) + дата ГГММДД(6) + артикул(' + article.length + ') + нули до 29 + партия(3)</small>';
+    }
+    if (type === 4) {
+        const now = new Date();
+        const iso = getISOWeekAndDay(now);
+        const year = String(now.getFullYear()).slice(2);
+        const zeros = number.slice(gtin.length + datePart.length, 24);
+        const suffix = '-' + year + iso.week + iso.day + partyPart;
+        return '<span class="part-gtin">' + gtin + '</span>' +
+            '<span class="part-date">' + datePart + '</span>' +
+            '<span class="part-zeros">' + zeros + '</span>' +
+            '<span class="part-party">' + suffix + '</span><br>' +
+            '<small>GTIN(14) + дата ГГММДД(6) + нули до 24 + — + год(2) + неделя(2) + день(1) + партия(3)</small>';
+    }
+    // Тип 1 «Обычный».
+    const zeros = number.slice(gtin.length + datePart.length + article.length);
+    return '<span class="part-gtin">' + gtin + '</span>' +
+        '<span class="part-date">' + datePart + '</span>' +
+        '<span class="part-article">' + article + '</span>' +
+        '<span class="part-zeros">' + zeros + '</span><br>' +
+        '<small>GTIN(14) + дата ГГММДД(6) + артикул(' + article.length + ') + нули до 32</small>';
 }
 
 function updatePreview() {
@@ -218,34 +343,26 @@ function updatePreview() {
         return;
     }
 
-    // Локальный режим — живой предпросмотр.
-    const radio = document.querySelector('input[name="product"]:checked');
+    // Локальный режим — живой предпросмотр по типу формирования.
+    const product = getSelectedProduct();
     const dateInput = document.getElementById('productionDate');
+    const partyInput = document.getElementById('party');
 
-    if (!radio || !dateInput.value) {
+    if (!product || !dateInput.value) {
         previewNumber.textContent = '—';
         previewHint.textContent = '';
         return;
     }
 
-    const gtin = radio.dataset.gtin;
-    const article = radio.dataset.article;
-    const number = buildLocalNumber(gtin, dateInput.value, article);
+    const gtin = product.gtin;
+    const article = product.article;
+    const type = Number(product.type_formation_uip);
+    // Для «Обычного» номер партии не используется.
+    const party = type === 1 ? '000' : (partyInput ? partyInput.value.trim() : '');
+    const number = buildLocalNumber(gtin, dateInput.value, article, type, party);
 
     previewNumber.textContent = number;
-
-    // Разбор номера по частям с подсветкой.
-    const [yyyy, mm, dd] = dateInput.value.split('-');
-    const datePart = yyyy.slice(2) + mm + dd;
-    const articlePart = (article || '').slice(0, 5).padEnd(5, '0');
-    const zeros = number.slice(25);
-
-    previewHint.innerHTML =
-        `<span class="part-gtin">${gtin}</span>` +
-        `<span class="part-date">${datePart}</span>` +
-        `<span class="part-article">${articlePart}</span>` +
-        `<span class="part-zeros">${zeros}</span><br>` +
-        `<small>GTIN(14) + дата ГГММДД(6) + артикул(5) + нули до 32</small>`;
+    previewHint.innerHTML = buildPreviewHint(gtin, dateInput.value, article, type, party, number);
 }
 
 function openGenerateModal() {
@@ -258,6 +375,8 @@ function openGenerateModal() {
     filterProducts('');
     updateGenerateButtonState();
     updatePreview();
+    updateFormationType();
+    updatePartyVisibility();
 }
 
 function closeGenerateModal() {

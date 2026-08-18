@@ -142,6 +142,7 @@ def get_available_products() -> list[dict]:
             'article': sku.article,
             'gtin': gtin,
             'group': sku.product.group,
+            'type_formation_uip': sku.type_formation_uip,
         })
     return products
 
