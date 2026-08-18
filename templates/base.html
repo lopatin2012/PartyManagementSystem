@@ -33,7 +33,7 @@
             </a>
             {% if user.is_superuser %}
                 <a href="{% url 'sync_tasks' %}" class="nav-link {% if request.resolver_match.url_name == 'sync_tasks' %}nav-link-active{% endif %}">
-                    Синхронизация
+                    Синхронизация заданий
                 </a>
                 <a href="{% url 'national_catalog' %}" class="nav-link {% if request.resolver_match.url_name == 'national_catalog' %}nav-link-active{% endif %}">
                     Национальный каталог

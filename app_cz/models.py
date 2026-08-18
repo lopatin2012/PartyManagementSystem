@@ -17,7 +17,7 @@ class CISCodesStatusChoices(models.IntegerChoices):
 class ProductionCodeStatusChoices(models.IntegerChoices):
     """Статус кода со стороны производства."""
     FREE = 1, 'Свободный'
-    PENDING = 2, 'Ожидает нанесения'
+    PENDING = 2, 'Напечатан'
     APPLIED = 3, 'Нанесён'
     REJECTED = 4, 'Отбракован'
     SHIPPED = 5, 'Отгружен'

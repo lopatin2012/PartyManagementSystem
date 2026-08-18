@@ -19,7 +19,7 @@
 """
 
 import logging
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 import requests
 from django.db import transaction
@@ -37,7 +37,7 @@ from app_uip.models import (
     ProductionPartyStatusChoices,
     ProductionPartySyncStatusChoices,
 )
-from app_factory.models import Line, ProductPackaging, PackagingLevelChoices
+from app_factory.models import Factory, Line, ProductPackaging, PackagingLevelChoices
 
 logger = logging.getLogger(__name__)
 
@@ -304,12 +304,12 @@ def receive_external_task(data: dict) -> dict:
                 party.expiration_datetime = date_expiration
 
             # Количества.
-            plan_amount = _parse_int(data.get('plan_amount'))
-            amount = _parse_int(data.get('amount'))
-            if plan_amount:
-                party.planned_quantity = plan_amount
-            if amount:
-                party.produced_quantity = amount
+            # Поле может приходить с нулевым значением (0) — это валидное
+            # значение, поэтому проверяем наличие ключа, а не значение.
+            if 'plan_amount' in data:
+                party.planned_quantity = _parse_int(data.get('plan_amount'))
+            if 'amount' in data:
+                party.produced_quantity = _parse_int(data.get('amount'))
 
             # Дата производства задания → дата производства УИП (если пустая).
             date_work = parse_date(str(data.get('date_work'))) if data.get('date_work') else None
@@ -455,7 +455,10 @@ def _upsert_codes(party: ProductionParty, default_packaging: ProductPackaging, c
             continue
 
         cz_status = _map_cz_status(code_dict)
-        production_status = _map_production_status(code_dict)
+        production_status = (
+            code_dict.get('production_status')
+            or _map_production_status(code_dict)
+        )
 
         parent_code = code_dict.get('parent_code') or code_dict.get('parent')
         if parent_code:
@@ -605,8 +608,10 @@ def sync_codes_task(
             }
 
     # 3. Запрашиваем коды из внешнего сервиса.
+    # Молвест.Маркировка ищет задание по uuid_str через параметр uuid_task;
+    # task_id передаём для совместимости с другими сервисами.
     api_url = f"{url.rstrip('/')}/codes/api/get_codes_by_task/"
-    params = {'task_id': str(task_id)}
+    params = {'uuid_task': str(task_id), 'task_id': str(task_id)}
     headers = {'Accept': 'application/json'}
     if token:
         headers['Authorization'] = f'Token {token}'
@@ -625,14 +630,50 @@ def sync_codes_task(
         }
 
     if isinstance(payload, dict):
-        codes = (
-            payload.get('results')
-            or payload.get('data')
-            or payload.get('codes')
-            or []
-        )
+        if payload.get('is_error'):
+            message = payload.get('message') or 'Внешний сервис вернул ошибку.'
+            _mark_party_sync(party, False, message)
+            logger.error(f'{message} task_id={task_id}')
+            return {'has_error': True, 'message': message}
+
+        camera_codes = payload.get('sntins_camera') or []
+        printer_codes = payload.get('sntins_printer') or []
+        if camera_codes or printer_codes:
+            # Молвест.Маркировка: sntins_camera — код нанесён (камера),
+            # sntins_printer — код напечатан (ожидает нанесения).
+            camera_set = set(camera_codes)
+            codes = []
+            for c in camera_codes:
+                if isinstance(c, str) and c.strip():
+                    codes.append({
+                        'code': c.strip(),
+                        'production_status': ProductionCodeStatusChoices.APPLIED,
+                    })
+            for c in printer_codes:
+                if isinstance(c, str) and c.strip() and c.strip() not in camera_set:
+                    codes.append({
+                        'code': c.strip(),
+                        'production_status': ProductionCodeStatusChoices.PENDING,
+                    })
+        else:
+            codes = (
+                payload.get('results')
+                or payload.get('data')
+                or payload.get('codes')
+                or payload.get('sntins')
+                or []
+            )
     else:
         codes = payload or []
+
+    # Приводим к единому виду [{ 'code': ... }] (для форматов без статусов).
+    normalized = []
+    for c in codes:
+        if isinstance(c, dict):
+            normalized.append(c)
+        elif isinstance(c, str) and c.strip():
+            normalized.append({'code': c.strip()})
+    codes = normalized
 
     if not codes:
         message = 'Внешний сервис вернул пустой список кодов.'
@@ -767,6 +808,143 @@ def sync_all_external_tasks() -> dict:
         parts.append(f'⚠ ошибок: {summary["errors"]}')
     summary['message'] = 'Синхронизация завершена. ' + ', '.join(parts)
     summary['is_error'] = summary['errors'] > 0
+
+    logger.info(summary['message'])
+    return summary
+
+
+# ==========================================
+# Синхронизация производственных партий и кодов.
+# ==========================================
+
+def _fetch_external_tasks_changed_since(url: str, changed_since) -> list:
+    """
+    Выгружает из внешнего сервиса задания, изменённые после changed_since.
+
+    Молвест.Маркировка отдаёт их через GET /task/api_task_external/?changed_since=...
+    Формат результата: {'is_error': False, 'count': N, 'result': [...]}.
+    """
+    api_url = f"{url.rstrip('/')}/task/api_task_external/"
+    params = {'changed_since': changed_since.isoformat()}
+    headers = {'Accept': 'application/json'}
+
+    try:
+        logger.info(f'Запрос заданий из внешнего сервиса: changed_since={params["changed_since"]}')
+        response = requests.get(api_url, params=params, headers=headers, timeout=30)
+        response.raise_for_status()
+        payload = response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f'Ошибка запроса заданий из внешнего сервиса: {e}')
+        return []
+
+    if not isinstance(payload, dict) or payload.get('is_error'):
+        message = payload.get('message') if isinstance(payload, dict) else ''
+        logger.error(f'Внешний сервис вернул ошибку при выгрузке заданий: {message}')
+        return []
+
+    return payload.get('result') or []
+
+
+def _last_external_sync_changed_since(task_path: str = None):
+    """
+    Время последней успешной синхронизации (для changed_since).
+
+    Берётся из времени завершения последнего успешного запуска задачи
+    в django-tasks-db. Если запусков не было — за последние 24 часа.
+    """
+    if task_path:
+        try:
+            from django_tasks.base import TaskResultStatus
+            from django_tasks_db.models import DBTaskResult
+
+            last = (
+                DBTaskResult.objects
+                .filter(task_path=task_path, status=TaskResultStatus.SUCCESSFUL)
+                .order_by('-finished_at')
+                .first()
+            )
+            if last and last.finished_at:
+                return last.finished_at
+        except Exception:
+            logger.warning(
+                'Не удалось определить время последней синхронизации',
+                exc_info=True,
+            )
+    return timezone.now() - timedelta(hours=24)
+
+
+def sync_external_parties_and_codes(task_path: str = None) -> dict:
+    """
+    Периодическая синхронизация производственных партий и их кодов.
+
+    Двухэтапная:
+    1. Выгружает из Molvest задания, изменённые после последней успешной
+       синхронизации (или за последние 24 часа при первом запуске),
+       и обновляет ProductionParty через receive_external_task.
+    2. Синхронизирует коды маркировки по всем внешним заданиям
+       (sync_all_external_tasks).
+
+    Адрес сервера маркировки определяется по активным заводам
+    (Factory.ip_address / Factory.port_address).
+
+    :param task_path: Путь задачи в django-tasks (для определения времени
+                      последней успешной синхронизации).
+    :return: Сводка по синхронизации.
+    """
+    summary = {
+        'is_error': False,
+        'parties_fetched': 0,
+        'parties_created': 0,
+        'parties_updated': 0,
+        'errors': 0,
+        'message': '',
+    }
+
+    changed_since = _last_external_sync_changed_since(task_path)
+
+    factories = Factory.objects.filter(
+        is_active=True,
+        ip_address__isnull=False,
+        port_address__isnull=False,
+    )
+    if not factories.exists():
+        message = (
+            'Нет действующих заводов с заданным ip-адресом/портом. '
+            'Синхронизация партий пропущена.'
+        )
+        summary['message'] = message
+        logger.warning(message)
+        return summary
+
+    # Этап 1: выгрузка изменённых заданий и обновление партий.
+    for factory in factories:
+        url = f'http://{factory.ip_address}:{factory.port_address}'
+        tasks = _fetch_external_tasks_changed_since(url, changed_since)
+        summary['parties_fetched'] += len(tasks)
+
+        for task_data in tasks:
+            result = receive_external_task(task_data)
+            if result.get('has_error'):
+                summary['errors'] += 1
+            elif result.get('created'):
+                summary['parties_created'] += 1
+            else:
+                summary['parties_updated'] += 1
+
+    # Этап 2: синхронизация кодов маркировки по всем внешним заданиям.
+    codes_summary = sync_all_external_tasks()
+    summary['codes'] = codes_summary
+    summary['is_error'] = summary['errors'] > 0 or codes_summary.get('is_error')
+
+    parts = [
+        f'заданий выгружено: {summary["parties_fetched"]}',
+        f'партий создано: {summary["parties_created"]}',
+        f'партий обновлено: {summary["parties_updated"]}',
+    ]
+    if summary['errors']:
+        parts.append(f'⚠ ошибок: {summary["errors"]}')
+    summary['message'] = 'Синхронизация партий завершена. ' + ', '.join(parts)
+    summary['is_error'] = summary['is_error'] or summary['errors'] > 0
 
     logger.info(summary['message'])
     return summary

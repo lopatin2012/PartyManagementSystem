@@ -284,20 +284,22 @@ def cleanup_old_logs_task() -> dict:
 # ==========================================
 
 @task(queue_name='default')
-def sync_external_tasks_task() -> dict:
+def sync_external_parties_codes_task() -> dict:
     """
-    Периодическая синхронизация кодов маркировки с внешними сервисами заводов.
+    Периодическая синхронизация производственных партий и их кодов (раз в час).
 
-    - Синхронизирует коды для заданий в активных статусах
-      («Создано», «В работе», «Закрыто»).
-    - Для заданий в финальном статусе («Завершено») выполняет последнюю
-      синхронизацию данных.
+    - Выгружает из внешнего сервиса задания, изменённые после последней
+      успешной синхронизации, и обновляет ProductionParty
+      (статусы, количества, УИП, линия).
+    - Синхронизирует коды маркировки по всем внешним заданиям.
 
     Адрес сервера маркировки берётся из модели Factory (ip_address/port_address).
     """
-    from app_cz.services.code_sync import sync_all_external_tasks
+    from app_cz.services.code_sync import sync_external_parties_and_codes
 
-    return sync_all_external_tasks()
+    return sync_external_parties_and_codes(
+        task_path=f'{__name__}.sync_external_parties_codes_task'
+    )
 
 
 # ==========================================

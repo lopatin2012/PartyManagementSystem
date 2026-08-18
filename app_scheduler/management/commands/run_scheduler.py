@@ -43,8 +43,8 @@ SCHEDULE = [
     ('cleanup_old_logs', 1 * DAY, 'Очистка старых логов статусов (700 дней)'),
 
     # Синхронизация с внешним сервисом (Молвест.Маркировка).
-    # Задания и коды маркировки.
-    ('sync_external_tasks', 30 * MINUTE, 'Синхронизация заданий и кодов с внешним сервисом'),
+    # Производственные партии и их коды — раз в час.
+    ('sync_external_parties_codes', 1 * HOUR, 'Синхронизация партий и кодов с внешним сервисом (1 час)'),
 
     # Мониторинг резерва УИП.
     # >50% — предупреждение, >80% — тревога, >90% — снятие устаревших УИП.
@@ -139,7 +139,7 @@ class Command(BaseCommand):
             close_unused_registered_uips_task,
             archive_stale_closed_uips_task,
             cleanup_old_logs_task,
-            sync_external_tasks_task,
+            sync_external_parties_codes_task,
             check_uip_reserve_task,
             sync_national_catalog_task,
         )
@@ -153,7 +153,7 @@ class Command(BaseCommand):
             'close_unused_registered': close_unused_registered_uips_task,
             'archive_stale_closed': archive_stale_closed_uips_task,
             'cleanup_old_logs': cleanup_old_logs_task,
-            'sync_external_tasks': sync_external_tasks_task,
+            'sync_external_parties_codes': sync_external_parties_codes_task,
             'check_uip_reserve': check_uip_reserve_task,
             'sync_national_catalog': sync_national_catalog_task,
         }

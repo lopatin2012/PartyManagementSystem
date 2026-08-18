@@ -4,7 +4,7 @@
 
 .sync-page {
     width: 100%;
-    max-width: 1700px;
+    max-width: 1820px;
     margin: 0 auto;
     padding: 2rem 3rem;
 }
@@ -252,14 +252,13 @@
     max-width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .uip-number {
     font-family: monospace;
     font-size: 0.85rem;
     color: var(--accent-yellow);
-    max-width: 220px;
+    max-width: 240px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
