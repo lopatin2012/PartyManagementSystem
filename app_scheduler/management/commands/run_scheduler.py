@@ -46,6 +46,9 @@ SCHEDULE = [
     # Производственные партии и их коды — раз в час.
     ('sync_external_parties_codes', 1 * HOUR, 'Синхронизация партий и кодов с внешним сервисом (1 час)'),
 
+    # Справочники (цеха, линии, продукты) — раз в сутки.
+    ('sync_molvest_reference', 1 * DAY, 'Синхронизация справочников с внешним сервисом (1 сутки)'),
+
     # Мониторинг резерва УИП.
     # >50% — предупреждение, >80% — тревога, >90% — снятие устаревших УИП.
     ('check_uip_reserve', 1 * DAY, 'Проверка резерва УИП и уведомления по почте'),
@@ -143,6 +146,7 @@ class Command(BaseCommand):
             archive_stale_closed_uips_task,
             cleanup_old_logs_task,
             sync_external_parties_codes_task,
+            sync_molvest_reference_task,
             check_uip_reserve_task,
             sync_national_catalog_task,
             archive_old_codes_task,
@@ -158,6 +162,7 @@ class Command(BaseCommand):
             'archive_stale_closed': archive_stale_closed_uips_task,
             'cleanup_old_logs': cleanup_old_logs_task,
             'sync_external_parties_codes': sync_external_parties_codes_task,
+            'sync_molvest_reference': sync_molvest_reference_task,
             'check_uip_reserve': check_uip_reserve_task,
             'sync_national_catalog': sync_national_catalog_task,
             'archive_old_codes': archive_old_codes_task,

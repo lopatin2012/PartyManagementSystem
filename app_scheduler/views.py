@@ -33,6 +33,7 @@ class SchedulerStatusView(View):
             archive_stale_closed_uips_task,
             cleanup_old_logs_task,
             sync_external_parties_codes_task,
+            sync_molvest_reference_task,
             check_uip_reserve_task,
             archive_old_codes_task,
         )
@@ -44,6 +45,7 @@ class SchedulerStatusView(View):
             'archive_stale_closed': archive_stale_closed_uips_task,
             'cleanup_old_logs': cleanup_old_logs_task,
             'sync_external_parties_codes': sync_external_parties_codes_task,
+            'sync_molvest_reference': sync_molvest_reference_task,
             'check_uip_reserve': check_uip_reserve_task,
             'archive_old_codes': archive_old_codes_task,
         }
