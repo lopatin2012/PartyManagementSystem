@@ -35,6 +35,7 @@ class SchedulerStatusView(View):
             sync_external_parties_codes_task,
             sync_molvest_reference_task,
             check_uip_reserve_task,
+            check_uip_burn_task,
             archive_old_codes_task,
         )
 
@@ -47,6 +48,7 @@ class SchedulerStatusView(View):
             'sync_external_parties_codes': sync_external_parties_codes_task,
             'sync_molvest_reference': sync_molvest_reference_task,
             'check_uip_reserve': check_uip_reserve_task,
+            'check_uip_burn': check_uip_burn_task,
             'archive_old_codes': archive_old_codes_task,
         }
 

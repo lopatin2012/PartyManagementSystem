@@ -41,6 +41,8 @@ RELEASE_PERCENT = 90
 BURN_DAYS = 30
 # Снимаем УИП, до сгорания которых осталось не более этого количества дней.
 RELEASE_BEFORE_BURN_DAYS = 5
+# Предупреждаем по почте, если до сгорания осталось менее этого количества дней.
+BURN_WARN_DAYS = 7
 # Максимальное количество УИП за один запуск снятия с резерва.
 RELEASE_BATCH_SIZE = 100
 
@@ -66,6 +68,16 @@ def get_reserve_stats() -> dict:
 def _release_threshold_date():
     """Дата, раньше которой УИП считается «устаревшим» (скоро сгорит)."""
     return timezone.now().date() - timedelta(days=BURN_DAYS - RELEASE_BEFORE_BURN_DAYS)
+
+
+def _burn_warn_threshold_date():
+    """Дата резервирования, раньше которой УИП попадает в предупреждение о сгорании."""
+    return timezone.now().date() - timedelta(days=BURN_DAYS - BURN_WARN_DAYS)
+
+
+def _uip_effective_reservation_date(uip: UIP):
+    """Дата резервирования УИП (с запасом на отсутствие даты)."""
+    return uip.reservation_date or uip.created_at.date()
 
 
 def _external_service_url_for_uip(uip: UIP) -> str:
@@ -395,5 +407,88 @@ def check_uip_reserve_and_notify() -> dict:
             f'Резерв УИП в норме: {stats["count"]}/{stats["limit"]} ({percent}%).'
         )
 
+    logger.info(result['message'])
+    return result
+
+
+def check_uip_burn_and_notify() -> dict:
+    """
+    Проверка «сгорания» УИП (раз в сутки).
+
+    УИП в резерве сгорает через BURN_DAYS (30) дней после резервирования.
+    Если до сгорания осталось менее BURN_WARN_DAYS (7) дней — отправляется
+    email-предупреждение со списком таких УИП и оставшимися днями.
+
+    :return: Сводка проверки.
+    """
+    threshold = _burn_warn_threshold_date()
+
+    at_risk = list(
+        UIP.objects.filter(status__in=RESERVED_STATUSES)
+        .filter(
+            Q(reservation_date__lte=threshold)
+            | Q(reservation_date__isnull=True, created_at__date__lte=threshold)
+        )
+        .select_related('product_sku__product')
+        .order_by('reservation_date', 'created_at')
+    )
+
+    today = timezone.now().date()
+    records = []
+    for uip in at_risk:
+        reserve_date = _uip_effective_reservation_date(uip)
+        burn_date = reserve_date + timedelta(days=BURN_DAYS)
+        days_left = (burn_date - today).days
+        records.append({
+            'number': uip.number,
+            'status': uip.get_status_display(),
+            'product': str(uip.product_sku.product) if uip.product_sku_id else '-',
+            'reservation_date': reserve_date,
+            'burn_date': burn_date,
+            'days_left': days_left,
+        })
+
+    result = {
+        'is_error': False,
+        'at_risk_count': len(records),
+        'burn_warn_days': BURN_WARN_DAYS,
+        'message': '',
+    }
+
+    if not records:
+        result['message'] = (
+            f'Сгорание УИП: нет УИП, до сгорания которых осталось '
+            f'менее {BURN_WARN_DAYS} дней.'
+        )
+        logger.info(result['message'])
+        return result
+
+    subject = (
+        f'ВНИМАНИЕ: до сгорания {len(records)} УИП осталось '
+        f'менее {BURN_WARN_DAYS} дней'
+    )
+    body_lines = [
+        f'До сгорания следующих УИП осталось менее {BURN_WARN_DAYS} дней:',
+        f'УИП сгорает через {BURN_DAYS} дней после резервирования.',
+        '',
+        f'Всего УИП под угрозой: {len(records)}',
+        '',
+        '№  УИП  |  Продукт  |  Дата резервирования  |  Дата сгорания  |  Осталось дней',
+    ]
+    body_lines += [
+        f'{i}. {r["number"]} | {r["product"]} | '
+        f'{r["reservation_date"]:%d.%m.%Y} | {r["burn_date"]:%d.%m.%Y} | '
+        f'{r["days_left"]}'
+        for i, r in enumerate(records, start=1)
+    ]
+
+    recipients = getattr(settings, 'UIP_RESERVE_NOTIFICATION_EMAILS', []) or []
+    sent = _notify(subject, '\n'.join(body_lines), recipients)
+
+    result['is_error'] = not sent.get('sent')
+    result['message'] = (
+        f'Сгорание УИП: обнаружено УИП под угрозой: {len(records)}. '
+        f'Письмо отправлено: {sent.get("sent", False)}.'
+    )
     logger.info(result['message'])
     return result

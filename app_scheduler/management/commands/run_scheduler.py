@@ -53,6 +53,10 @@ SCHEDULE = [
     # >50% — предупреждение, >80% — тревога, >90% — снятие устаревших УИП.
     ('check_uip_reserve', 1 * DAY, 'Проверка резерва УИП и уведомления по почте'),
 
+    # Контроль сгорания УИП.
+    # До сгорания осталось менее 7 дней — предупреждение по почте.
+    ('check_uip_burn', 1 * DAY, 'Проверка сгорания УИП и уведомления по почте'),
+
     # Синхронизация Национального каталога раз в час.
     ('sync_national_catalog', 1 * HOUR, 'Синхронизация Национального каталога (1 час)'),
 
@@ -148,6 +152,7 @@ class Command(BaseCommand):
             sync_external_parties_codes_task,
             sync_molvest_reference_task,
             check_uip_reserve_task,
+            check_uip_burn_task,
             sync_national_catalog_task,
             archive_old_codes_task,
         )
@@ -164,6 +169,7 @@ class Command(BaseCommand):
             'sync_external_parties_codes': sync_external_parties_codes_task,
             'sync_molvest_reference': sync_molvest_reference_task,
             'check_uip_reserve': check_uip_reserve_task,
+            'check_uip_burn': check_uip_burn_task,
             'sync_national_catalog': sync_national_catalog_task,
             'archive_old_codes': archive_old_codes_task,
         }

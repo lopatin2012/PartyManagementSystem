@@ -354,6 +354,19 @@ def check_uip_reserve_task() -> dict:
     return check_uip_reserve_and_notify()
 
 
+@task(queue_name='default')
+def check_uip_burn_task() -> dict:
+    """
+    Периодическая проверка «сгорания» УИП (раз в сутки).
+
+    Если до сгорания УИП (30 дней после резервирования) осталось менее 7 дней —
+    отправляется email-предупреждение со списком таких УИП.
+    """
+    from app_cz.services.reserve_monitor import check_uip_burn_and_notify
+
+    return check_uip_burn_and_notify()
+
+
 # ==========================================
 # Национальный каталог.
 # ==========================================
