@@ -41,6 +41,7 @@ SCHEDULE = [
 
     # Очистка данных.
     ('cleanup_old_logs', 1 * DAY, 'Очистка старых логов статусов (700 дней)'),
+    ('cleanup_old_task_results', 1 * DAY, 'Очистка устаревших записей dbtaskresult (полгода)'),
 
     # Синхронизация с внешним сервисом (Молвест.Маркировка).
     # Производственные партии и их коды — раз в час.
@@ -152,6 +153,7 @@ class Command(BaseCommand):
             close_unused_registered_uips_task,
             archive_stale_closed_uips_task,
             cleanup_old_logs_task,
+            cleanup_old_task_results_task,
             sync_external_parties_codes_task,
             sync_molvest_reference_task,
             check_uip_reserve_task,
@@ -170,6 +172,7 @@ class Command(BaseCommand):
             'close_unused_registered': close_unused_registered_uips_task,
             'archive_stale_closed': archive_stale_closed_uips_task,
             'cleanup_old_logs': cleanup_old_logs_task,
+            'cleanup_old_task_results': cleanup_old_task_results_task,
             'sync_external_parties_codes': sync_external_parties_codes_task,
             'sync_molvest_reference': sync_molvest_reference_task,
             'check_uip_reserve': check_uip_reserve_task,

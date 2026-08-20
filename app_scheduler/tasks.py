@@ -279,6 +279,20 @@ def cleanup_old_logs_task() -> dict:
     return {'deleted': deleted_count}
 
 
+@task(queue_name='default')
+def cleanup_old_task_results_task() -> dict:
+    """Очистка записей dbtaskresult, завершённых более полугода назад."""
+    from django_tasks_db.models import DBTaskResult
+
+    threshold = timezone.now() - timedelta(days=182)
+    deleted_count, _ = DBTaskResult.objects.filter(
+        finished_at__lt=threshold,
+    ).delete()
+
+    logger.info(f'Удалено устаревших записей dbtaskresult: {deleted_count}')
+    return {'deleted': deleted_count}
+
+
 # ==========================================
 # Синхронизация с внешним сервисом (Молвест.Маркировка).
 # ==========================================
