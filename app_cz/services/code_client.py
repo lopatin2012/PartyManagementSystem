@@ -41,11 +41,11 @@ def send_application_report(
         }
 
     # 1. Валидация входных данных.
-    # if is_marking_date and not marking_date:
-    #     raise ValueError('Флаг is_marking_date установлен, но marking_date не указана')
-    #
-    # if not exp_date and not exp_date_72:
-    #     raise ValueError('Необходимо указать срок годности (exp_date или exp_date_72)')
+    if is_marking_date and not marking_date:
+        raise ValueError('Флаг is_marking_date установлен, но marking_date не указана')
+
+    if not exp_date and not exp_date_72:
+        raise ValueError('Необходимо указать срок годности (exp_date или exp_date_72)')
 
     # 2. Получение учётных данных.
     try:
@@ -72,12 +72,12 @@ def send_application_report(
             "указан обычный и для скоропортящегося."
         )
 
-    # if (
-    #         marking_date is None
-    #         and exp_date is None
-    #         and exp_date_72 is None
-    # ):
-    #     raise ValueError("Отсутствуют данные о сроках продукта.")
+    if (
+            marking_date is None
+            and exp_date is None
+            and exp_date_72 is None
+    ):
+        raise ValueError("Отсутствуют данные о сроках продукта.")
 
 
     # 3. Формирование чанков (максимум 30 000 кодов на один запрос).
