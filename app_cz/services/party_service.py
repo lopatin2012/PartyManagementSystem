@@ -528,7 +528,7 @@ def sync_parties_from_cz() -> dict:
         return {
             'is_error': True,
             'message': result.get('message_error', 'Ошибка получения данных из ЧЗ'),
-            'created': 0, 'updated': 0, 'desync': 0, 'total': 0,
+            'created': 0, 'updated': 0, 'desync': 0, 'skipped': 0, 'total': 0,
         }
 
     lst_party_info = result.get('lst_party_number_info', [])
@@ -537,7 +537,7 @@ def sync_parties_from_cz() -> dict:
         return {
             'is_error': False,
             'message': 'В ЧЗ нет зарезервированных партий',
-            'created': 0, 'updated': 0, 'desync': 0, 'total': 0,
+            'created': 0, 'updated': 0, 'desync': 0, 'skipped': 0, 'total': 0,
         }
 
     # Статусы, нормальные для УИП, числящегося в резерве ЧЗ.
@@ -549,6 +549,7 @@ def sync_parties_from_cz() -> dict:
     created_count = 0
     updated_count = 0
     desync_count = 0
+    skipped_count = 0
 
     try:
         with transaction.atomic():
@@ -587,15 +588,27 @@ def sync_parties_from_cz() -> dict:
                 )
                 product_sku = None
                 if gtin:
-                    product_sku = ProductSKU.objects.filter(
-                        product__packagings__gtin=gtin,
-                        is_active=True
-                    ).first()
+                    product_sku = find_sku_by_gtin(gtin)
+                    if product_sku is None:
+                        # Резервный поиск по любой упаковке (не только потребительской).
+                        product_sku = ProductSKU.objects.filter(
+                            product__packagings__gtin=gtin,
+                            is_active=True
+                        ).first()
 
                 existing_uip = UIP.objects.filter(number=party_number).first()
 
                 # === УИП НЕ НАЙДЕН — создаём ===
                 if existing_uip is None:
+                    if product_sku is None:
+                        # Создание невозможно: product_sku — обязательное поле (NOT NULL).
+                        skipped_count += 1
+                        logger.warning(
+                            f'УИП {party_number}: не найден активный SKU по GTIN {gtin!r}, '
+                            f'создание пропущено.'
+                        )
+                        continue
+
                     uip = UIP.objects.create(
                         number=party_number,
                         product_sku=product_sku,
@@ -648,6 +661,8 @@ def sync_parties_from_cz() -> dict:
             f'Синхронизация завершена. Создано: {created_count}, '
             f'обновлено: {updated_count}'
         )
+        if skipped_count:
+            message += f', пропущено (не найден SKU): {skipped_count}'
         if desync_count:
             message += f', ⚠ рассинхрон: {desync_count}'
         logger.info(message)
@@ -658,6 +673,7 @@ def sync_parties_from_cz() -> dict:
             'created': created_count,
             'updated': updated_count,
             'desync': desync_count,
+            'skipped': skipped_count,
             'total': len(lst_party_info),
         }
 
@@ -669,6 +685,7 @@ def sync_parties_from_cz() -> dict:
             'created': created_count,
             'updated': updated_count,
             'desync': desync_count,
+            'skipped': skipped_count,
             'total': len(lst_party_info),
         }
 
