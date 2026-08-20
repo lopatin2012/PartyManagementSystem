@@ -57,6 +57,9 @@ SCHEDULE = [
     # До сгорания осталось менее 7 дней — предупреждение по почте.
     ('check_uip_burn', 1 * DAY, 'Проверка сгорания УИП и уведомления по почте'),
 
+    # Регистрация зарезервированных УИП через отчёт о нанесении (раз в сутки).
+    ('register_reserved_uips', 1 * DAY, 'Регистрация зарезервированных УИП через отчёт о нанесении'),
+
     # Синхронизация Национального каталога раз в час.
     ('sync_national_catalog', 1 * HOUR, 'Синхронизация Национального каталога (1 час)'),
 
@@ -153,6 +156,7 @@ class Command(BaseCommand):
             sync_molvest_reference_task,
             check_uip_reserve_task,
             check_uip_burn_task,
+            register_reserved_uips_task,
             sync_national_catalog_task,
             archive_old_codes_task,
         )
@@ -170,6 +174,7 @@ class Command(BaseCommand):
             'sync_molvest_reference': sync_molvest_reference_task,
             'check_uip_reserve': check_uip_reserve_task,
             'check_uip_burn': check_uip_burn_task,
+            'register_reserved_uips': register_reserved_uips_task,
             'sync_national_catalog': sync_national_catalog_task,
             'archive_old_codes': archive_old_codes_task,
         }

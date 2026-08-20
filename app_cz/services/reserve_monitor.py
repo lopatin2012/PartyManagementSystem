@@ -8,11 +8,15 @@
   > 50% — предупреждение, > 80% — тревога, > 90% — тревога + снятие с резерва устаревших УИП.
 - Снятие с резерва устаревших УИП (до сгорания которых осталось немного времени)
   через отчёт о нанесении:
-  * используются коды DataMatrix из заданий УИП, не находящиеся в статусе «нанесён»
+  * сначала запрашивается один код из задания у внешнего сервиса «Молвест.Маркировка»
+    (codes/api/get_any_code_for_task/<uuid>/), если у УИП есть производственная партия;
+  * иначе используются коды DataMatrix из заданий УИП, не находящиеся в статусе «нанесён»
     (по умолчанию это все коды);
+  * если кодов нет вовсе — у внешнего сервиса запрашивается код по GTIN;
   * после успешного отчёта коды помечаются как нанесённые;
-  * если у УИП нет заданий — у внешнего сервиса «Молвест.Маркировка» запрашивается
-    код по GTIN и УИП привязывается к нему в отчёте о нанесении.
+  * отчёт о нанесении требует срок годности — он берётся из производственной партии УИП;
+  * если у УИП нет производственной партии со сроком годности — УИП не регистрируется
+    и пропускается.
 """
 
 import logging
@@ -27,7 +31,7 @@ from django.utils import timezone
 from app_cz.models import CISCode, CISCodesStatusChoices, ProductionCodeStatusChoices
 from app_cz.services.code_client import send_application_report
 from app_factory.models import ProductProductionLocation
-from app_uip.models import UIP, PartyStatusChoices
+from app_uip.models import UIP, ProductionParty, PartyStatusChoices
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +45,9 @@ RELEASE_PERCENT = 90
 BURN_DAYS = 30
 # Снимаем УИП, до сгорания которых осталось не более этого количества дней.
 RELEASE_BEFORE_BURN_DAYS = 5
+# Регистрируем УИП (отправляем отчёт о нанесении), до сгорания которых
+# осталось менее этого количества дней.
+REGISTER_BEFORE_BURN_DAYS = 3
 # Предупреждаем по почте, если до сгорания осталось менее этого количества дней.
 BURN_WARN_DAYS = 7
 # Максимальное количество УИП за один запуск снятия с резерва.
@@ -68,6 +75,11 @@ def get_reserve_stats() -> dict:
 def _release_threshold_date():
     """Дата, раньше которой УИП считается «устаревшим» (скоро сгорит)."""
     return timezone.now().date() - timedelta(days=BURN_DAYS - RELEASE_BEFORE_BURN_DAYS)
+
+
+def _register_threshold_date():
+    """Дата резервирования, раньше которой УИП близок к сгоранию (<3 дней)."""
+    return timezone.now().date() - timedelta(days=BURN_DAYS - REGISTER_BEFORE_BURN_DAYS)
 
 
 def _burn_warn_threshold_date():
@@ -161,65 +173,162 @@ def _fetch_code_by_gtin(uip: UIP) -> str:
     return code or None
 
 
-def _release_uip(uip: UIP) -> dict:
+def _fetch_code_for_task(uip: UIP, task_uuid: str) -> str:
     """
-    Снимает один УИП с резерва через отчёт о нанесении.
+    Запрашивает один код DataMatrix у внешнего сервиса «Молвест.Маркировка»
+    из задания по его uuid:
+        GET {url}/codes/api/get_any_code_for_task/{task_uuid}/
+    Ответ: {'detail': 'Код найден', 'code': '...', 'isError': False}
+           / {'detail': '...', 'isError': True}
+    """
+    if not task_uuid:
+        return None
 
-    Коды для отчёта:
-    1. DataMatrix из заданий УИП, не в статусе «нанесён» (по умолчанию — все);
-    2. если заданий/кодов нет — один код, запрошенный у внешнего сервиса по GTIN.
+    url = _external_service_url_for_uip(uip)
+    if not url:
+        logger.warning(
+            f'УИП {uip.number}: не найден адрес сервера маркировки завода '
+            f'для запроса кода из задания {task_uuid}.'
+        )
+        return None
+
+    api_url = f"{url.rstrip('/')}/codes/api/get_any_code_for_task/{task_uuid}/"
+    try:
+        logger.info(f'Запрос кода из задания {task_uuid} у внешнего сервиса ({url})')
+        response = requests.get(
+            api_url,
+            headers={'Accept': 'application/json'},
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except (requests.exceptions.RequestException, ValueError) as e:
+        logger.error(f'УИП {uip.number}: ошибка запроса кода из задания {task_uuid}: {e}')
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    # Внешний сервис помечает возвращённый код как «нанесён» (status_application=True).
+    if data.get('isError') or data.get('is_error'):
+        return None
+
+    code = data.get('code')
+    if isinstance(code, dict):
+        code = code.get('code')
+    code = str(code).strip() if code else ''
+    return code or None
+
+
+def _get_expiration_date(uip: UIP):
+    """
+    Дата срока годности из производственной партии УИП (для отчёта о нанесении).
+
+    Берётся из самой свежей производственной партии УИП, у которой указан срок
+    годности. Если такой партии нет — возвращается None (УИП не регистрируем).
+    """
+    party = (
+        ProductionParty.objects
+        .filter(uip=uip, expiration_datetime__isnull=False)
+        .order_by('-production_datetime_start', '-created_at')
+        .first()
+    )
+    if not party or not party.expiration_datetime:
+        return None
+    return party.expiration_datetime.date().isoformat()
+
+
+def register_uip(uip: UIP, source: str = 'auto', note: str = None) -> dict:
+    """
+    Регистрирует УИП через отчёт о нанесении (УИП → REGISTERED).
+
+    Отчёт о нанесении требует срок годности — он берётся из производственной
+    партии УИП. Если у УИП нет производственной партии со сроком годности,
+    УИП НЕ регистрируется (пропускается).
+
+    Код для отчёта:
+    1. один код из задания внешнего сервиса (get_any_code_for_task);
+    2. если задания/кода нет — DataMatrix из заданий УИП, не в статусе «нанесён»;
+    3. если кодов нет вовсе — код по GTIN у внешнего сервиса.
 
     После успешного отчёта локальные коды помечаются как нанесённые,
     УИП переводится в статус REGISTERED.
     """
-    # 1. Коды DataMatrix из заданий УИП (не нанесённые).
-    codes = list(
-        CISCode.objects.filter(
-            production_party__uip=uip,
-        )
-        .exclude(production_status=ProductionCodeStatusChoices.APPLIED)
-        .values_list('code', flat=True)[:1000]
-    )
+    # 1. Срок годности из производственной партии.
+    exp_date = _get_expiration_date(uip)
+    if exp_date is None:
+        return {
+            'registered': False,
+            'number': uip.number,
+            'reason': 'Нет производственной партии со сроком годности — УИП не регистрируется',
+        }
 
+    # 2. Коды для отчёта.
+    codes = []
+
+    # 2a. Пробуем получить один код из задания внешнего сервиса.
     external_code = None
+    party = (
+        ProductionParty.objects
+        .filter(uip=uip, external_number_task__isnull=False)
+        .exclude(external_number_task='')
+        .order_by('-production_datetime_start', '-created_at')
+        .first()
+    )
+    if party and party.external_number_task:
+        external_code = _fetch_code_for_task(uip, party.external_number_task)
+
+    if external_code:
+        codes = [external_code]
+    else:
+        # 2b. Коды DataMatrix из локальных заданий УИП (не нанесённые).
+        codes = list(
+            CISCode.objects.filter(
+                production_party__uip=uip,
+            )
+            .exclude(production_status=ProductionCodeStatusChoices.APPLIED)
+            .values_list('code', flat=True)[:1000]
+        )
+
+    # 2c. Если кодов нет вовсе — код по GTIN.
     if not codes:
-        # Нет заданий — запрашиваем код у внешнего сервиса по GTIN.
         external_code = _fetch_code_by_gtin(uip)
         if external_code:
             codes = [external_code]
 
     if not codes:
         return {
-            'released': False,
+            'registered': False,
             'number': uip.number,
             'reason': (
                 'Нет кодов для отчёта о нанесении '
-                '(нет заданий и не получен код по GTIN)'
+                '(нет задания и не получен код по GTIN)'
             ),
         }
 
-    # 2. Отправка отчёта о нанесении.
+    # 3. Отправка отчёта о нанесении.
     try:
         result = send_application_report(
             sntins=codes,
             batch_number=uip.number,
+            exp_date=exp_date,
         )
     except Exception as e:
         logger.exception(f'УИП {uip.number}: ошибка отправки отчёта о нанесении')
         return {
-            'released': False,
+            'registered': False,
             'number': uip.number,
             'reason': f'Ошибка отправки отчёта: {str(e)}',
         }
 
     if result.get('has_error'):
         return {
-            'released': False,
+            'registered': False,
             'number': uip.number,
             'reason': result.get('message', 'Ошибка отчёта о нанесении'),
         }
 
-    # 3. Успех: помечаем локальные коды как нанесённые, статус УИП → REGISTERED.
+    # 4. Успех: помечаем локальные коды как нанесённые, статус УИП → REGISTERED.
     with transaction.atomic():
         CISCode.objects.filter(
             production_party__uip=uip,
@@ -232,16 +341,99 @@ def _release_uip(uip: UIP) -> dict:
         )
         uip.change_status(
             PartyStatusChoices.REGISTERED,
-            source='auto',
-            note='Снят с резерва автоматически (переполнение резерва УИП)',
+            source=source,
+            note=note or 'УИП зарегистрирован (отчёт о нанесении отправлен)',
         )
 
     return {
-        'released': True,
+        'registered': True,
         'number': uip.number,
         'codes_count': len(codes),
         'external_code': bool(external_code),
     }
+
+
+def _release_uip(uip: UIP) -> dict:
+    """
+    Снимает один УИП с резерва через отчёт о нанесении (регистрация УИП).
+
+    Требует срок годности из производственной партии УИП. Если у УИП нет
+    производственной партии со сроком годности — УИП не регистрируется
+    (пропускается).
+
+    Коды для отчёта:
+    1. один код из задания внешнего сервиса (get_any_code_for_task);
+    2. иначе DataMatrix из заданий УИП, не в статусе «нанесён»;
+    3. иначе код по GTIN у внешнего сервиса.
+
+    После успешного отчёта локальные коды помечаются как нанесённые,
+    УИП переводится в статус REGISTERED.
+    """
+    res = register_uip(
+        uip,
+        source='auto',
+        note='Снят с резерва автоматически (переполнение резерва УИП)',
+    )
+
+    return {
+        'released': res['registered'],
+        'number': res['number'],
+        'reason': res.get('reason', ''),
+        'codes_count': res.get('codes_count', 0),
+        'external_code': res.get('external_code', False)
+    }
+
+
+def register_eligible_reserved_uips(max_uips: int = RELEASE_BATCH_SIZE) -> dict:
+    """
+    Регистрирует зарезервированные УИП, близкие к сгоранию (до сгорания осталось
+    менее REGISTER_BEFORE_BURN_DAYS дней), у которых есть производственная партия
+    со сроком годности (т.е. есть всё необходимое для отчёта о нанесении).
+
+    Отчёт о нанесении отправляется только когда УИП близок к сгоранию.
+    УИП без производственной партии со сроком годности пропускаются.
+
+    :param max_uips: Максимальное количество УИП за один запуск.
+    :return: Сводка по регистрации.
+    """
+    threshold = _register_threshold_date()
+
+    uips = (
+        UIP.objects.filter(status__in=RESERVED_STATUSES)
+        .filter(
+            Q(reservation_date__lte=threshold)
+            | Q(reservation_date__isnull=True, created_at__date__lte=threshold)
+        )
+        .filter(production_parties__expiration_datetime__isnull=False)
+        .distinct()
+        .order_by('reservation_date', 'created_at')[:max_uips]
+    )
+
+    summary = {
+        'registered': 0,
+        'failed': 0,
+        'skipped': 0,
+        'total': 0,
+        'registered_uips': [],
+        'errors': [],
+    }
+
+    for uip in uips:
+        summary['total'] += 1
+        res = register_uip(uip, source='service', note='УИП зарегистрирован (отчёт о нанесении)')
+        if res['registered']:
+            summary['registered'] += 1
+            summary['registered_uips'].append(res['number'])
+        else:
+            summary['failed'] += 1
+            summary['errors'].append(f"{res['number']}: {res.get('reason', 'ошибка')}")
+
+    summary['message'] = (
+        f'Зарегистрировано УИП: {summary["registered"]}, '
+        f'не удалось: {summary["failed"]} (из {summary["total"]})'
+    )
+    logger.info(summary['message'])
+    return summary
 
 
 def release_obsolete_reserved_uips(max_uips: int = RELEASE_BATCH_SIZE) -> dict:
