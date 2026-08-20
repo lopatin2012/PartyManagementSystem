@@ -30,12 +30,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // 2. Модальное окно.
 function openSuzModal() {
-    document.getElementById('suzModal').style.display = 'flex';
+    document.getElementById('suzModal').classList.remove('hidden');
     loadCertificates();
 }
 
 function closeSuzModal() {
-    document.getElementById('suzModal').style.display = 'none';
+    document.getElementById('suzModal').classList.add('hidden');
 }
 
 // 3. Загрузка сертификатов с детальной отладкой

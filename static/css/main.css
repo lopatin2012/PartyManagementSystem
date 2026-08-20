@@ -8,6 +8,13 @@
     --input-border: rgba(255, 255, 255, 0.2);
 }
 
+/* ==========================================
+   Утилиты
+   ========================================== */
+.hidden { display: none !important; }
+.text-xs { font-size: 0.75rem; }
+.text-sm { font-size: 0.8rem; }
+
 * {
     box-sizing: border-box;
     margin: 0;

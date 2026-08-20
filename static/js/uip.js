@@ -19,7 +19,7 @@ async function syncParties() {
     `;
 
     // Скрываем предыдущий статус
-    statusDiv.style.display = 'none';
+    statusDiv.classList.add('hidden');
 
     try {
         const response = await fetch(syncUrl, {
@@ -33,8 +33,8 @@ async function syncParties() {
         const result = await response.json();
 
         // Показываем результат
-        statusDiv.style.display = 'block';
         statusDiv.className = 'sync-status ' + (result.is_error ? 'error' : 'success');
+        statusDiv.classList.remove('hidden');
 
         if (result.is_error) {
             statusDiv.textContent =  result.message;
@@ -50,8 +50,8 @@ async function syncParties() {
         }
 
     } catch (error) {
-        statusDiv.style.display = 'block';
         statusDiv.className = 'sync-status error';
+        statusDiv.classList.remove('hidden');
         statusDiv.textContent = 'Ошибка соединения с сервером';
         console.error('Sync error:', error);
     } finally {
@@ -366,8 +366,8 @@ function updatePreview() {
 }
 
 function openGenerateModal() {
-    document.getElementById('generateModal').style.display = 'flex';
-    document.getElementById('generateStatus').style.display = 'none';
+    document.getElementById('generateModal').classList.remove('hidden');
+    document.getElementById('generateStatus').classList.add('hidden');
 
     // Сброс поиска при открытии (выбор продукта сохраняется через selectedSkuId).
     const searchInput = document.getElementById('productSearch');
@@ -380,7 +380,7 @@ function openGenerateModal() {
 }
 
 function closeGenerateModal() {
-    document.getElementById('generateModal').style.display = 'none';
+    document.getElementById('generateModal').classList.add('hidden');
 }
 
 function updateGenerateButtonState() {
@@ -433,7 +433,7 @@ async function submitGenerate() {
 
     btn.disabled = true;
     btn.textContent = 'Генерация...';
-    statusDiv.style.display = 'none';
+    statusDiv.classList.add('hidden');
 
     try {
         const response = await fetch(btn.dataset.url, {
@@ -467,8 +467,8 @@ async function submitGenerate() {
 
 function showGenerateStatus(message, isError) {
     const statusDiv = document.getElementById('generateStatus');
-    statusDiv.style.display = 'block';
     statusDiv.className = 'sync-status ' + (isError ? 'error' : 'success');
+    statusDiv.classList.remove('hidden');
     statusDiv.textContent = message;
 }
 
@@ -577,7 +577,7 @@ function showError(btn, cell, message) {
 /** Закрыть все открытые панели фильтров. */
 function closeAllFilterPanels() {
     document.querySelectorAll('.th-filter').forEach(p => {
-        p.style.display = 'none';
+        p.classList.add('hidden');
         const parentTh = p.closest('th');
         if (parentTh) parentTh.classList.remove('open');
     });
@@ -589,13 +589,13 @@ function toggleFilter(col) {
     if (!panel) return;
 
     const th = panel.closest('th');
-    const isVisible = panel.style.display !== 'none';
+    const isVisible = !panel.classList.contains('hidden');
 
     closeAllFilterPanels();
 
     if (!isVisible) {
-        // Убираем inline-скрытие — задаём block/flex.
-        panel.style.display = '';
+        // Убираем скрытие — панель отображается поверх таблицы.
+        panel.classList.remove('hidden');
         if (th) th.classList.add('open');
         const firstInput = panel.querySelector('input, select');
         if (firstInput) firstInput.focus();

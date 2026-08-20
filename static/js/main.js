@@ -75,12 +75,12 @@ function formatTimeLeft(ms) {
 }
 
 function openSchedulerModal() {
-    document.getElementById('schedulerModal').style.display = 'flex';
+    document.getElementById('schedulerModal').classList.remove('hidden');
     renderSchedulerModal();
 }
 
 function closeSchedulerModal() {
-    document.getElementById('schedulerModal').style.display = 'none';
+    document.getElementById('schedulerModal').classList.add('hidden');
 }
 
 function setSchedulerFilter(filter) {

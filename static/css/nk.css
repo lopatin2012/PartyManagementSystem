@@ -1,0 +1,93 @@
+/* ==========================================
+   Страница «Национальный каталог»
+   ========================================== */
+
+.nk-page { padding: 1.5rem 3rem; }
+.nk-header { margin-bottom: 1.5rem; }
+.nk-header h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+.nk-header .subtitle { color: rgba(255,255,255,0.7); font-size: 0.9rem; }
+
+.nk-controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; margin: 1rem 0; }
+.nk-controls .form-group { display: flex; flex-direction: column; gap: 0.25rem; }
+.nk-controls label { font-size: 0.75rem; color: rgba(255,255,255,0.6); }
+.nk-controls .form-input { padding: 0.4rem 0.6rem; border-radius: 4px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--text-main); font-size: 0.85rem; }
+
+.btn-sync-nk {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.5rem 1rem; border-radius: 4px; border: none;
+    background: var(--accent-green); color: var(--bg-dark);
+    font-weight: 600; cursor: pointer; font-size: 0.85rem;
+}
+.btn-sync-nk:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-sync-nk:hover:not(:disabled) { filter: brightness(1.1); }
+
+/* Нейтральные варианты кнопок (вместо inline-стилей) */
+.btn-apply-nk { background: rgba(255,255,255,0.15); color: var(--text-main); }
+.btn-reset-nk { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); }
+
+.progress-card { display: none; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+.progress-bar-track { height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; margin-top: 0.5rem; overflow: hidden; }
+.progress-bar-fill { height: 100%; background: var(--accent-green); border-radius: 3px; transition: width 0.3s; width: 0%; }
+.progress-info { display: flex; justify-content: space-between; font-size: 0.8rem; color: rgba(255,255,255,0.7); }
+.sync-counts { margin-top: 0.4rem; font-size: 0.75rem; color: rgba(255,255,255,0.6); }
+
+.nk-table-container { overflow-x: auto; margin-top: 1rem; }
+.nk-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.nk-table th { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 2px solid rgba(255,255,255,0.15); color: rgba(255,255,255,0.8); font-weight: 600; white-space: nowrap; }
+.nk-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.07); }
+.nk-table tr:hover { background: rgba(255,255,255,0.03); }
+
+.badge-sm { display: inline-block; padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
+.badge-success { background: rgba(187,207,50,0.2); color: var(--accent-green); }
+.badge-danger { background: rgba(220,53,69,0.2); color: #dc3545; }
+.badge-muted { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); }
+.badge-info { background: rgba(61,82,161,0.3); color: #8fa4d8; }
+
+.text-muted { color: rgba(255,255,255,0.5); }
+.font-mono { font-family: 'Consolas', 'Courier New', monospace; }
+
+/* Пагинация */
+.pagination-wrapper { display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; padding: 0.5rem 0; }
+.pagination { display: flex; gap: 0.25rem; }
+.page-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 2rem; height: 2rem; padding: 0 0.4rem;
+    border-radius: 4px; border: 1px solid rgba(255,255,255,0.15);
+    background: transparent; color: var(--text-main);
+    text-decoration: none; font-size: 0.8rem; cursor: pointer;
+}
+.page-btn:hover:not(.page-btn-active):not(.page-btn-disabled) { background: rgba(255,255,255,0.1); }
+.page-btn-active { background: var(--accent-green); color: var(--bg-dark); border-color: var(--accent-green); font-weight: 700; }
+.page-btn-disabled { opacity: 0.3; cursor: default; }
+.page-ellipsis { display: inline-flex; align-items: center; min-width: 1.5rem; justify-content: center; color: rgba(255,255,255,0.4); }
+
+/* Лог */
+.nk-log-section { margin-top: 1.5rem; }
+.nk-log-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; }
+.nk-log { background: rgba(0,0,0,0.2); border-radius: 6px; padding: 0.75rem; max-height: 200px; overflow-y: auto; font-size: 0.8rem; margin-top: 1rem; }
+.log-entry { padding: 0.2rem 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.log-time { color: rgba(255,255,255,0.4); margin-right: 0.5rem; }
+.log-info { color: rgba(255,255,255,0.7); }
+.log-success { color: var(--accent-green); }
+.log-error { color: #dc3545; }
+
+.btn-sm {
+    padding: 0.25rem 0.6rem;
+    font-size: 0.75rem;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 4px;
+    cursor: pointer;
+    background: rgba(255,255,255,0.05);
+    color: rgba(255,255,255,0.8);
+    transition: all 0.2s;
+}
+.btn-create { border-color: var(--accent-green); color: var(--accent-green); }
+.btn-create:hover { background: rgba(0,255,136,0.1); }
+.btn-create:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.empty-state { text-align: center; padding: 3rem; color: rgba(255,255,255,0.5); }
+
+.nk-section { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; }
+.nk-section-title { font-size: 0.8rem; font-weight: 700; color: rgba(255,255,255,0.55); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+.nk-section .nk-controls { margin: 0; }
+.nk-section .btn-sync-nk { align-self: flex-end; }

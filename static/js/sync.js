@@ -2,8 +2,8 @@
 // Управление страницей «Синхронизация заданий».
 
 function showSyncStatus(container, message, isError) {
-    container.style.display = 'block';
     container.className = 'sync-status ' + (isError ? 'sync-error' : 'sync-ok');
+    container.classList.remove('hidden');
     container.textContent = message;
 }
 

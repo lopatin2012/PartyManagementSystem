@@ -37,14 +37,14 @@
                 Сгенерировать УИП
             </button>
 
-            <div id="syncStatus" class="sync-status" style="display: none;"></div>
+            <div id="syncStatus" class="sync-status hidden"></div>
         </div>
 
         <!-- Данные продуктов для JS -->
         {{ available_products|json_script:"available-products-data" }}
 
         <!-- МОДАЛЬНОЕ ОКНО ГЕНЕРАЦИИ -->
-        <div id="generateModal" class="modal-overlay" style="display: none;">
+        <div id="generateModal" class="modal-overlay hidden">
             <div class="modal-content generate-modal">
                 <div class="modal-header">
                     <h3>Генерация УИП</h3>
@@ -122,7 +122,7 @@
                 </div>
 
                 <div class="modal-footer">
-                    <div id="generateStatus" class="sync-status" style="display: none;"></div>
+                    <div id="generateStatus" class="sync-status hidden"></div>
                     <button class="btn-secondary" onclick="closeGenerateModal()">Отмена</button>
                     <button id="generateSubmitBtn" class="btn-sync"
                             data-url="{% url 'uip_generate' %}"
@@ -164,7 +164,7 @@
                                 Номер УИП
                                 <span class="filter-caret {% if current_number %}active{% endif %}">▾</span>
                             </div>
-                            <div class="th-filter" id="thf-number" {% if not current_number %}style="display:none;"{% endif %}>
+                            <div class="th-filter {% if not current_number %}hidden{% endif %}" id="thf-number">
                                 <input type="text" name="number" value="{{ current_number }}"
                                        placeholder="Поиск по номеру"
                                        onkeypress="if(event.key==='Enter') applyFilters()">
@@ -177,7 +177,7 @@
                                 Статус
                                 <span class="filter-caret {% if current_status %}active{% endif %}">▾</span>
                             </div>
-                            <div class="th-filter" id="thf-status" {% if not current_status %}style="display:none;"{% endif %}>
+                            <div class="th-filter {% if not current_status %}hidden{% endif %}" id="thf-status">
                                 <select name="status" onchange="applyFilters()">
                                     <option value="">Все статусы</option>
                                     {% for value, label in status_choices %}
@@ -198,7 +198,7 @@
                                 Артикул
                                 <span class="filter-caret {% if current_article %}active{% endif %}">▾</span>
                             </div>
-                            <div class="th-filter" id="thf-article" {% if not current_article %}style="display:none;"{% endif %}>
+                            <div class="th-filter {% if not current_article %}hidden{% endif %}" id="thf-article">
                                 <input type="text" name="article" value="{{ current_article }}"
                                        placeholder="Поиск по артикулу"
                                        onkeypress="if(event.key==='Enter') applyFilters()">
@@ -211,8 +211,7 @@
                                 Дата производства
                                 <span class="filter-caret {% if current_prod_from or current_prod_to %}active{% endif %}">▾</span>
                             </div>
-                            <div class="th-filter th-filter-date" id="thf-prod"
-                                 {% if not current_prod_from and not current_prod_to %}style="display:none;"{% endif %}>
+                            <div class="th-filter th-filter-date {% if not current_prod_from and not current_prod_to %}hidden{% endif %}" id="thf-prod">
                                 <input type="date" name="prod_from" value="{{ current_prod_from }}" onchange="applyFilters()">
                                 <span class="date-sep">—</span>
                                 <input type="date" name="prod_to" value="{{ current_prod_to }}" onchange="applyFilters()">
@@ -225,8 +224,7 @@
                                 Дата резервирования
                                 <span class="filter-caret {% if current_res_from or current_res_to %}active{% endif %}">▾</span>
                             </div>
-                            <div class="th-filter th-filter-date" id="thf-res"
-                                 {% if not current_res_from and not current_res_to %}style="display:none;"{% endif %}>
+                            <div class="th-filter th-filter-date {% if not current_res_from and not current_res_to %}hidden{% endif %}" id="thf-res">
                                 <input type="date" name="res_from" value="{{ current_res_from }}" onchange="applyFilters()">
                                 <span class="date-sep">—</span>
                                 <input type="date" name="res_to" value="{{ current_res_to }}" onchange="applyFilters()">
