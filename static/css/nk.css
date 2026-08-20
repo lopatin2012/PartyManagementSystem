@@ -2,9 +2,9 @@
    Страница «Национальный каталог»
    ========================================== */
 
-.nk-page { padding: 1.5rem 3rem; }
+.nk-page { }
 .nk-header { margin-bottom: 1.5rem; }
-.nk-header h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+.nk-header h1 { margin-bottom: 0.25rem; }
 .nk-header .subtitle { color: rgba(255,255,255,0.7); font-size: 0.9rem; }
 
 .nk-controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; margin: 1rem 0; }
@@ -62,7 +62,7 @@
 .page-ellipsis { display: inline-flex; align-items: center; min-width: 1.5rem; justify-content: center; color: rgba(255,255,255,0.4); }
 
 /* Лог */
-.nk-log-section { margin-top: 1.5rem; }
+.nk-log-section { }
 .nk-log-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; }
 .nk-log { background: rgba(0,0,0,0.2); border-radius: 6px; padding: 0.75rem; max-height: 200px; overflow-y: auto; font-size: 0.8rem; margin-top: 1rem; }
 .log-entry { padding: 0.2rem 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
