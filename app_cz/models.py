@@ -238,7 +238,7 @@ class CISCodeArchive(models.Model):
 
     class Meta:
         verbose_name = 'Код маркировки (архив)'
-        verbose_name_plural = '1. Коды маркировки (архив)'
+        verbose_name_plural = '2. Коды маркировки (архив)'
         ordering = ('-created_at',)
         indexes = [
             models.Index(fields=['production_party_id', '-created_at']),
@@ -329,7 +329,7 @@ class SUZAccount(models.Model):
 
     class Meta:
         verbose_name = "Учётная запись СУЗ"
-        verbose_name_plural = "2. Учётные записи СУЗ"
+        verbose_name_plural = "3. Учётные записи СУЗ"
         ordering = ["-is_active", "-updated_at"]
 
         constraints = [

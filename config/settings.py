@@ -88,6 +88,7 @@ INSTALLED_APPS = [
     'app_page.apps.AppPageConfig',
     'app_scheduler.apps.AppSchedulerConfig',
     'app_event.apps.AppEventConfig',
+    'config.apps.ConfigConfig',
 
 ]
 

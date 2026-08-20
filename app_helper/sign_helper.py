@@ -1,210 +1,126 @@
 # app_helper/sign_helper.py
 
 import logging
-from datetime import datetime
-import base64
 import json
 
-from app_cz.enums import Signature
+import requests
+from django.core.exceptions import ObjectDoesNotExist
+
 from app_cz.models import SUZAccount
+from config.models import ExternalService, TypeServiceChoices
 
 logger = logging.getLogger(__name__)
 
-# Импорт библиотек для работы с ЭЦП
-try:
-    import pythoncom
-    import win32com.client
-except ImportError as e:
-    logger.error(f"Не удалось импортировать библиотеки для работы с ЭЦП: {e}")
+# Таймаут запросов к сервису подписей, сек.
+SIGN_TIMEOUT = 30
 
 
-def _parse_certificate_string(cert_string):
-    # Разделяем строку по запятым.
-    parts = cert_string.split(',')
+def _get_signature_service_url() -> str:
+    """Возвращает базовый URL внешнего сервиса подписей из таблицы ExternalService."""
+    try:
+        service = ExternalService.objects.get(
+            service_type=TypeServiceChoices.SIGNATURE,
+            is_active=True,
+        )
+    except ObjectDoesNotExist:
+        raise RuntimeError(
+            'Внешний сервис подписей не настроен в админке '
+            '(раздел "Внешние сервисы", тип "Сервис подписей").'
+        )
 
-    # Создаем пустой словарь
-    result = {}
+    return f'http://{service.ip_address}:{service.port_address}'
 
-    for part in parts:
-        # Разделяем каждую часть по знаку '='.
-        if '=' in part:
-            key, value = part.split('=', 1)  # Разделяем только по первому '='.
-            result[key.strip()] = value.strip().strip('"')  # Убираем лишние пробелы и кавычки.
 
-    return result
+def _get_active_serial_number() -> str:
+    """Возвращает серийный номер активной учётной записи СУЗ."""
+    try:
+        account = SUZAccount.objects.get(is_active=True)
+    except SUZAccount.DoesNotExist:
+        raise ValueError('Активная учётная запись СУЗ не найдена')
+
+    return account.serial_number
+
+
+def _post_sign(endpoint: str, data: str, serial_number: str) -> str:
+    """Отправляет данные на подпись во внешний сервис и возвращает подпись."""
+    base_url = _get_signature_service_url()
+    payload = {
+        'data': data,
+        'serial_number': serial_number,
+    }
+
+    try:
+        response = requests.post(
+            f'{base_url}{endpoint}',
+            json=payload,
+            timeout=SIGN_TIMEOUT,
+        )
+    except requests.exceptions.RequestException as e:
+        logger.error(f'Сетевая ошибка при обращении к сервису подписей ({base_url}{endpoint}): {e}')
+        raise RuntimeError('Не удалось соединиться с внешним сервисом подписей.')
+
+    if response.status_code == 404:
+        detail = response.json().get('detail', 'Сертификат не найден')
+        raise ValueError(detail)
+
+    if response.status_code != 200:
+        logger.error(
+            f'Ошибка сервиса подписей ({base_url}{endpoint}): '
+            f'{response.status_code} - {response.text}'
+        )
+        raise RuntimeError(f'Ошибка внешнего сервиса подписей: {response.status_code}')
+
+    result = response.json()
+    signed_data = result.get('signed_data')
+    if not signed_data:
+        raise RuntimeError('Внешний сервис подписей не вернул подпись.')
+
+    return signed_data
 
 
 def get_list_certificates() -> list:
-    """Получает список валидных сертификатов из хранилища Windows."""
-
-    list_certificates = []
-    pythoncom.CoInitialize()
+    """Получает список валидных сертификатов из внешнего сервиса подписей."""
+    base_url = _get_signature_service_url()
 
     try:
-        oStore = win32com.client.Dispatch("CAdESCOM.Store")
-
-        # 2 = CAPICOM_CURRENT_USER_STORE, "My" = CAPICOM_MY_STORE, 0 = CAPICOM_STORE_OPEN_MAXIMUM_ALLOWED
-        oStore.Open(
-            Signature.CAPICOM_CURRENT_USER_STORE.value,
-            Signature.CAPICOM_MY_STORE.value,
-            Signature.CAPICOM_STORE_OPEN_MAXIMUM_ALLOWED.value,
-        )
-
-        for val in oStore.Certificates:
-            str_serial_number = val.SerialNumber
-            # Парсинг FIO (CN=...)
-            subject_parts = val.SubjectName.split(', ')
-            fio = subject_parts[0][3:] if subject_parts[0].startswith("CN=") else val.SubjectName
-            # Парсинг ИНН (ИНН=...)
-            lst_inn = [i[4:] for i in subject_parts if i.startswith("ИНН=")]
-            inn = lst_inn[0] if lst_inn else '000000000000'
-
-            str_valid_from = val.ValidFromDate.strftime("%d-%m-%Y")
-            str_valid_for = val.ValidToDate.strftime("%d-%m-%Y")
-
-            # Расчет оставшихся дней.
-            valid_days = (datetime.strptime(str_valid_for, "%d-%m-%Y") - datetime.now()).days
-
-            if valid_days >= 1 and val.IsValid():
-                list_certificates.append({
-                    'serial_number': str_serial_number,
-                    'fio': fio,
-                    'inn': inn,
-                    'valid_from': str_valid_from.strftime("%d-%m-%Y") if hasattr(str_valid_from, 'strftime') else str(
-                        str_valid_from),
-                    'valid_for': str_valid_for.strftime("%d-%m-%Y") if hasattr(str_valid_for, 'strftime') else str(
-                        str_valid_for),
-                    'valid_days': valid_days
-                })
-
-        logger.info(f"Успешно найдено {len(list_certificates)} валидных сертификатов.")
-        return list_certificates
-
-    except Exception as e:
-        # ВАЖНО: Логируем ошибку вместо молчаливого возврата []
-        logger.error(f"Ошибка при чтении хранилища сертификатов: {e}", exc_info=True)
+        response = requests.get(f'{base_url}/api/certificates/', timeout=SIGN_TIMEOUT)
+    except requests.exceptions.RequestException as e:
+        logger.error(f'Сетевая ошибка при обращении к сервису подписей ({base_url}/api/certificates/): {e}')
         return []
 
-    finally:
-        if 'oStore' in locals() and oStore:
-            try:
-                oStore.Close()
-            except:
-                pass
-        pythoncom.CoUninitialize()
+    if response.status_code != 200:
+        logger.error(f'Ошибка сервиса подписей: {response.status_code} - {response.text}')
+        return []
+
+    data = response.json()
+    certificates = data.get('certificates', [])
+    logger.info(f"Успешно найдено {len(certificates)} валидных сертификатов.")
+    return certificates
+
 
 def attached_signed_data(row_data: str) -> tuple[str, str]:
     """
-    Создать прикреплённую подпись для данных.
-    :param row_data:
-    :return:
+    Создаёт прикреплённую подпись через внешний сервис подписей.
+    :param row_data: Данные для подписи.
+    :return: (row_data, signed_data)
     """
+    serial_number = _get_active_serial_number()
+    signed_data = _post_sign('/api/sign/attached/', row_data, serial_number)
+    return row_data, signed_data
 
-    # Инициализация COM-библиотеки
-    pythoncom.CoInitialize()
 
-    try:
-        obj_account_suz = SUZAccount.objects.get(is_active=True)
-        # Ищем сертификат в хранилище
-        oCert = None
-        oStore = win32com.client.Dispatch("CAdESCOM.Store")
-        oStore.Open(
-            Signature.CAPICOM_CURRENT_USER_STORE.value,
-            Signature.CAPICOM_MY_STORE.value,
-            Signature.CAPICOM_STORE_OPEN_MAXIMUM_ALLOWED.value,
-        )
-        for val in oStore.Certificates:
-            if val.SerialNumber == obj_account_suz.serial_number.upper():
-                oCert = val
-        oStore.Close()
-        oSigner = win32com.client.Dispatch("CAdESCOM.CPSigner")
-        if not oCert:
-            raise ValueError('Необходимая подпись для работы отсутствует')
-
-        oSigner.Certificate = oCert
-        oSigningTimeAttr = win32com.client.Dispatch("CAdESCOM.CPAttribute")
-        oSigningTimeAttr.Name = 0
-        oSigningTimeAttr.Value = datetime.now()
-        oSigner.AuthenticatedAttributes2.Add(oSigningTimeAttr)
-        oSignedData = win32com.client.Dispatch("CAdESCOM.CadesSignedData")
-        oSignedData.ContentEncoding = 1
-        oSignedData.Content = base64.b64encode(row_data.encode('utf-8')).decode('ascii')
-        sSignedData = oSignedData.SignCades(
-            oSigner, Signature.CADES_BES.value,
-            False, Signature.CAPICOM_ENCODE_BASE64.value
-        )
-        # Удаляем из подписи символы переноса строки, иначе не вставить в заголовок запроса.
-        sSignedData = sSignedData.replace('\r', '')
-        sSignedData = sSignedData.replace('\n', '')
-
-        return row_data, sSignedData
-
-    except Exception as e:
-        logger.error(f"Ошибка при создании прикреплённой подписи: {e}")
-        raise
-
-    finally:
-        pythoncom.CoUninitialize()
-
-def unpinned_signed_data(row_data: str) -> tuple[str, str]:
+def unpinned_signed_data(row_data) -> tuple[str, str]:
     """
-    Подписываем данные откреплённой подписью.
-    Возвращает подписанные данные и откреплённую подпись.
-    :param row_data:
-    :return:
+    Создаёт откреплённую подпись через внешний сервис подписей.
+    :param row_data: Данные для подписи (строка или dict/list).
+    :return: (row_data, signed_data)
     """
-    # Инициализация COM-библиотеки
-    pythoncom.CoInitialize()
+    # Канонизация данных в строку (без пробелов) для корректной подписи.
+    if isinstance(row_data, (dict, list)):
+        message = json.dumps(row_data, separators=(',', ':'), ensure_ascii=False)
+    else:
+        message = str(row_data)
 
-    try:
-
-        obj_account_suz = SUZAccount.objects.get(is_active=True)
-        # Ищем сертификат в хранилище
-        oCert = None
-        oStore = win32com.client.Dispatch("CAdESCOM.Store")
-        oStore.Open(
-            Signature.CAPICOM_CURRENT_USER_STORE.value,
-            Signature.CAPICOM_MY_STORE.value,
-            Signature.CAPICOM_STORE_OPEN_MAXIMUM_ALLOWED.value,
-        )
-        for val in oStore.Certificates:
-            if val.SerialNumber.upper() == obj_account_suz.serial_number.upper():
-                oCert = val
-        oStore.Close()
-        if not oCert:
-            raise ValueError('Необходимая подпись для работы отсутствует')
-
-        oSigner = win32com.client.Dispatch("CAdESCOM.CPSigner", pythoncom.CoInitialize())
-        oSigner.Certificate = oCert
-
-        # Строка JSON БЕЗ ПРОБЕЛОВ
-        if isinstance(row_data, (dict, list)):
-            message = json.dumps(row_data, separators=(',', ':'), ensure_ascii=False)
-        else:
-            # Fallback, если передана уже строка
-            message = str(row_data).replace(' ', '\u0020')
-
-        message_bytes = message.encode()
-        base64_bytes = base64.b64encode(message_bytes)
-        base64_message = base64_bytes.decode()
-
-        signedData = win32com.client.Dispatch("CAdESCOM.CadesSignedData", pythoncom.CoInitialize())
-        signedData.ContentEncoding = 1
-        signedData.Content = base64_message
-        sSignedData = signedData.SignCades(
-            oSigner, Signature.CADES_BES.value,
-            True, Signature.CAPICOM_ENCODE_BASE64.value
-        )
-
-        # Удаляем из подписи символы переноса строки, иначе не вставить в заголовок запроса.
-        sSignedData = sSignedData.replace('\r', '')
-        sSignedData = sSignedData.replace('\n', '')
-
-        return row_data, sSignedData
-
-    except Exception as e:
-        logger.error(f"Ошибка при создании откреплённой подписи: {e}")
-        raise
-
-    finally:
-        pythoncom.CoUninitialize()
+    serial_number = _get_active_serial_number()
+    signed_data = _post_sign('/api/sign/unpinned/', message, serial_number)
+    return row_data, signed_data

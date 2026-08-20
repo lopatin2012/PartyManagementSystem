@@ -229,7 +229,8 @@ class Command(BaseCommand):
         if count > 0:
             stale_tasks.update(
                 status=TaskResultStatus.FAILED,
-                error_message='Автоматическая очистка: задача зависла дольше 15 минут',
+                exception_class_path='TimeOutError',
+                traceback='Автоматическая очистка: задача зависла дольше 15 минут',
                 finished_at=timezone.now(),
             )
             logger.warning(f'Планировщик: очищено {count} зависших задач')
