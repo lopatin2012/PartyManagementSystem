@@ -209,10 +209,13 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': os.getenv('DB_NAME'),
-        'USER': 'postgres',
+        'USER': os.getenv('DB_USER', 'postgres'),
         'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': '127.0.0.1',
+        'HOST': os.getenv('DB_HOST', '127.0.0.1'),
         'PORT': '5432',
+        'OPTIONS': {
+            'autocommit': '1',
+        },
     },
     # Архивная база для устаревших кодов маркировки (историчность данных).
     # Если переменные DB_ARCHIVE_* не заданы — используется та же база, что и default.
@@ -223,6 +226,9 @@ DATABASES = {
         'PASSWORD': os.getenv('DB_ARCHIVE_PASSWORD') or os.getenv('DB_PASSWORD'),
         'HOST': '127.0.0.1',
         'PORT': '5432',
+        'OPTIONS': {
+            'autocommit': '1',
+        },
     },
 }
 
