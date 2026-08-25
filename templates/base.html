@@ -78,24 +78,26 @@
                 <span class="status-title">СУЗ (Честный Знак)</span>
             </div>
             <div class="status-body">
-                {% if not status_suz.is_active %}
-                    <p class="status-text">Требуется первичная настройка</p>
-                    <button class="btn-status-action" onclick="openSuzModal()">Настроить СУЗ</button>
-                {% elif not status_suz.token_valid %}
-                    <p class="status-text">Токен истёк или отсутствует</p>
-                    {% if status_suz.can_manage %}
-                        <button class="btn-status-action btn-danger" onclick="refreshSuzToken(event)">Обновить токен</button>
-                    {% endif %}
-                {% else %}
-                    <p class="status-text">Токен действителен</p>
-                    <div class="countdown-timer" id="suz-countdown" data-seconds="{{ status_suz.expires_in_seconds }}">
-                        --:--:--
-                    </div>
-                    {% if status_suz.can_manage %}
-                        <div class="admin-actions">
-                            <button class="btn-status-action btn-sm" onclick="refreshSuzToken(event)">Обновить</button>
-                            <button class="btn-status-action btn-sm btn-danger" onclick="resetSuzData()">Сбросить</button>
+                {% if user.is_superuser %}
+                    {% if not status_suz.is_active %}
+                        <p class="status-text">Требуется первичная настройка</p>
+                        <button class="btn-status-action" onclick="openSuzModal()">Настроить СУЗ</button>
+                    {% elif not status_suz.token_valid %}
+                        <p class="status-text">Токен истёк или отсутствует</p>
+                        {% if status_suz.can_manage %}
+                            <button class="btn-status-action btn-danger" onclick="refreshSuzToken(event)">Обновить токен</button>
+                        {% endif %}
+                    {% else %}
+                        <p class="status-text">Токен действителен</p>
+                        <div class="countdown-timer" id="suz-countdown" data-seconds="{{ status_suz.expires_in_seconds }}">
+                            --:--:--
                         </div>
+                        {% if status_suz.can_manage %}
+                            <div class="admin-actions">
+                                <button class="btn-status-action btn-sm" onclick="refreshSuzToken(event)">Обновить</button>
+                                <button class="btn-status-action btn-sm btn-danger" onclick="resetSuzData()">Сбросить</button>
+                            </div>
+                        {% endif %}
                     {% endif %}
                 {% endif %}
             </div>
