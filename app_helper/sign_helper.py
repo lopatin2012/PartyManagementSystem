@@ -20,6 +20,12 @@ SIGN_TIMEOUT = 30
 # По умолчанию — адрес, опубликованный на хосте (см. docker-compose).
 SIGNATURE_SERVICE_URL = os.getenv('SIGNATURE_SERVICE_URL', 'http://127.0.0.1:8001')
 
+# В выпадающем списке показывать только один сертификат (по серийному номеру).
+# Если переменная пустая/не задана — список не фильтруется.
+ALLOWED_CERTIFICATE_SERIAL = os.getenv(
+    'SUZ_ALLOWED_CERTIFICATE_SERIAL', '3F11640082B43D8544A2D8787B3ED255'
+)
+
 
 def _get_signature_service_url() -> str:
     """Возвращает базовый URL внешнего сервиса подписей.
@@ -128,6 +134,19 @@ def get_list_certificates() -> list:
         })
 
     logger.info(f"Успешно найдено {len(normalized)} валидных сертификатов.")
+
+    # Ограничиваем выпадающий список одним сертификатом (серийный номер из env).
+    if ALLOWED_CERTIFICATE_SERIAL:
+        wanted = ALLOWED_CERTIFICATE_SERIAL.upper()
+        filtered = [
+            cert for cert in normalized
+            if str(cert.get('serial_number', '')).upper() == wanted
+        ]
+        if filtered:
+            logger.info(f"Отфильтровано: показан только сертификат с серийным номером {wanted}.")
+            return filtered
+        logger.warning(f"Сертификат с серийным номером {wanted} не найден в хранилище — список пуст.")
+
     return normalized
 
 
