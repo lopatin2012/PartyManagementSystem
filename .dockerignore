@@ -1,0 +1,26 @@
+# Git / IDE / локальные артефакты — не попадают в контекст сборки.
+.git
+.gitignore
+.venv
+venv/
+env/
+__pycache__
+**/__pycache__
+*.py[codz]
+*.egg-info/
+build/
+dist/
+.idea/
+.vscode/
+*.log
+db.sqlite3
+staticfiles/
+config/.env
+config/_version.py
+help.txt
+README.md
+AGENTS.md
+docker-compose.yml
+Dockerfile
+.dockerignore
+media/

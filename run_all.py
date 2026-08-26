@@ -23,7 +23,8 @@ COLORS = {
 }
 
 PROCESSES = [
-    ('web', ['uvicorn', 'config.asgi:application', '--host', LOCAL_IP, '--port', '8888', '--reload']),
+    ('web', ['uvicorn', 'config.asgi:application', '--host', LOCAL_IP, '--port', '8888']
+     + (['--reload'] if os.getenv('DEBUG', '1') == '1' else [])),
     ('scheduler', ['python', 'manage.py', 'run_scheduler']),
     ('worker', ['python', 'manage.py', 'run_tasks_worker']),
 ]
