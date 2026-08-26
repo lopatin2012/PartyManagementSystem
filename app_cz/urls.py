@@ -65,4 +65,23 @@ urlpatterns = [
 
     # Для общения с другими модулями.
     path('api/v1/generate-uip/', view=views.api_generate_uip, name='generate-uip'),
+
+    # ==========================================
+    # Интерфейсные API-методы
+    # ==========================================
+    # Синхронизация УИП из Честного Знака и генерация УИП.
+    path('uip/sync/', views.SyncPartiesView.as_view(), name='uip_sync'),
+    path('uip/generate/', views.GenerateUIPView.as_view(), name='uip_generate'),
+
+    # Синхронизация заданий с внешним сервисом (Молвест.Маркировка).
+    path('sync/', view=views.SyncTasksView.as_view(), name='sync_tasks'),
+    path('sync/task-codes/', view=views.SyncTaskCodesView.as_view(), name='sync_task_codes'),
+    path('sync/all/', view=views.SyncAllTasksView.as_view(), name='sync_all_tasks'),
+
+    # Национальный каталог.
+    path('nk/', view=views.NationalCatalogView.as_view(), name='national_catalog'),
+    path('nk/api/sync/', view=views.NKSyncProductsView.as_view(), name='nk_sync_products'),
+    path('nk/api/progress/', view=views.NKSyncProgressView.as_view(), name='nk_sync_progress'),
+    path('nk/api/product/create/', view=views.NKProductCreateView.as_view(), name='nk_product_create'),
+    path('nk/api/product/', view=views.NKProductDetailView.as_view(), name='nk_product_detail'),
 ]
