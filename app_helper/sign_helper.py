@@ -2,6 +2,8 @@
 
 import logging
 import json
+import os
+from datetime import datetime
 
 import requests
 from django.core.exceptions import ObjectDoesNotExist
@@ -14,9 +16,27 @@ logger = logging.getLogger(__name__)
 # Таймаут запросов к сервису подписей, сек.
 SIGN_TIMEOUT = 30
 
+# Прямой адрес сервиса подписей (переопределяет запись в БД ExternalService).
+# По умолчанию — адрес, опубликованный на хосте (см. docker-compose).
+SIGNATURE_SERVICE_URL = os.getenv('SIGNATURE_SERVICE_URL', 'http://127.0.0.1:8001')
+
+# В выпадающем списке показывать только один сертификат (по серийному номеру).
+# Если переменная пустая/не задана — список не фильтруется.
+ALLOWED_CERTIFICATE_SERIAL = os.getenv(
+    'SUZ_ALLOWED_CERTIFICATE_SERIAL', '3F11640082B43D8544A2D8787B3ED255'
+)
+
 
 def _get_signature_service_url() -> str:
-    """Возвращает базовый URL внешнего сервиса подписей из таблицы ExternalService."""
+    """Возвращает базовый URL внешнего сервиса подписей.
+
+    Если задана переменная окружения SIGNATURE_SERVICE_URL — она имеет приоритет
+    (например, внутри docker-compose указывается адрес контейнера signature-service).
+    Иначе адрес берётся из таблицы ExternalService.
+    """
+    if SIGNATURE_SERVICE_URL:
+        return SIGNATURE_SERVICE_URL.rstrip('/')
+
     try:
         service = ExternalService.objects.get(
             service_type=TypeServiceChoices.SIGNATURE,
@@ -94,8 +114,40 @@ def get_list_certificates() -> list:
 
     data = response.json()
     certificates = data.get('certificates', [])
-    logger.info(f"Успешно найдено {len(certificates)} валидных сертификатов.")
-    return certificates
+
+    # Приведение полей сервиса подписей к ожидаемым на фронте и в views:
+    # subject -> fio, valid_to -> valid_for + расчёт оставшихся дней valid_days.
+    normalized = []
+    for cert in certificates:
+        valid_for = str(cert.get('valid_to', ''))
+        valid_days = 0
+        try:
+            valid_days = (datetime.strptime(valid_for, "%d-%m-%Y") - datetime.now()).days
+        except (ValueError, TypeError):
+            valid_days = 0
+        normalized.append({
+            'serial_number': cert.get('serial_number'),
+            'fio': cert.get('subject', ''),
+            'valid_for': valid_for,
+            'valid_days': max(valid_days, 0),
+            'valid_from': cert.get('valid_from'),
+        })
+
+    logger.info(f"Успешно найдено {len(normalized)} валидных сертификатов.")
+
+    # Ограничиваем выпадающий список одним сертификатом (серийный номер из env).
+    if ALLOWED_CERTIFICATE_SERIAL:
+        wanted = ALLOWED_CERTIFICATE_SERIAL.upper()
+        filtered = [
+            cert for cert in normalized
+            if str(cert.get('serial_number', '')).upper() == wanted
+        ]
+        if filtered:
+            logger.info(f"Отфильтровано: показан только сертификат с серийным номером {wanted}.")
+            return filtered
+        logger.warning(f"Сертификат с серийным номером {wanted} не найден в хранилище — список пуст.")
+
+    return normalized
 
 
 def attached_signed_data(row_data: str) -> tuple[str, str]:
