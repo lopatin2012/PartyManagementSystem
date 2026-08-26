@@ -5,16 +5,22 @@
 # адресе True API (/api/v3/true-api/nk/...) и требуют JWT-токена ГИС МТ.
 
 import logging
+import time
 from typing import Dict, List, Optional
 
 import requests
 
 from app_factory.models import NationalCatalogProduct
 from app_cz.models import SUZAccount
+from app_cz.services.rate_limit import wait_nk_endpoint
 from app_cz.services.true_api_client import TrueAPIClient
 from app_event.utils import log_event
 
 logger = logging.getLogger(__name__)
+
+# Количество повторных попыток при HTTP 429 («Превышен лимит запросов»).
+# Пауза между попытками растёт (30, 60, 120 секунд) — см. _make_request.
+RATE_LIMIT_RETRIES = 3
 
 # Размер батча для «Метод получения информации о товаре» (/nk/product).
 # Ограничение метода: не более 25 «good_id» в одном запросе (True_API_GIS_MT.txt).
@@ -166,17 +172,45 @@ class NationalCatalogClient:
         headers = kwargs.pop('headers', {})
         headers = {**self._auth_headers(), **headers}
 
-        try:
-            response = requests.request(
-                method, url, timeout=30, headers=headers, **kwargs
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            logger.error(
-                f'Ошибка запроса к Национальному каталогу: {url}, {e}'
-            )
-            raise
+        # Соблюдаем документированные лимиты True API (True_API_GIS_MT.txt):
+        # /nk/product — не более 10 запросов за 5 минут, остальные методы НК —
+        # не более 10 запросов в секунду. Ожидание блокирует поток до слота.
+        wait_nk_endpoint(endpoint)
+
+        last_error = None
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            try:
+                response = requests.request(
+                    method, url, timeout=30, headers=headers, **kwargs
+                )
+                # 429 — превышен лимит запросов: повторяем с нарастающей паузой.
+                if response.status_code == 429:
+                    backoff = 30 * (2 ** attempt)
+                    logger.warning(
+                        f'True API вернул 429 для {url} '
+                        f'(попытка {attempt + 1}/{RATE_LIMIT_RETRIES + 1}), '
+                        f'пауза {backoff} сек'
+                    )
+                    time.sleep(backoff)
+                    continue
+                response.raise_for_status()
+                return response.json()
+            except requests.exceptions.HTTPError as e:
+                # Другие ошибки 4xx/5xx не являются лимитом — повторяем только 429.
+                if e.response is not None and e.response.status_code == 429:
+                    last_error = e
+                    continue
+                logger.error(f'Ошибка запроса к Национальному каталогу: {url}, {e}')
+                raise
+            except requests.exceptions.RequestException as e:
+                logger.error(f'Ошибка запроса к Национальному каталогу: {url}, {e}')
+                raise
+
+        logger.error(
+            f'Превышен лимит запросов к Национальному каталогу: {url} '
+            f'после {RATE_LIMIT_RETRIES} повторных попыток'
+        )
+        raise last_error
 
     def get_etags_list(
         self,
