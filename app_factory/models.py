@@ -233,12 +233,10 @@ class ProductPackaging(UUIDModel):
         verbose_name = 'Упаковка продукта (GTIN)'
         verbose_name_plural = '5. Упаковки продукта (GTIN)'
         ordering = ('product', 'level')
-        constraints = [
-            models.UniqueConstraint(
-                fields=['product', 'level'],
-                name='unique_packaging_level_per_product'
-            )
-        ]
+        # ВАЖНО: у одного продукта может быть несколько упаковок ОДНОГО уровня
+        # (например, две коробки разной вместимости с разными GTIN).
+        # Уникальность обеспечивается самим полем gtin (unique=True).
+        # Не добавлять сюда UniqueConstraint на (product, level).
 
     def __str__(self):
         level_name = self.get_level_display()

@@ -1,7 +1,6 @@
 # app_factory/admin.py
 
 from django.contrib import admin
-from django.core.exceptions import ValidationError
 
 from app_factory.models import (
     Factory,
@@ -102,33 +101,12 @@ class ProductAdmin(admin.ModelAdmin):
     inlines = [ProductPackagingInline]
 
     def save_formset(self, request, form, formset, change):
-        """Валидация: проверяем, что нет дубликатов уровней упаковки."""
-        instances = formset.save(commit=False)
+        """Сохраняет упаковки.
 
-        # Проверяем дубликаты уровней
-        levels_seen = {}
-        for idx, instance in enumerate(instances):
-            if instance.level in levels_seen:
-                # Добавляем ошибку к конкретной форме
-                form_idx = levels_seen[instance.level]
-                formset.forms[form_idx].add_error(
-                    'level',
-                    f'Уровень "{instance.get_level_display()}" уже используется в другой упаковке'
-                )
-                # Отменяем сохранение
-                raise ValidationError(
-                    f'Нельзя создать две упаковки с уровнем "{instance.get_level_display()}" '
-                    f'для одного продукта.'
-                )
-            levels_seen[instance.level] = idx
-
-        # Сохраняем все экземпляры
-        for instance in instances:
-            instance.save()
-
-        # Удаляем помеченные на удаление
-        for obj in formset.deleted_objects:
-            obj.delete()
+        Несколько упаковок одного уровня разрешены (разные GTIN),
+        поэтому никакой проверки дубликатов уровня здесь нет.
+        """
+        formset.save()
 
 
 @admin.register(ProductPackaging)
@@ -146,7 +124,7 @@ class ProductSKUAdmin(admin.ModelAdmin):
     list_display = ('id', 'article', 'product', 'type_formation_uip', is_active_display)
     list_filter = ('is_active', 'product__group')
     autocomplete_fields = ('product',)
-    search_fields = ('article', 'other_codes', 'product__name')
+    search_fields = ('article', 'other_codes', 'product__name', 'product__packagings__gtin')
     ordering = ('-id', 'product', 'article')
     list_per_page = 50
 

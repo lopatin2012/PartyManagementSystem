@@ -146,7 +146,7 @@ function initGenerateModal() {
     }
 }
 
-/** Фильтрация по артикулу и названию. */
+/** Фильтрация по артикулу, названию и GTIN. */
 function filterProducts(query) {
     lastQuery = query.trim();
     const q = lastQuery.toLowerCase();
@@ -156,7 +156,8 @@ function filterProducts(query) {
     } else {
         filteredProducts = availableProducts.filter(p =>
             p.article.toLowerCase().includes(q) ||
-            p.name.toLowerCase().includes(q)
+            p.name.toLowerCase().includes(q) ||
+            String(p.gtin || '').toLowerCase().includes(q)
         );
     }
     renderProductList();

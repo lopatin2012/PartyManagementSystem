@@ -23,7 +23,7 @@ from app_factory.models import (
 
 logger = logging.getLogger(__name__)
 
-# Имя атрибута в карточке НК (attrs), содержащего код товара в учётной
+# Имя атрибута в карточке НК (good_attrs), содержащего код товара в учётной
 # системе поставщика (источник для «Кода внутри организации» / SKU.article).
 SUPPLIER_CODE_ATTR = 'Код товара в учетной системе поставщика'
 
@@ -31,16 +31,21 @@ SUPPLIER_CODE_ATTR = 'Код товара в учетной системе по�
 def _extract_supplier_codes(raw_data: Dict) -> List[str]:
     """Все коды товара в учётной системе поставщика из атрибутов НК.
 
-    Атрибут «Код товара в учетной системе поставщика» может встречаться
-    в карточке несколько раз — собираем все непустые уникальные значения.
+    ВАЖНО: атрибуты карточки приходят в поле good_attrs (не attrs) —
+    это подтверждено реальными данными НК (good_attrs с attr_name=
+    «Код товара в учетной системе поставщика»). Атрибут может встречаться
+    в карточке несколько раз; значения приходят как один атрибут с
+    запятыми («60379, 65942, 60378, 60397») — разворачиваем в список.
     """
     codes = []
-    for attr in raw_data.get('attrs') or []:
+    for attr in raw_data.get('good_attrs') or raw_data.get('attrs') or []:
         if attr.get('attr_name') != SUPPLIER_CODE_ATTR:
             continue
         value = str(attr.get('attr_value', '') or '').strip()
-        if value and value not in codes:
-            codes.append(value)
+        for part in value.replace(';', ',').split(','):
+            part = part.strip()
+            if part and part not in codes:
+                codes.append(part)
     return codes
 
 
@@ -58,7 +63,8 @@ def _sync_product_sku(product: Product, nk: NationalCatalogProduct) -> bool:
     if not codes:
         return False
 
-    sku = product.skus.order_by('created_at').first()
+    # Нет поля created_at у ProductSKU — берём первый по id (порядок создания).
+    sku = product.skus.order_by('id').first()
     if sku is None:
         try:
             ProductSKU.objects.create(
@@ -97,6 +103,9 @@ def _parse_nc_packagings(raw_data: Dict) -> List[Dict]:
       inner-pack — групповая упаковка (уровень 2);
       box / layer / pallet — транспортная упаковка (уровень 3).
 
+    Количество вложенных потребительских кодов берётся из поля multiplier
+    ответа НК (для trade-unit всегда 1; для коробки — сколько штук в ней).
+
     Возвращает список словарей:
         [{'level': 1, 'gtin': '...', 'quantity_inside': 1}, ...]
     """
@@ -108,6 +117,7 @@ def _parse_nc_packagings(raw_data: Dict) -> List[Dict]:
             continue
         gtin = _normalize_gtin(identified.get('value', ''))
         level_name = identified.get('level', '') or ''
+        multiplier = int(identified.get('multiplier') or 1) or 1
 
         if not gtin or gtin in seen_gtins:
             continue
@@ -125,7 +135,7 @@ def _parse_nc_packagings(raw_data: Dict) -> List[Dict]:
         packagings.append({
             'level': level,
             'gtin': gtin,
-            'quantity_inside': 1,
+            'quantity_inside': multiplier,
         })
         seen_gtins.add(gtin)
 
@@ -235,18 +245,18 @@ def sync_nk_to_products(
             skus_created += 1
 
         # Создаём/обновляем упаковки.
-        # Уникальность ограничена парой (product, level), поэтому привязываемся
-        # к уровню, а не к GTIN: у товара может быть несколько GTIN одного уровня
-        # (например, несколько коробок, слоёв или паллет).
+        # Идентифицируем упаковку по GTIN (он уникален), а не по уровню:
+        # у товара может быть несколько упаковок одного уровня
+        # (например, две коробки разной вместимости).
         for pkg_data in packagings_data:
             gtin = pkg_data['gtin']
             if not gtin:
                 continue
             _, created = ProductPackaging.objects.update_or_create(
                 product=product,
-                level=pkg_data['level'],
+                gtin=gtin,
                 defaults={
-                    'gtin': gtin,
+                    'level': pkg_data['level'],
                     'quantity_inside': pkg_data.get('quantity_inside', 1),
                     'code_storage_period_in_days': 30,
                 },
