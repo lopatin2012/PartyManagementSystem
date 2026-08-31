@@ -254,6 +254,31 @@ def _get_state_db() -> dict:
 # ==========================================
 
 
+def _db_guard(fn_db, fn_mem, *args, **kwargs):
+    """Выполняет DB-вариант, при недоступности таблицы — in-memory fallback.
+
+    Дополнительная защита поверх db_state_available(): если таблица исчезла
+    между проверкой и запросом (например, процесс был запущен до применения
+    миграции), ловим ProgrammingError/OperationalError и переключаемся на
+    память, а не роняем задачу с 500.
+    """
+    if not db_state_available():
+        return fn_mem(*args, **kwargs)
+    try:
+        return fn_db(*args, **kwargs)
+    except Exception as e:
+        from django.db import ProgrammingError, OperationalError
+        if isinstance(e, (ProgrammingError, OperationalError)):
+            logger.warning(
+                'NKSyncState недоступен в БД (%s) — переключение на in-memory',
+                e,
+            )
+            global _DB_AVAILABLE
+            _DB_AVAILABLE = False
+            return fn_mem(*args, **kwargs)
+        raise
+
+
 def try_start_sync(started_by: str) -> tuple[bool, str]:
     """
     Пытается захватить блокировку синхронизации.
@@ -261,32 +286,22 @@ def try_start_sync(started_by: str) -> tuple[bool, str]:
     :param started_by: 'manual' или 'scheduler'.
     :return: (True, '') при успешном захвате, иначе (False, сообщение).
     """
-    if db_state_available():
-        return _try_start_db(started_by)
-    return _try_start_mem(started_by)
+    return _db_guard(_try_start_db, _try_start_mem, started_by)
 
 
 def update_sync_progress(**kwargs) -> None:
     """Обновляет поля прогресса (без захвата блокировки)."""
-    if db_state_available():
-        _update_progress_db(**kwargs)
-    else:
-        _update_progress_mem(**kwargs)
+    _db_guard(_update_progress_db, _update_progress_mem, **kwargs)
 
 
 def finish_sync(message: str = '') -> None:
     """Снимает блокировку и фиксирует сообщение о завершении."""
-    if db_state_available():
-        _finish_db(message)
-    else:
-        _finish_mem(message)
+    _db_guard(_finish_db, _finish_mem, message)
 
 
 def get_sync_state() -> dict:
     """Словарь состояния для отображения на странице / в окне задач."""
-    if db_state_available():
-        return _get_state_db()
-    return _get_state_mem()
+    return _db_guard(_get_state_db, _get_state_mem)
 
 
 class SyncProgress(dict):
