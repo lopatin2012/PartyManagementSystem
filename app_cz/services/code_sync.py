@@ -251,29 +251,44 @@ def build_external_service_url(party: ProductionParty) -> str:
 # Приёмник производственной партии (задания).
 # ==========================================
 
+def _extract_external_uuid(data: dict) -> str:
+    """Возвращает uuid задания внешнего сервиса (uuid_str / uuid_task).
+
+    Внешний сервис для корректных заданий заполняет
+    uuid_str/uuid_task; задания без uuid (только числовой task_id/id,
+    uip=000...0) считаются некорректными/старыми и пропускаются.
+    """
+    uuid_str = str(data.get('uuid_str') or '').strip()
+    if uuid_str:
+        return uuid_str
+    uuid_task = str(data.get('uuid_task') or '').strip()
+    if uuid_task:
+        return uuid_task
+    return ''
+
+
 def receive_external_task(data: dict) -> dict:
     """
     Приёмник производственной партии (задания) из внешнего сервиса.
 
-    Создаёт или обновляет ProductionParty по идентификатору задания
-    (uuid_str / uuid_task / task_id / id). Статусы заданий внешнего сервиса
-    преобразуются во внутренние.
+    Создаёт или обновляет ProductionParty по uuid задания внешнего сервиса
+    (uuid_str / uuid_task). Задания БЕЗ uuid пропускаются — это некорректные
+    (старые/тестовые) записи внешнего сервиса, «Задание (Внешнее)» всегда
+    должен быть uuid. Статусы заданий преобразуются во внутренние.
 
     :param data: Словарь с данными задания (поля модели Task внешнего сервиса).
     :return: Словарь с результатом.
     """
-    external_id = str(
-        data.get('uuid_str')
-        or data.get('uuid_task')
-        or data.get('task_id')
-        or data.get('id')
-        or ''
-    ).strip()
+    external_id = _extract_external_uuid(data)
 
     if not external_id:
         return {
             'has_error': True,
-            'message': 'Не указан идентификатор задания (uuid_str/task_id/id).'
+            'skipped_no_uuid': True,
+            'message': (
+                'Задание пропущено: отсутствует uuid (uuid_str/uuid_task). '
+                'Некорректная запись внешнего сервиса.'
+            )
         }
 
     # === Статус ===
@@ -943,6 +958,7 @@ def sync_external_parties_and_codes(task_path: str = None) -> dict:
         return summary
 
     # Этап 1: выгрузка изменённых заданий и обновление партий.
+    skipped_no_uuid = 0
     for factory in factories:
         url = f'http://{factory.ip_address}:{factory.port_address}'
         tasks = _fetch_external_tasks_changed_since(url, changed_since)
@@ -950,12 +966,18 @@ def sync_external_parties_and_codes(task_path: str = None) -> dict:
 
         for task_data in tasks:
             result = receive_external_task(task_data)
-            if result.get('has_error'):
+            if result.get('skipped_no_uuid'):
+                # Задание без uuid — некорректная запись внешнего сервиса,
+                # ошибкой синхронизации не считается.
+                skipped_no_uuid += 1
+            elif result.get('has_error'):
                 summary['errors'] += 1
             elif result.get('created'):
                 summary['parties_created'] += 1
             else:
                 summary['parties_updated'] += 1
+
+    summary['skipped_no_uuid'] = skipped_no_uuid
 
     # Этап 2: синхронизация кодов маркировки по всем внешним заданиям.
     codes_summary = sync_all_external_tasks()
@@ -967,6 +989,8 @@ def sync_external_parties_and_codes(task_path: str = None) -> dict:
         f'партий создано: {summary["parties_created"]}',
         f'партий обновлено: {summary["parties_updated"]}',
     ]
+    if skipped_no_uuid:
+        parts.append(f'пропущено без uuid: {skipped_no_uuid}')
     if summary['errors']:
         parts.append(f'⚠ ошибок: {summary["errors"]}')
     summary['message'] = 'Синхронизация партий завершена. ' + ', '.join(parts)
