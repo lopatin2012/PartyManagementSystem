@@ -3,6 +3,7 @@
 // ==========================================
 let schedulerData = [];
 let schedulerFilter = 'all';
+let nkSyncState = null;
 
 async function loadSchedulerStatus() {
     try {
@@ -13,6 +14,7 @@ async function loadSchedulerStatus() {
         if (data.is_error) return;
 
         schedulerData = data.schedule || [];
+        nkSyncState = data.nk_sync || null;
         updateSchedulerWidget();
         renderSchedulerModal();
     } catch (error) {
@@ -36,22 +38,33 @@ function updateSchedulerWidget() {
                 <span class="stat-value">${errors}</span>
             </span>
         ` : ''}
+        ${nkSyncState && nkSyncState.running ? `
+            <span class="stat-pill stat-errors" title="Синхронизация НК выполняется (${nkSyncState.started_by_display})">
+                <span class="stat-value">⏳</span>
+            </span>
+        ` : ''}
     `;
 
-    // Ближайший следующий запуск
-    const now = new Date();
-    const soonest = schedulerData
-        .filter(t => t.next_run && t.next_run !== 'Первый запуск' && !t.next_run.includes('Сейчас'))
-        .map(t => ({ ...t, nextDate: parseNextRun(t.next_run) }))
-        .filter(t => t.nextDate && t.nextDate > now)
-        .sort((a, b) => a.nextDate - b.nextDate)[0];
-
-    if (soonest) {
-        const diff = soonest.nextDate - now;
-        const timeLeft = formatTimeLeft(diff);
-        nextEl.innerHTML = `<span class="next-label">Следующий:</span> <strong>${soonest.description}</strong> <span class="next-time">(через ${timeLeft})</span>`;
+    if (nkSyncState && nkSyncState.running) {
+        nextEl.innerHTML =
+            `<span class="next-label">НК:</span> <strong>синхронизация выполняется</strong>` +
+            ` <span class="next-time">(${nkSyncState.started_by_display})</span>`;
     } else {
-        nextEl.textContent = 'Нет запланированных запусков';
+        // Ближайший следующий запуск
+        const now = new Date();
+        const soonest = schedulerData
+            .filter(t => t.next_run && t.next_run !== 'Первый запуск' && !t.next_run.includes('Сейчас'))
+            .map(t => ({ ...t, nextDate: parseNextRun(t.next_run) }))
+            .filter(t => t.nextDate && t.nextDate > now)
+            .sort((a, b) => a.nextDate - b.nextDate)[0];
+
+        if (soonest) {
+            const diff = soonest.nextDate - now;
+            const timeLeft = formatTimeLeft(diff);
+            nextEl.innerHTML = `<span class="next-label">Следующий:</span> <strong>${soonest.description}</strong> <span class="next-time">(через ${timeLeft})</span>`;
+        } else {
+            nextEl.textContent = 'Нет запланированных запусков';
+        }
     }
 }
 
@@ -100,6 +113,15 @@ function renderSchedulerModal() {
     const container = document.getElementById('schedulerGroups');
     if (!container) return;
 
+    // Баннер о выполняющейся синхронизации НК (если есть).
+    const nkBanner = nkSyncState && nkSyncState.running ? `
+        <div class="nk-sync-banner">
+            ⏳ Синхронизация Национального каталога выполняется
+            ${nkSyncState.started_by_display || ''}.
+            ${nkSyncState.message ? 'Сообщение: ' + nkSyncState.message : ''}
+        </div>
+    ` : '';
+
     // Фильтрация
     let filtered = schedulerData.slice();
     const query = (window._schedulerQuery || '').toLowerCase();
@@ -133,13 +155,13 @@ function renderSchedulerModal() {
     // Группировка (по категории из name)
     const groups = categorizeTasks(filtered);
 
-    if (Object.keys(groups).length === 0) {
+    if (Object.keys(groups).length === 0 && !nkBanner) {
         container.innerHTML = '<div class="scheduler-empty">Нет задач по выбранным фильтрам</div>';
         return;
     }
 
     // Рендеринг
-    container.innerHTML = Object.entries(groups).map(([groupName, tasks]) => `
+    container.innerHTML = nkBanner + Object.entries(groups).map(([groupName, tasks]) => `
         <div class="scheduler-group">
             <div class="scheduler-group-title">
                 <span>${groupName}</span>

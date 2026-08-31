@@ -16,6 +16,12 @@ DAY = timedelta(days=1)
 WEEK = timedelta(weeks=1)
 
 
+def _nk_sync_state() -> dict:
+    """Текущее состояние синхронизации Национального каталога."""
+    from app_cz.services.nk_sync_state import get_sync_state
+    return get_sync_state()
+
+
 @method_decorator(staff_member_required, name='dispatch')
 class SchedulerStatusView(View):
     """
@@ -39,6 +45,7 @@ class SchedulerStatusView(View):
             check_uip_burn_task,
             register_reserved_uips_task,
             archive_old_codes_task,
+            sync_national_catalog_task,
         )
 
         task_map = {
@@ -54,6 +61,7 @@ class SchedulerStatusView(View):
             'check_uip_burn': check_uip_burn_task,
             'register_reserved_uips': register_reserved_uips_task,
             'archive_old_codes': archive_old_codes_task,
+            'sync_national_catalog': sync_national_catalog_task,
         }
 
         now = timezone.now()
@@ -117,6 +125,9 @@ class SchedulerStatusView(View):
             'current_time': now.strftime('%d.%m.%Y %H:%M:%S'),
             'scheduler_check_interval': 60,
             'schedule': schedule_data,
+            # Текущее состояние синхронизации НК (видно и для ручного запуска,
+            # и для фоновой задачи — окно «Фоновые задачи» отражает конфликты).
+            'nk_sync': _nk_sync_state(),
         })
 
     def _format_interval(self, seconds: int) -> str:

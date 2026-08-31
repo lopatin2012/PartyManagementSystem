@@ -341,7 +341,14 @@ async function syncProducts() {
             new Blob([JSON.stringify(data)], { type: 'application/json' })
         );
         if (result.is_error) {
-            addLog('✗ Ошибка: ' + result.message, 'error');
+            addLog('✗ ' + (result.message || 'Ошибка'), 'error');
+            // 409 conflict — синхронизация уже выполняется (вручную или
+            // фоновой задачей). Переключаемся на отслеживание хода выполнения.
+            if (result.conflict) {
+                document.getElementById('syncProgressCard').style.display = 'block';
+                pollSyncProgress(btn);
+                return;
+            }
             btn.disabled = false;
             btn.textContent = 'Синхронизировать все товары';
             return;
@@ -373,6 +380,17 @@ async function pollSyncProgress(btn) {
         var percent = total > 0 ? Math.round((done / total) * 100) : 0;
 
         var phase = progress.phase || '';
+        if (phase === 'rate_wait') {
+            // Синхронизация ждёт освобождения лимита запросов к ЧЗ.
+            document.getElementById('syncLabel').textContent =
+                (progress.current_name || 'Ожидание лимита запросов ЧЗ...');
+            document.getElementById('syncCounts').textContent =
+                'Обработано ' + done + ' из ' + total +
+                ' (создано ' + progress.created + ', обновлено ' + progress.updated +
+                ', ошибок ' + (progress.errors || 0) + ')';
+            await new Promise(function(resolve) { setTimeout(resolve, 2000); });
+            continue;
+        }
         if (phase === 'list') {
             document.getElementById('syncLabel').textContent =
                 'Загрузка списка товаров из НК...';
@@ -431,5 +449,26 @@ async function pollSyncProgress(btn) {
 }
 
 addLog('Страница Национального каталога загружена', 'info');
+
+// Если синхронизация уже выполняется (например, фоновой задачей) —
+// показываем прогресс сразу при загрузке страницы.
+async function checkRunningSync() {
+    try {
+        var progressUrl = '{% url "nk_sync_progress" %}';
+        var result = await apiRequest(progressUrl, new FormData(), 'GET');
+        var progress = result.progress || {};
+        if (progress.running) {
+            var btn = document.getElementById('btnSync');
+            btn.disabled = true;
+            btn.textContent = 'Выполняется...';
+            addLog('Обнаружена выполняющаяся синхронизация, отслеживание хода...', 'info');
+            document.getElementById('syncProgressCard').style.display = 'block';
+            pollSyncProgress(btn);
+        }
+    } catch (e) {
+        // Игнорируем — прогресс подхватится при ручном запуске.
+    }
+}
+checkRunningSync();
 </script>
 {% endblock %}
