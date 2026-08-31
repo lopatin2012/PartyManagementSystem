@@ -22,4 +22,4 @@ RUN sed -i "s/'HOST': '127.0.0.1'/'HOST': os.getenv('DB_HOST', '127.0.0.1')/" co
 
 EXPOSE 8888
 
-CMD ["sh", "-c", "python manage.py migrate && python manage.py migrate --database archive && python manage.py collectstatic --noinput && python run_all.py"]
+CMD ["sh", "-c", "python app_cz/management/commands/reset_nk_sync.py && python manage.py migrate && python manage.py migrate --database archive && python manage.py collectstatic --noinput && python run_all.py"]
