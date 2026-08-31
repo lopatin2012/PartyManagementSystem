@@ -162,6 +162,25 @@ def _recalculate_uip_quantities(uip: UIP):
         uip.save(update_fields=['planned_quantity', 'produced_quantity', 'updated_at'])
 
 
+def _update_party_produced_quantity(party: ProductionParty):
+    """Обновляет «факт» партии = количество нанесённых (APPLIED) кодов.
+
+    Факт не должен браться только из поля amount задания при приёме —
+    внешний сервис динамически переводит коды printer → camera по мере
+    нанесения, поэтому после каждой синхронизации кодов пересчитываем
+    фактическое количество из реально нанесённых кодов и синхронизируем УИП.
+    """
+    from app_cz.models import CISCode, ProductionCodeStatusChoices
+    applied = CISCode.objects.filter(
+        production_party=party,
+        production_status=ProductionCodeStatusChoices.APPLIED,
+    ).count()
+    if applied != party.produced_quantity:
+        party.produced_quantity = applied
+        party.save(update_fields=['produced_quantity', 'updated_at'])
+    _recalculate_uip_quantities(party.uip)
+
+
 def find_uip_for_external_task(data: dict):
     """
     Находит УИП по данным задания внешнего сервиса.
@@ -691,6 +710,12 @@ def sync_codes_task(
     logger.info(f'Получено {len(codes)} кодов из внешнего сервиса (task_id={task_id})')
     stats = _upsert_codes(party, packaging, codes)
 
+    # 5. Пересчитываем «факт» партии = количество нанесённых (APPLIED) кодов.
+    # Внешний сервис динамически переводит коды printer → camera по мере
+    # нанесения, поэтому факт должен пересчитываться после каждой синхронизации,
+    # а не только из поля amount при приёме задания.
+    _update_party_produced_quantity(party)
+
     message = (
         f'Синхронизировано кодов: создано {stats["created"]}, '
         f'обновлено {stats["updated"]}, пропущено {stats["skipped"]}'
@@ -703,6 +728,7 @@ def sync_codes_task(
         'synced_count': stats['created'],
         'updated_count': stats['updated'],
         'skipped_count': stats['skipped'],
+        'produced_quantity': party.produced_quantity,
     }
 
 
