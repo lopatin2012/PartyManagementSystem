@@ -65,6 +65,54 @@ def _log_response_error(url: str, exc: Exception):
     else:
         logger.error(f'Ошибка запроса к Национальному каталогу: {url}, {exc}')
 
+
+def _extract_bad_good_ids(exc: Exception, good_ids: List[int]) -> List[int]:
+    """Извлекает проблемные good_id из тела ошибки True API.
+
+    True API при 400 для батча /nk/product обычно возвращает в теле
+    errorResult/error_message с указанием конкретных good_id/gtin, которые
+    не найдены или недоступны. Зная их, не нужно дробить батч пополам —
+    достаточно повторить запрос один раз без проблемных ID.
+
+    :return: Список good_id из good_ids, которые API пометил как ошибочные.
+    """
+    response = getattr(exc, 'response', None)
+    if response is None:
+        return []
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {}
+
+    bad = set()
+    if isinstance(payload, dict):
+        # errorResult / error_message — типовые поля True API.
+        err_result = payload.get('errorResult') or payload.get('error_result')
+        error_message = str(
+            payload.get('errorMessage') or payload.get('error_message') or ''
+        )
+        # Собираем все числа из errorResult (good_id/gtin/...).
+        def _collect_numbers(node):
+            if isinstance(node, list):
+                for item in node:
+                    _collect_numbers(item)
+            elif isinstance(node, dict):
+                for value in node.values():
+                    _collect_numbers(value)
+            elif isinstance(node, (int, str)):
+                text = str(node).strip()
+                if text.lstrip('-').isdigit():
+                    bad.add(int(text))
+
+        _collect_numbers(err_result)
+
+        # В error_message могут упоминаться ID прямо в тексте.
+        for gid in good_ids:
+            if str(gid) in error_message:
+                bad.add(gid)
+
+    return [gid for gid in good_ids if gid in bad]
+
 # Размер батча для «Метод получения информации о товаре» (/nk/product).
 # Ограничение метода: не более 25 «good_id» в одном запросе (True_API_GIS_MT.txt).
 PRODUCT_BATCH_SIZE = 25
@@ -373,29 +421,62 @@ class NationalCatalogClient:
         self,
         good_ids: List[int],
         depth: int = 0,
+        known_bad: Optional[set] = None,
     ):
         """Безопасно получает товары по списку good_id.
 
         True API возвращает 400 для ВСЕГО батча, если хотя бы один good_id
-        проблемный (удалён, чужой, набор и т.п.). Поэтому при ошибке батч
-        дробится пополам рекурсивно — изолируются только проблемные ID,
-        остальные товары сохраняются.
+        проблемный (удалён, чужой, набор и т.п.). При ошибке:
+
+        1. Пытаемся вытащить проблемные good_id из тела ошибки (errorResult)
+           — тогда повторяем запрос один раз без них (быстро);
+        2. Если в теле ошибки ID нет — дробится батч пополам рекурсивно,
+           чтобы изолировать проблемные ID.
+
+        Уже обнаруженные «плохие» good_id (known_bad) пропускаются сразу,
+        чтобы не запрашивать их повторно в следующих батчах.
 
         :return: (items, failed_good_ids)
         """
         if not good_ids:
             return [], []
+        known_bad = known_bad if known_bad is not None else set()
+
+        # Пропускаем уже известные проблемные ID.
+        pending = [g for g in good_ids if g not in known_bad]
+        if not pending:
+            return [], list(good_ids)
+
         try:
-            return self.get_products(good_ids=good_ids), []
-        except requests.exceptions.RequestException:
-            if depth >= MAX_SPLIT_DEPTH or len(good_ids) <= 1:
-                return [], good_ids
-            mid = len(good_ids) // 2
+            return self.get_products(good_ids=pending), []
+        except requests.exceptions.RequestException as e:
+            # 1) Пробуем вытащить «плохие» good_id из тела ошибки.
+            bad = _extract_bad_good_ids(e, pending)
+            if bad:
+                known_bad.update(bad)
+                rest = [g for g in pending if g not in set(bad)]
+                if not rest:
+                    return [], bad
+                try:
+                    items = self.get_products(good_ids=rest)
+                    return items, bad
+                except requests.exceptions.RequestException:
+                    # Остаток снова упал — дробим его.
+                    pending = rest
+                    bad_set = set(bad)
+            else:
+                bad_set = set()
+
+            # 2) Дробим пополам.
+            if depth >= MAX_SPLIT_DEPTH or len(pending) <= 1:
+                return [], list(pending) + [g for g in bad if g in good_ids]
+
+            mid = len(pending) // 2
             items = []
-            failed = []
-            for half in (good_ids[:mid], good_ids[mid:]):
+            failed = [g for g in bad if g in good_ids]
+            for half in (pending[:mid], pending[mid:]):
                 half_items, half_failed = self.fetch_products_resilient(
-                    half, depth=depth + 1
+                    half, depth=depth + 1, known_bad=known_bad
                 )
                 items.extend(half_items)
                 failed.extend(half_failed)
@@ -586,13 +667,19 @@ def sync_products(
     created = updated = 0
     done = 0
     errors = 0
+    # Найденные проблемные good_id — пропускаются во всех следующих батчах,
+    # чтобы не запрашивать их повторно (True API 400-ит весь батч из-за них).
+    known_bad: set = set()
     for start in range(0, len(etag_products), PRODUCT_BATCH_SIZE):
         batch = etag_products[start : start + PRODUCT_BATCH_SIZE]
         good_ids = [int(product['good_id']) for product in batch]
         # При ошибке батч дробится: один проблемный good_id не «роняет» все 25.
-        items, failed_ids = client.fetch_products_resilient(good_ids)
-        errors += len(failed_ids)
+        items, failed_ids = client.fetch_products_resilient(
+            good_ids, known_bad=known_bad
+        )
         if failed_ids:
+            known_bad.update(failed_ids)
+            errors += len(failed_ids)
             logger.error(
                 'Не удалось получить товары НК (после дробления батча): %s',
                 failed_ids,
