@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 # Пауза между попытками растёт (30, 60, 120 секунд) — см. _make_request.
 RATE_LIMIT_RETRIES = 3
 
+# Максимальная глубина дробления батча при ошибке (25 → 12/13 → ... → 1).
+# Нужно, чтобы один проблемный good_id не «ронял» весь батч из 25 товаров.
+MAX_SPLIT_DEPTH = 5
+
 
 def _is_rate_limit_response(response) -> bool:
     """True, если ответ — превышение лимита запросов.
@@ -42,6 +46,24 @@ def _is_rate_limit_response(response) -> bool:
         or 'превышен' in text
         or 'много запросов' in text
     )
+
+
+def _log_response_error(url: str, exc: Exception):
+    """Логирует ошибку запроса вместе с телом ответа True API.
+
+    Тело важно для диагностики: True API кладёт в него error_message /
+    errorResult с причинами (например, какие good_id не найдены).
+    """
+    body = ''
+    if getattr(exc, 'response', None) is not None:
+        try:
+            body = (exc.response.text or '')[:2000]
+        except Exception:
+            body = ''
+    if body:
+        logger.error(f'Ошибка запроса к Национальному каталогу: {url}, {exc}. Ответ: {body}')
+    else:
+        logger.error(f'Ошибка запроса к Национальному каталогу: {url}, {exc}')
 
 # Размер батча для «Метод получения информации о товаре» (/nk/product).
 # Ограничение метода: не более 25 «good_id» в одном запросе (True_API_GIS_MT.txt).
@@ -249,10 +271,10 @@ class NationalCatalogClient:
                 if e.response is not None and _is_rate_limit_response(e.response):
                     last_error = e
                     continue
-                logger.error(f'Ошибка запроса к Национальному каталогу: {url}, {e}')
+                _log_response_error(url, e)
                 raise
             except requests.exceptions.RequestException as e:
-                logger.error(f'Ошибка запроса к Национальному каталогу: {url}, {e}')
+                _log_response_error(url, e)
                 raise
 
         logger.error(
@@ -346,6 +368,38 @@ class NationalCatalogClient:
 
         data = self._make_request('GET', '/nk/product', params=params)
         return data.get('result') or []
+
+    def fetch_products_resilient(
+        self,
+        good_ids: List[int],
+        depth: int = 0,
+    ):
+        """Безопасно получает товары по списку good_id.
+
+        True API возвращает 400 для ВСЕГО батча, если хотя бы один good_id
+        проблемный (удалён, чужой, набор и т.п.). Поэтому при ошибке батч
+        дробится пополам рекурсивно — изолируются только проблемные ID,
+        остальные товары сохраняются.
+
+        :return: (items, failed_good_ids)
+        """
+        if not good_ids:
+            return [], []
+        try:
+            return self.get_products(good_ids=good_ids), []
+        except requests.exceptions.RequestException:
+            if depth >= MAX_SPLIT_DEPTH or len(good_ids) <= 1:
+                return [], good_ids
+            mid = len(good_ids) // 2
+            items = []
+            failed = []
+            for half in (good_ids[:mid], good_ids[mid:]):
+                half_items, half_failed = self.fetch_products_resilient(
+                    half, depth=depth + 1
+                )
+                items.extend(half_items)
+                failed.extend(half_failed)
+            return items, failed
 
     def get_product(
         self,
@@ -535,18 +589,14 @@ def sync_products(
     for start in range(0, len(etag_products), PRODUCT_BATCH_SIZE):
         batch = etag_products[start : start + PRODUCT_BATCH_SIZE]
         good_ids = [int(product['good_id']) for product in batch]
-        try:
-            items = client.get_products(good_ids=good_ids)
-        except requests.exceptions.RequestException:
-            errors += len(batch)
-            done += len(batch)
-            if progress is not None:
-                progress['done'] = done
-                progress['created'] = created
-                progress['updated'] = updated
-                progress['errors'] = errors
-            logger.exception('Не удалось получить батч товаров НК: %s', good_ids)
-            continue
+        # При ошибке батч дробится: один проблемный good_id не «роняет» все 25.
+        items, failed_ids = client.fetch_products_resilient(good_ids)
+        errors += len(failed_ids)
+        if failed_ids:
+            logger.error(
+                'Не удалось получить товары НК (после дробления батча): %s',
+                failed_ids,
+            )
 
         for item in items:
             good_id = int(item.get('good_id'))
@@ -563,13 +613,16 @@ def sync_products(
             except Exception:
                 errors += 1
                 logger.exception('Ошибка сохранения товара НК good_id=%s', good_id)
-            done += 1
-            if progress is not None:
-                progress['done'] = done
-                progress['created'] = created
-                progress['updated'] = updated
-                progress['errors'] = errors
-                progress['current_name'] = item.get('good_name', '')
+
+        # Учитываем все попытки батча: успешные + отброшенные при дроблении.
+        done += len(batch)
+        if progress is not None:
+            progress['done'] = done
+            progress['created'] = created
+            progress['updated'] = updated
+            progress['errors'] = errors
+            if items:
+                progress['current_name'] = items[-1].get('good_name', '')
 
     log_event(
         module='nk',

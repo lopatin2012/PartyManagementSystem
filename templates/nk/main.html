@@ -380,6 +380,11 @@ async function pollSyncProgress(btn) {
         var percent = total > 0 ? Math.round((done / total) * 100) : 0;
 
         var phase = progress.phase || '';
+        // Обновляем прогресс-бар при любом состоянии (в т.ч. rate_wait),
+        // чтобы синхронизация не выглядела «зависшей» на 0%.
+        document.getElementById('syncFill').style.width = percent + '%';
+        document.getElementById('syncPercent').textContent = percent + '%';
+
         if (phase === 'rate_wait') {
             // Синхронизация ждёт освобождения лимита запросов к ЧЗ.
             document.getElementById('syncLabel').textContent =
@@ -400,8 +405,6 @@ async function pollSyncProgress(btn) {
             document.getElementById('syncLabel').textContent = 'Выполняется...';
         }
 
-        document.getElementById('syncFill').style.width = percent + '%';
-        document.getElementById('syncPercent').textContent = percent + '%';
         var counts = document.getElementById('syncCounts');
         if (phase === 'list') {
             counts.textContent = 'Загружено ' + done + ' из ' + total;
