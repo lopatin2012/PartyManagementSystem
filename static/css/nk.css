@@ -2,7 +2,7 @@
    Страница «Национальный каталог»
    ========================================== */
 
-.nk-page { }
+.nk-page { margin: 10px }
 .nk-header { margin-bottom: 1.5rem; }
 .nk-header h1 { margin-bottom: 0.25rem; }
 .nk-header .subtitle { color: rgba(255,255,255,0.7); font-size: 0.9rem; }
