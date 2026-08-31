@@ -219,8 +219,8 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING('\nПланировщик остановлен'))
 
     def _cleanup_stale_tasks(self, DBTaskResult, TaskResultStatus):
-        """Очищает задачи, застрявшие в статусе RUNNING дольше 15 минут."""
-        stale_threshold = timezone.now() - timedelta(minutes=15)
+        """Очищает задачи, застрявшие в статусе RUNNING дольше 30 минут."""
+        stale_threshold = timezone.now() - timedelta(minutes=30)
         stale_tasks = DBTaskResult.objects.filter(
             status=TaskResultStatus.RUNNING,
             started_at__lt=stale_threshold,
@@ -230,7 +230,7 @@ class Command(BaseCommand):
             stale_tasks.update(
                 status=TaskResultStatus.FAILED,
                 exception_class_path='TimeOutError',
-                traceback='Автоматическая очистка: задача зависла дольше 15 минут',
+                traceback='Автоматическая очистка: задача зависла дольше 30 минут',
                 finished_at=timezone.now(),
             )
             logger.warning(f'Планировщик: очищено {count} зависших задач')

@@ -22,6 +22,27 @@ logger = logging.getLogger(__name__)
 # Пауза между попытками растёт (30, 60, 120 секунд) — см. _make_request.
 RATE_LIMIT_RETRIES = 3
 
+
+def _is_rate_limit_response(response) -> bool:
+    """True, если ответ — превышение лимита запросов.
+
+    True API может вернуть 429 или 400 с текстом «лимит»/«Превышен» в теле.
+    """
+    if response.status_code == 429:
+        return True
+    if response.status_code != 400:
+        return False
+    try:
+        body = (response.text or '')
+    except Exception:
+        return False
+    text = body.lower()
+    return (
+        'лимит' in text
+        or 'превышен' in text
+        or 'много запросов' in text
+    )
+
 # Размер батча для «Метод получения информации о товаре» (/nk/product).
 # Ограничение метода: не более 25 «good_id» в одном запросе (True_API_GIS_MT.txt).
 PRODUCT_BATCH_SIZE = 25
@@ -152,10 +173,34 @@ class NationalCatalogClient:
 
     PAGE_SIZE = 100
 
-    def __init__(self, user):
+    def __init__(self, user, progress: Optional[Dict] = None):
         self.user = user
+        # Словарь прогресса (при передаче — обновляется при ожидании лимита).
+        self.progress = progress
         self.true_api_client = TrueAPIClient(user=user)
         self.base_url = self.true_api_client.base_url
+
+    def _on_rate_wait(self, delay: float):
+        """Обновляет прогресс, когда запрос отложен из-за лимита ЧЗ."""
+        if self.progress is None:
+            return
+        if not self.progress.get('waiting'):
+            # Запоминаем фазу, чтобы вернуть её после ожидания.
+            self._wait_prev_phase = self.progress.get('phase', 'products')
+        self.progress['waiting'] = True
+        self.progress['phase'] = 'rate_wait'
+        self.progress['current_name'] = (
+            f'Ожидание лимита запросов Честного Знака... (~{int(delay)} сек)'
+        )
+
+    def _clear_rate_wait(self):
+        """Снимает признак ожидания лимита и возвращает фазу."""
+        if self.progress is None:
+            return
+        self.progress['waiting'] = False
+        if getattr(self, '_wait_prev_phase', None):
+            self.progress['phase'] = self._wait_prev_phase
+            self._wait_prev_phase = None
 
     def _auth_headers(self) -> Dict[str, str]:
         if not getattr(self, '_jwt_token', None):
@@ -175,7 +220,8 @@ class NationalCatalogClient:
         # Соблюдаем документированные лимиты True API (True_API_GIS_MT.txt):
         # /nk/product — не более 10 запросов за 5 минут, остальные методы НК —
         # не более 10 запросов в секунду. Ожидание блокирует поток до слота.
-        wait_nk_endpoint(endpoint)
+        wait_nk_endpoint(endpoint, on_wait=self._on_rate_wait)
+        self._clear_rate_wait()
 
         last_error = None
         for attempt in range(RATE_LIMIT_RETRIES + 1):
@@ -183,11 +229,13 @@ class NationalCatalogClient:
                 response = requests.request(
                     method, url, timeout=30, headers=headers, **kwargs
                 )
-                # 429 — превышен лимит запросов: повторяем с нарастающей паузой.
-                if response.status_code == 429:
+                # Лимит запросов: True API может вернуть 429 или 400 с текстом
+                # «лимит»/«Превышен» в теле. Повторяем с нарастающей паузой.
+                if _is_rate_limit_response(response):
                     backoff = 30 * (2 ** attempt)
                     logger.warning(
-                        f'True API вернул 429 для {url} '
+                        f'True API вернул {response.status_code} (лимит запросов) '
+                        f'для {url} '
                         f'(попытка {attempt + 1}/{RATE_LIMIT_RETRIES + 1}), '
                         f'пауза {backoff} сек'
                     )
@@ -196,8 +244,9 @@ class NationalCatalogClient:
                 response.raise_for_status()
                 return response.json()
             except requests.exceptions.HTTPError as e:
-                # Другие ошибки 4xx/5xx не являются лимитом — повторяем только 429.
-                if e.response is not None and e.response.status_code == 429:
+                # Другие ошибки 4xx/5xx не являются лимитом — повторяем только
+                # 429/400 с признаком лимита в теле.
+                if e.response is not None and _is_rate_limit_response(e.response):
                     last_error = e
                     continue
                 logger.error(f'Ошибка запроса к Национальному каталогу: {url}, {e}')
@@ -462,7 +511,7 @@ def sync_products(
     if not owner_inn:
         account = SUZAccount.objects.filter(is_active=True).first()
         owner_inn = account.inn if account else None
-    client = NationalCatalogClient(user)
+    client = NationalCatalogClient(user, progress=progress)
     etag_products = client.get_all_products(
         owner_inn=owner_inn, brand_id=brand_id, cat_id=cat_id,
         progress=progress,

@@ -421,29 +421,54 @@ def sync_national_catalog_task() -> dict:
         logger.warning(message)
         return {'status': 'skipped', 'is_error': True, 'message': message}
 
+    # Межпроцессная блокировка: если синхронизация уже выполняется
+    # (вручную на странице или другой фоновой задачей) — пропускаем запуск.
+    from app_cz.services.nk_sync_state import (
+        SyncProgress,
+        try_start_sync,
+        finish_sync,
+    )
+    acquired, lock_message = try_start_sync('scheduler')
+    if not acquired:
+        logger.warning(f'НК: синхронизация пропущена — {lock_message}')
+        return {
+            'status': 'skipped',
+            'is_error': False,
+            'message': lock_message,
+        }
+
     from app_cz.services.national_catalog_client import sync_products
     from app_factory.services.nk_sync_service import sync_nk_to_products
 
-    nk_result = sync_products(actor)
-    product_result = sync_nk_to_products(user=actor)
+    progress = SyncProgress()
+    try:
+        nk_result = sync_products(actor, progress=progress)
+        product_result = sync_nk_to_products(user=actor)
+        progress['product_sync'] = product_result
 
-    message = (
-        f'НК: синхронизировано {nk_result.get("total", 0)} товаров '
-        f'(создано {nk_result.get("created", 0)}, обновлено {nk_result.get("updated", 0)}, '
-        f'ошибок {nk_result.get("errors", 0)}); '
-        f'продукты: создано {product_result.get("products_created", 0)}, '
-        f'обновлено {product_result.get("products_updated", 0)}, '
-        f'упаковок создано {product_result.get("packagings_created", 0)}, '
-        f'SKU создано {product_result.get("skus_created", 0)}'
-    )
-    logger.info(message)
-    return {
-        'status': 'ok',
-        'is_error': False,
-        'message': message,
-        'nk': nk_result,
-        'products': product_result,
-    }
+        message = (
+            f'НК: синхронизировано {nk_result.get("total", 0)} товаров '
+            f'(создано {nk_result.get("created", 0)}, обновлено {nk_result.get("updated", 0)}, '
+            f'ошибок {nk_result.get("errors", 0)}); '
+            f'продукты: создано {product_result.get("products_created", 0)}, '
+            f'обновлено {product_result.get("products_updated", 0)}, '
+            f'упаковок создано {product_result.get("packagings_created", 0)}, '
+            f'SKU создано {product_result.get("skus_created", 0)}'
+        )
+        logger.info(message)
+        finish_sync(message=message)
+        return {
+            'status': 'ok',
+            'is_error': False,
+            'message': message,
+            'nk': nk_result,
+            'products': product_result,
+        }
+    except Exception as e:
+        logger.error(f'НК: ошибка синхронизации: {e}', exc_info=True)
+        progress['error'] = str(e)
+        finish_sync(message=f'Ошибка синхронизации НК: {e}')
+        raise
 
 
 # ==========================================

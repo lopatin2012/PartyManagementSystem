@@ -1166,19 +1166,18 @@ class SyncAllTasksView(View):
 # ==========================================
 # Национальный каталог (ГИС МТ).
 # ==========================================
+#
+# Синхронизация НК управляется межпроцессной блокировкой и прогрессом
+# NKSyncState (app_cz/services/nk_sync_state.py): ручная синхронизация (web) и
+# фоновая задача (worker) не могут выполняться одновременно, а прогресс виден
+# на странице «Национальный каталог» и в окне «Фоновые задачи».
 
-# Хранилище хода синхронизации НК: {user_id: progress}.
-_NK_SYNC_PROGRESS = {}
-_NK_SYNC_LOCK = threading.Lock()
-
-
-def _nk_progress(user_id: int) -> dict:
-    """Возвращает словарь прогресса для пользователя."""
-    with _NK_SYNC_LOCK:
-        return _NK_SYNC_PROGRESS.get(user_id, {
-            'running': False, 'total': 0, 'done': 0,
-            'created': 0, 'updated': 0, 'current_name': '', 'error': None,
-        })
+from app_cz.services.nk_sync_state import (
+    SyncProgress,
+    get_sync_state,
+    try_start_sync,
+    finish_sync,
+)
 
 
 @method_decorator(staff_member_required, name='dispatch')
@@ -1318,25 +1317,19 @@ class NKSyncProductsView(View):
         brand_id = data.get('brand_id') or None
         cat_id = data.get('cat_id') or None
 
-        with _NK_SYNC_LOCK:
-            existing = _NK_SYNC_PROGRESS.get(request.user.id)
-            if existing and existing.get('running'):
-                return JsonResponse(
-                    {'is_error': True, 'message': 'Синхронизация уже выполняется'},
-                    status=409,
-                )
-
-        progress = {
-            'running': True, 'total': 0, 'done': 0,
-            'created': 0, 'updated': 0, 'current_name': '', 'error': None,
-            'phase': 'list',
-        }
-        with _NK_SYNC_LOCK:
-            _NK_SYNC_PROGRESS[request.user.id] = progress
+        # Межпроцессная блокировка: если фоновая задача уже выполняет
+        # синхронизацию — сообщаем об этом (409) вместо параллельного запуска.
+        acquired, message = try_start_sync('manual')
+        if not acquired:
+            return JsonResponse(
+                {'is_error': True, 'conflict': True, 'message': message},
+                status=409,
+            )
 
         def _run_sync():
             from app_cz.services.national_catalog_client import sync_products
             from app_factory.services.nk_sync_service import sync_nk_to_products
+            progress = SyncProgress()
             try:
                 sync_products(
                     request.user,
@@ -1353,11 +1346,11 @@ class NKSyncProductsView(View):
                 }
                 sync_nk_to_products(user=request.user, progress=product_progress)
                 progress['product_sync'] = product_progress
+                finish_sync(message='Синхронизация Национального каталога завершена')
             except Exception as e:
                 logger.error(f'Ошибка синхронизации НК: {e}', exc_info=True)
                 progress['error'] = str(e)
-            finally:
-                progress['running'] = False
+                finish_sync(message=f'Ошибка синхронизации: {e}')
 
         threading.Thread(target=_run_sync, daemon=True).start()
 
@@ -1369,9 +1362,11 @@ class NKSyncProgressView(View):
     """API: Ход выполнения синхронизации НК (GET)."""
 
     def get(self, request):
+        state = get_sync_state()
         return JsonResponse({
             'is_error': False,
-            'progress': _nk_progress(request.user.id),
+            'progress': state['progress'],
+            'sync': state,
         })
 
 

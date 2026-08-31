@@ -600,6 +600,16 @@ footer {
     margin-right: auto;
 }
 
+.nk-sync-banner {
+    margin: 0 0 0.75rem;
+    padding: 0.6rem 0.9rem;
+    border-radius: 8px;
+    background: rgba(251, 186, 28, 0.12);
+    border: 1px solid rgba(251, 186, 28, 0.4);
+    color: #FABB1C;
+    font-size: 0.85rem;
+}
+
 /* Адаптивность */
 @media (max-width: 768px) {
     .scheduler-widget {

@@ -367,3 +367,49 @@ class SUZAccount(models.Model):
     def get_active_account(self):
         """Получение активной записи для работы с СУЗ/TrueAPI."""
         return SUZAccount.objects.filter(is_active=True).first()
+
+
+class NKSyncState(models.Model):
+    """
+    Синглтон: состояние синхронизации Национального каталога (id=1).
+
+    Используется как сквозная (межпроцессная) блокировка: ручная синхронизация
+    (web-процесс) и фоновая задача (worker-процесс) не могут выполняться
+    одновременно, т.к. обе пишут в эту строку через SELECT ... FOR UPDATE.
+    Хранит прогресс, чтобы страница «Национальный каталог» и окно «Фоновые
+    задачи» показывали актуальное состояние независимо от процесса-инициатора.
+    """
+
+    id = models.PositiveSmallIntegerField(
+        primary_key=True, default=1, editable=False,
+        verbose_name='ID (всегда 1)'
+    )
+    is_running = models.BooleanField(
+        default=False, verbose_name='Синхронизация выполняется'
+    )
+    started_by = models.CharField(
+        max_length=20, blank=True, default='',
+        verbose_name='Инициатор (manual / scheduler)'
+    )
+    started_at = models.DateTimeField(
+        null=True, blank=True, verbose_name='Начало синхронизации'
+    )
+    finished_at = models.DateTimeField(
+        null=True, blank=True, verbose_name='Окончание синхронизации'
+    )
+    message = models.TextField(
+        blank=True, default='', verbose_name='Сообщение'
+    )
+    progress = models.JSONField(
+        default=dict, blank=True, verbose_name='Прогресс (JSON)'
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True, verbose_name='Обновлено'
+    )
+
+    class Meta:
+        verbose_name = 'Состояние синхронизации Национального каталога'
+        verbose_name_plural = '4. Состояние синхронизации Национального каталога'
+
+    def __str__(self):
+        return f'НК-синхронизация: {self.started_by or "—"} / running={self.is_running}'
