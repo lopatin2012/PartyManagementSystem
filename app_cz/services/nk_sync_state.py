@@ -27,10 +27,16 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
-# Максимальная длительность синхронизации, после которой блокировка считается
-# «зависшей» (процесс упал) и может быть перехвачена другим инициатором.
-# Учитывает медленный лимит /nk/product (10 req / 5 мин) на больших каталогах.
-LOCK_STALE_TIMEOUT = timedelta(hours=4)
+# Максимальное время БЕЗ обновления прогресса (heartbeat), после которого
+# блокировка считается «зависшей» (процесс упал/контейнер перезапущен) и может
+# быть перехвачена другим инициатором.
+#
+# Прогресс пишется на каждый шаг синхронизации (каждый батч / ожидание лимита
+# обновляет updated_at), поэтому живая синхронизация «отвечает» не реже, чем
+# раз в ~1-2 минуты. Таймаут 10 минут не заденет живую, но быстро освободит
+# блокировку после падения процесса (раньше было 4 часа и синхронизация
+# застревала навсегда после рестарта контейнера).
+LOCK_STALE_TIMEOUT = timedelta(minutes=10)
 
 # Кто запускает синхронизацию (для отображения на странице / в окне задач).
 STARTED_BY_DISPLAY = {
@@ -85,6 +91,7 @@ _mem_state = {
     'is_running': False,
     'started_by': '',
     'started_at': None,
+    'updated_at': None,
     'finished_at': None,
     'message': '',
     'progress': dict(DEFAULT_PROGRESS, running=False),
@@ -95,9 +102,10 @@ def _try_start_mem(started_by: str) -> tuple:
     with _mem_lock:
         state = _mem_state
         if state['is_running']:
+            last_activity = state['updated_at'] or state['started_at']
             stale = (
-                state['started_at']
-                and timezone.now() - state['started_at'] > LOCK_STALE_TIMEOUT
+                last_activity
+                and timezone.now() - last_activity > LOCK_STALE_TIMEOUT
             )
             if not stale:
                 who = STARTED_BY_DISPLAY.get(state['started_by'], state['started_by'])
@@ -112,6 +120,7 @@ def _try_start_mem(started_by: str) -> tuple:
         state['is_running'] = True
         state['started_by'] = started_by
         state['started_at'] = timezone.now()
+        state['updated_at'] = timezone.now()
         state['finished_at'] = None
         state['message'] = ''
         state['progress'] = dict(DEFAULT_PROGRESS)
@@ -123,6 +132,7 @@ def _update_progress_mem(**kwargs) -> None:
         progress = dict(_mem_state['progress'] or {})
         progress.update(kwargs)
         _mem_state['progress'] = progress
+        _mem_state['updated_at'] = timezone.now()
 
 
 def _finish_mem(message: str = '') -> None:
@@ -181,9 +191,12 @@ def _try_start_db(started_by: str) -> tuple:
             state = NKSyncState(id=1)
 
         if state.is_running:
+            # Heartbeat: считаем блокировку «зависшей», если прогресс давно
+            # не обновлялся (живая синхронизация пишет updated_at регулярно).
+            last_activity = state.updated_at or state.started_at
             stale = (
-                state.started_at
-                and timezone.now() - state.started_at > LOCK_STALE_TIMEOUT
+                last_activity
+                and timezone.now() - last_activity > LOCK_STALE_TIMEOUT
             )
             if not stale:
                 who = STARTED_BY_DISPLAY.get(state.started_by, state.started_by)
