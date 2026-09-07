@@ -23,6 +23,8 @@ python manage.py migrate
 pip install -e .
 ```
 
+**`run_all.py`** binds uvicorn to the machine's LAN IP (`--host <local_ip>`, not `0.0.0.0`) and only adds `--reload` when `DEBUG=1`. The periodic-task schedule (which task runs at what interval) lives in the `SCHEDULE` list in `app_scheduler/management/commands/run_scheduler.py`, not in `tasks.py`.
+
 **Note:** dependencies live in `.venv` (gitignored). The system `python` on PATH has no Django — activate the venv (`.venv\Scripts\Activate.ps1` on Windows) or use `.venv\Scripts\python.exe` directly, otherwise `manage.py` fails with `ModuleNotFoundError: No module named 'django'`.
 
 ## Critical Conventions
@@ -73,7 +75,7 @@ pip install -e .
 - **External system URLs** (marking servers) are per-factory, stored in `Factory.ip_address` and `Factory.port_address`. Not in `.env`.
 - **UIP number format:** 14 GTIN digits + 6 date digits + 1-12 serial chars (regex-validated in model).
 - **Status transitions** are audited in `UIPStatusLog` with source tracking (`admin`/`sync`/`api`/`service`).
-- **Management commands:** `app_cz/management/commands/archive_old_codes.py`, `app_factory/management/commands/sync_molvest_reference.py`, plus `run_scheduler`/`run_tasks_worker` in `app_scheduler`.
+- **Management commands:** `app_cz/management/commands/archive_old_codes.py`, `app_cz/management/commands/reset_nk_sync.py`, `app_factory/management/commands/sync_molvest_reference.py`, plus `run_scheduler`/`run_tasks_worker` in `app_scheduler`.
 - **Live events** are written via `log_event()` from `app_event/utils.py` (module/level/message/actor/metadata); use it instead of ad-hoc logging for user-visible feed entries.
 - **`requirements.txt` is UTF-16LE-encoded** (Windows BOM `FF FE`), so Read/Edit tools see it as binary. The Dockerfile converts it via `iconv`; keep the encoding intact when editing.
-- **Docker** (`docker-compose.yml`: web + Postgres 15) is available but not the primary dev flow. Container runs `migrate` + `run_all.py`, and the Dockerfile patches `settings.py` to take `DB_HOST` from env via `sed` — don't mirror that hack in local code.
+- **Docker** (`docker-compose.yml`: web + Postgres 15) is available but not the primary dev flow. Container runs `migrate` **on both DBs** (`--database archive` too) + `collectstatic` + `run_all.py`, and the Dockerfile patches `settings.py` to take `DB_HOST` from env via `sed` — don't mirror that hack in local code.

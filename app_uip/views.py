@@ -7,17 +7,19 @@ from django.db.models import Q
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 
 from app_uip.models import UIP, PartyStatusChoices
 from app_uip.serializers import (
     UIPStatusSerializer,
     UIPBatchStatusSerializer,
     UIPActiveListSerializer,
-    UIPBatchResultSerializer
+    UIPBatchResultSerializer,
+    UIPReserveRequestSerializer,
 )
+from app_uip.services.uip_reserve import reserve_uips
 
 
 class UIPStatusViewSet(viewsets.ViewSet):
@@ -223,3 +225,44 @@ class UIPStatusViewSet(viewsets.ViewSet):
             'count': queryset.count(),
             'result': serializer.data
         })
+
+
+@extend_schema(
+    tags=['УИП'],
+    operation_id='uip_reserve',
+    summary='Резервирование УИП в Честном Знаке (одного или множества)',
+    description=(
+        'Принимает один объект или список объектов. Каждый объект — либо '
+        'генерация нового УИП (article/gtin + production_date + mode [+ count]), '
+        'либо резервирование своих номеров (product_group + party_numbers). '
+        'При генерации все резервирования проходят через внутренний generate_uip.'
+    ),
+    request=UIPReserveRequestSerializer,
+    responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+)
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def api_reserve_uips(request):
+    """Внешний API для резервирования УИП в Честном Знаке (один или множество)."""
+    serializer = UIPReserveRequestSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(
+            {
+                'is_error': True,
+                'message': 'Некорректные данные запроса',
+                'errors': serializer.errors,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    result = reserve_uips(
+        serializer.validated_data,
+        is_external_service=True,
+    )
+
+    response_status = (
+        status.HTTP_200_OK
+        if not result.get('is_error')
+        else status.HTTP_400_BAD_REQUEST
+    )
+    return Response(result, status=response_status)
