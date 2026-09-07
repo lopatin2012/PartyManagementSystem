@@ -10,4 +10,9 @@ router.register('api/v1/status_parties', views.UIPStatusViewSet, basename='api-v
 
 urlpatterns = [
     path('', include(router.urls)),
+    path(
+        'api/v1/reserve-uips/',
+        views.api_reserve_uips,
+        name='api-reserve-uips'
+    ),
 ]
