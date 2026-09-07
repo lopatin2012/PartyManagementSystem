@@ -156,14 +156,24 @@ class UIPReserveItemSerializer(serializers.Serializer):
         return attrs
 
 
-class UIPReserveRequestSerializer(serializers.Serializer):
-    """Тело запроса: один объект или список объектов."""
+class UIPReserveRequestSerializer(UIPReserveItemSerializer):
+    """
+    Тело запроса: один объект или список объектов.
+
+    Принимает либо один объект (поля см. выше), либо массив таких объектов.
+    Каждый объект — либо генерация нового УИП (article/gtin + production_date [+ count]),
+    либо резервирование своих номеров (product_group + party_numbers).
+    """
     def to_internal_value(self, data):
         if isinstance(data, dict):
             item = UIPReserveItemSerializer(data=data)
             item.is_valid(raise_exception=True)
             return item.validated_data
         if isinstance(data, list):
+            if not data:
+                raise serializers.ValidationError(
+                    'Список запросов не может быть пустым.'
+                )
             results = []
             for d in data:
                 item = UIPReserveItemSerializer(data=d)
@@ -173,6 +183,12 @@ class UIPReserveRequestSerializer(serializers.Serializer):
         raise serializers.ValidationError(
             'Тело запроса должно быть объектом или списком объектов.'
         )
+
+    def validate(self, attrs):
+        # Валидация каждого элемента уже выполнена в to_internal_value.
+        if isinstance(attrs, list):
+            return attrs
+        return super().validate(attrs)
 
     def to_representation(self, instance):
         return instance
