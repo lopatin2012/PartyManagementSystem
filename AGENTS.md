@@ -33,7 +33,8 @@ pip install -e .
 - **`config/.env`** is the single config source (loaded by `python-dotenv` in `config/settings.py`). Never read env vars outside settings.
 - **Migrations are gitignored (`**/migrations/*.py`)**, so new migration files don't show in `git status` and aren't shared via git — after a model change run `makemigrations` + `migrate` locally on each machine/DB (only `migrations/__init__.py` is committed). **Exception:** `config/migrations/0001_initial.py` is deliberately tracked in git.
 - **No linting, formatting, or typechecking is enforced.** No ruff/flake8/mypy config exists. Follow existing code style: Russian-language `verbose_name`/`help_text`, explicit `Meta.ordering`, `PROTECT` on FKs, `TextChoices` for enums.
-- **No tests exist.** All `tests.py` files are empty stubs.
+- **Tests: `app_uip/tests.py` contains the only real test suite** (Django `TestCase`; `python manage.py test app_uip`); all other apps' `tests.py` are empty stubs. Run the suite after touching `app_uip` or anything it imports (service/view/serializer changes).
+- **Bugs and new functionality must ship with tests.** When you find/fix a bug, add a test that reproduces the error and proves the fix (guards against regression). When adding new functionality, add tests in the same change covering its happy paths, error paths, and edge cases. When behavior of existing functionality changes, update the corresponding tests accordingly.
 - **Two databases.** Settings define `default` and `archive`. `app_cz.CISCodeArchive` is routed to the `archive` DB by `app_cz/routers.py` (denormalized snapshot, no FKs). `DB_ARCHIVE_*` env vars default to the same DB as `default`. Don't assume single-DB queries for archive data.
 
 ## Architecture

@@ -381,3 +381,50 @@ class ReserveUipsEndpointTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertTrue(response.json()['is_error'])
+
+
+class ReserveUipsSchemaTests(TestCase):
+    """
+    Проверка, что параметры эндпоинта резервирования видны в OpenAPI-схеме
+    (/api/docs). Регрессионный тест: UIPReserveRequestSerializer должен
+    объявлять поля, иначе drf-spectacular не сгенерирует requestBody.
+    """
+
+    PATH = '/uip/api/v1/reserve-uips/'
+    EXPECTED_FIELDS = [
+        'article',
+        'gtin',
+        'production_date',
+        'mode',
+        'count',
+        'party',
+        'target_status',
+        'skip_cz',
+        'product_group',
+        'party_numbers',
+    ]
+
+    def test_schema_includes_request_fields(self):
+        from drf_spectacular.generators import SchemaGenerator
+
+        schema = SchemaGenerator().get_schema(request=None, public=True)
+        paths = schema.get('paths', {})
+
+        self.assertIn(self.PATH, paths)
+        post_operation = paths[self.PATH].get('post', {})
+        self.assertIn('requestBody', post_operation)
+
+        content = post_operation['requestBody']['content']
+        self.assertIn('application/json', content)
+        schema_ref = content['application/json']['schema']
+
+        # Разыменовываем $ref до компонента схемы запроса.
+        if '$ref' in schema_ref:
+            ref_name = schema_ref['$ref'].rsplit('/', 1)[-1]
+            component = schema['components']['schemas'].get(ref_name, {})
+        else:
+            component = schema_ref
+
+        properties = component.get('properties', {})
+        for field in self.EXPECTED_FIELDS:
+            self.assertIn(field, properties, f'Поле "{field}" отсутствует в схеме запроса.')
