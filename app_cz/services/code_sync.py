@@ -672,7 +672,53 @@ def sync_codes_task(
 
         camera_codes = payload.get('sntins_camera') or []
         printer_codes = payload.get('sntins_printer') or []
-        if camera_codes or printer_codes:
+        structured = payload.get('codes')
+
+        if isinstance(structured, list) and structured:
+            # Новый формат: код отдаётся структурой с уровнем
+            # и вложенностью {'code', 'level', 'parent_code'} (переходный период —
+            # агрегация присутствует не на всех линиях). Плоские списки
+            # sntins_camera/sntins_printer остаются для определения статуса
+            # нанесения (APPLIED / PENDING).
+            status_by_code = {}
+            for c in camera_codes:
+                if isinstance(c, str) and c.strip():
+                    status_by_code.setdefault(
+                        c.strip(), ProductionCodeStatusChoices.APPLIED,
+                    )
+            for c in printer_codes:
+                if isinstance(c, str) and c.strip():
+                    status_by_code.setdefault(
+                        c.strip(), ProductionCodeStatusChoices.PENDING,
+                    )
+
+            codes = []
+            seen = set()
+            for item in structured:
+                if not isinstance(item, dict):
+                    continue
+                code = str(item.get('code') or '').strip()
+                if not code or code in seen:
+                    continue
+                seen.add(code)
+
+                rec = {'code': code}
+                if code in status_by_code:
+                    rec['production_status'] = status_by_code[code]
+
+                raw_level = item.get('level')
+                if raw_level is not None:
+                    try:
+                        rec['level'] = int(raw_level)
+                    except (TypeError, ValueError):
+                        pass
+
+                parent_code = item.get('parent_code') or item.get('parent')
+                if parent_code:
+                    rec['parent_code'] = str(parent_code)
+
+                codes.append(rec)
+        elif camera_codes or printer_codes:
             # Молвест.Маркировка: sntins_camera — код нанесён (камера),
             # sntins_printer — код напечатан (ожидает нанесения).
             camera_set = set(camera_codes)
