@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  django-checks:
+    name: Django checks
+    runs-on: ubuntu-latest
+
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DEBUG: "0"
+      SECRET_KEY: ci-insecure-secret-key
+      DB_NAME: party
+      DB_USER: party
+      DB_PASSWORD: party
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      TIME_ZONE: Europe/Moscow
+      IS_TIME_ZONE: "1"
+      SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
+      PYTHONIOENCODING: utf-8
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: party
+          POSTGRES_USER: party
+          POSTGRES_PASSWORD: party
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U party -d party"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          # requirements.txt хранится в UTF-16LE; конвертируем в UTF-8 и
+          # выкидываем Windows-зависимость pywin32 и самоссылочную git-строку.
+          iconv -f utf-16le -t utf-8 requirements.txt \
+            | grep -v -e 'pywin32' -e 'git+' > requirements_ci.txt
+          python -m pip install --upgrade pip
+          pip install -r requirements_ci.txt
+          pip install --no-deps -e .
+
+      - name: Django system check
+        run: python manage.py check
+
+      - name: Check for missing migrations (model drift)
+        continue-on-error: true
+        run: python manage.py makemigrations --check --dry-run --verbosity 2
+
+      - name: Make migrations
+        run: python manage.py makemigrations
+
+      - name: Apply migrations (default)
+        run: python manage.py migrate --noinput
+
+      - name: Apply migrations (archive)
+        run: python manage.py migrate --database archive --noinput
+
+      - name: Collect static
+        run: python manage.py collectstatic --noinput

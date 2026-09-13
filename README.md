@@ -191,3 +191,43 @@ python manage.py run_tasks_worker
 Результаты проверок кэшируются на 30 секунд, чтобы не «пинговать» внешние сервисы на каждом запросе.
 
 В футере отображается **реальное количество запросов за последний час** (считает `LoadTrackingMiddleware` через кэш, см. `app_helper/load_tracker.py`) — вместо статического значения.
+
+## CI/CD
+
+### GitHub Actions
+
+| Workflow | Файл | Назначение |
+| --- | --- | --- |
+| CI | `.github/workflows/ci.yml` | При push/PR поднимает PostgreSQL, ставит зависимости и прогоняет `manage.py check`, `makemigrations`, `migrate` (default + archive) и `collectstatic`. |
+| Deploy | `.github/workflows/deploy.yml` | `git pull` ветки → `docker compose up --build` → проверки. Запускается вручную (`workflow_dispatch` с выбором ветки) или при push в `main`. |
+
+**Требования для Deploy:** self-hosted runner, установленный на сервере деплоя, с метками
+`linux` и `party-management`. Каталог проекта задаётся repository variable `DEPLOY_PATH`
+(если не задана — используется workspace раннера). В каталоге должен лежать файл
+`config/.env`. Ручной запуск: Actions → Deploy → Run workflow → выбрать ветку.
+
+### Скрипт деплоя
+
+Альтернатива Actions для ручного выката на сервере (Linux — `deploy.sh`, Windows — `deploy.ps1`):
+
+```bash
+./deploy.sh [branch] [--check-only] [--no-pull] [--no-build]
+```
+
+```powershell
+.\deploy.ps1 -Branch main [-CheckOnly] [-NoPull] [-NoBuild]
+```
+
+Порядок действий скрипта:
+
+1. `git fetch` / `checkout` / `pull --ff-only` указанной ветки (по умолчанию — текущей);
+2. `docker compose build`;
+3. запуск БД и ожидание готовности (`healthcheck`);
+4. **gate-проверки** (останавливают деплой при ошибке): `manage.py check`,
+   `manage.py makemigrations`, `manage.py collectstatic --noinput`;
+5. применение миграций: `migrate` и `migrate --database archive`;
+6. `docker compose up -d --build` и пост-проверка `manage.py check` в запущенном
+   контейнере.
+
+Флаг `--check-only` выполняет только шаги 1–4 (без миграций и запуска) — удобно
+использовать как pre-deploy проверку.
