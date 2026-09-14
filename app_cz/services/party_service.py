@@ -690,6 +690,139 @@ def sync_parties_from_cz() -> dict:
         }
 
 
+def _restore_burned_uip(
+        uip: UIP,
+        target_status: str,
+        source: str,
+        note: str,
+) -> bool:
+    """
+    Возвращает «сгоревший» УИП (DELETED) в резерв после повторного
+    резервирования в ЧЗ: обновляет дату резервирования и статус.
+
+    :return: True, если УИП был восстановлен.
+    """
+    if uip.status != PartyStatusChoices.DELETED:
+        return False
+
+    with transaction.atomic():
+        uip.reservation_date = timezone.now().date()
+        uip.is_desync = False
+        uip.save(update_fields=['reservation_date', 'is_desync', 'updated_at'])
+        uip.change_status(target_status, source=source, note=note)
+
+    logger.info(
+        f'Повторно зарезервирован сгоревший УИП {uip.number} '
+        f'(статус: {target_status})'
+    )
+    return True
+
+
+def restore_burned_uips(
+        party_numbers: list[str],
+        target_status: str = None,
+        source: str = 'api',
+) -> list[str]:
+    """
+    Возвращает сгоревшие УИП (DELETED) в резерв по списку номеров.
+
+    Вызывается после успешного резервирования номеров в ЧЗ, когда по УИП
+    поступил внешний запрос на использование, а он был удалён по истечении
+    30 дней без регистрации. Тот же номер уже повторно зарезервирован в ЧЗ.
+
+    :return: Список номеров восстановленных УИП.
+    """
+    if not party_numbers:
+        return []
+
+    target = target_status or PartyStatusChoices.RESERVED_LOCAL
+    restored = []
+    for uip in UIP.objects.filter(
+        number__in=party_numbers,
+        status=PartyStatusChoices.DELETED,
+    ):
+        if _restore_burned_uip(
+            uip,
+            target,
+            source=source,
+            note=(
+                'Повторное резервирование сгоревшего УИП '
+                'по запросу на использование'
+            ),
+        ):
+            restored.append(uip.number)
+    return restored
+
+
+def _re_reserve_burned_uip(
+        uip: UIP,
+        article: str,
+        production_date: date,
+        target_status: str = None,
+) -> dict:
+    """
+    Повторно резервирует сгоревший УИП тем же номером в Честном Знаке.
+
+    Вызывается, когда по «сгоревшему» УИП (DELETED после 30 дней без
+    регистрации) поступил внешний запрос на использование. Тот же номер
+    снова резервируется в ЧЗ, обновляется дата резервирования, статус
+    возвращается в reserved_*.
+    """
+    try:
+        product_sku = ProductSKU.objects.get(article=article)
+    except ObjectDoesNotExist:
+        logger.error(f'Отсутствует продукт указанный в запросе: {article}')
+        return {
+            'is_error': True,
+            'message': 'Проверьте артикул продукта или наличие продукта в базе СУП.'
+        }
+
+    reserve_result = reserve_parties_honest_sign(
+        product_group=product_sku.product.group,
+        party_numbers=[uip.number],
+    )
+    if reserve_result.get('is_error'):
+        return {
+            'is_error': True,
+            'message': (
+                f'Не удалось повторно зарезервировать сгоревший УИП '
+                f'{uip.number}: '
+                f'{reserve_result.get("message_error", "неизвестная ошибка")}'
+            ),
+        }
+
+    target = target_status or PartyStatusChoices.RESERVED_LOCAL
+    if target not in PartyStatusChoices.values:
+        target = PartyStatusChoices.RESERVED_LOCAL
+
+    with transaction.atomic():
+        uip.product_sku = product_sku
+        if production_date:
+            uip.production_date = production_date
+        uip.save(update_fields=[
+            'product_sku', 'production_date', 'updated_at',
+        ])
+        _restore_burned_uip(
+            uip,
+            target,
+            source='api',
+            note=(
+                'Повторное резервирование сгоревшего УИП '
+                'по запросу на использование'
+            ),
+        )
+
+    return {
+        'is_error': False,
+        'uuid_uip': str(uip.id),
+        'uuid_task': str(uuid7()),
+        'reservation_date': uip.reservation_date,
+        'status': str(target),
+        'number': uip.number,
+        'message': f'Сгоревший УИП {uip.number} повторно зарезервирован в ЧЗ',
+    }
+
+
 def _generate_local_uip(
         article: str,
         gtin: str,
@@ -740,32 +873,35 @@ def _generate_local_uip(
         }
 
     # 1. Проверка на дубликат в локальной БД.
-    try:
-        uip = UIP.objects.get(number=number)
-        if is_external_service:
-            return {
-                'is_error': False,
-                'uuid_uip': str(uip.id),
-                'uuid_task': str(uuid7()),
-                'reservation_date': uip.reservation_date,
-                'status': str(uip.status),
-                'number': number,
-                'message': f'УИП с номером {number} уже существует.'
-            }
+    existing_uip = UIP.objects.filter(number=number).first()
+    if existing_uip is not None:
+        # Повторное резервирование «сгоревшего» УИП по запросу на использование:
+        # УИП был удалён после 30 дней без регистрации, но по нему снова пришёл
+        # запрос — резервируем тот же номер в ЧЗ заново.
+        if (
+                existing_uip.status == PartyStatusChoices.DELETED
+                and not skip_cz
+        ):
+            return _re_reserve_burned_uip(
+                existing_uip,
+                article,
+                production_date,
+                target_status,
+            )
         return {
-            'is_error': True,
-            'uuid_uip': str(uip.id),
+            'is_error': not is_external_service,
+            'uuid_uip': str(existing_uip.id),
             'uuid_task': str(uuid7()),
-            'reservation_date': uip.reservation_date,
-            'status': str(uip.status),
+            'reservation_date': existing_uip.reservation_date,
+            'status': str(existing_uip.status),
             'number': number,
             'message': f'УИП с номером {number} уже существует.'
         }
-    except ObjectDoesNotExist:
-        logger.info(
-            f'УИП с номером {number} не найден в локальной базе. '
-            f'Будет произведена попытка генерации'
-        )
+
+    logger.info(
+        f'УИП с номером {number} не найден в локальной базе. '
+        f'Будет произведена попытка генерации'
+    )
 
     # Получить продукт по его артикулу.
     try:
