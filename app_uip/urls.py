@@ -15,4 +15,9 @@ urlpatterns = [
         views.api_reserve_uips,
         name='api-reserve-uips'
     ),
+    path(
+        'api/v1/search/',
+        views.api_search,
+        name='api-search'
+    ),
 ]

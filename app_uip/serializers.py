@@ -4,6 +4,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from app_cz.enums import TypeProduct
+from app_cz.models import CISCode
 
 from app_uip.models import UIP, PartyStatusChoices
 
@@ -65,7 +66,7 @@ class UIPBatchResultSerializer(serializers.Serializer):
 class UIPActiveListSerializer(serializers.ModelSerializer):
     """Сериализатор для списка действующих УИП."""
     status_display = serializers.CharField(source='get_status_display', read_only=True)
-    product_name = serializers.CharField(source='product_sku.name', read_only=True)
+    product_name = serializers.CharField(source='product_sku.product.name', read_only=True)
     product_article = serializers.CharField(source='product_sku.article', read_only=True)
 
     class Meta:
@@ -83,6 +84,31 @@ class UIPActiveListSerializer(serializers.ModelSerializer):
             'production_date',
             'reservation_date'
         ]
+
+
+class CISCodeSearchResultSerializer(serializers.ModelSerializer):
+    """Сериализатор результата поиска по коду маркировки."""
+    uip_number = serializers.SerializerMethodField()
+    gtin = serializers.CharField(source='product_packaging.gtin', read_only=True)
+    level_display = serializers.CharField(source='get_level_display', read_only=True)
+    cz_status_display = serializers.CharField(source='get_cz_status_display', read_only=True)
+    production_status_display = serializers.CharField(
+        source='get_production_status_display', read_only=True
+    )
+
+    class Meta:
+        model = CISCode
+        fields = [
+            'id', 'code', 'uip_number', 'gtin',
+            'level', 'level_display',
+            'cz_status', 'cz_status_display',
+            'production_status', 'production_status_display',
+            'created_at', 'updated_at',
+        ]
+
+    @extend_schema_field(serializers.CharField(allow_null=True))
+    def get_uip_number(self, obj):
+        return obj.production_party.uip.number if obj.production_party.uip else None
 
 
 class UIPReserveItemSerializer(serializers.Serializer):
