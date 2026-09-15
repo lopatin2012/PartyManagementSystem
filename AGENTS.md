@@ -19,6 +19,10 @@ python manage.py run_tasks_worker
 python manage.py makemigrations <app_label>
 python manage.py migrate
 
+# Tests (the only real suite; also runnable per class/method)
+python manage.py test app_uip
+python manage.py test app_uip.tests.ReserveUipsServiceTests.test_generate_count_loops
+
 # Install in editable mode (generates config/_version.py from git tags)
 pip install -e .
 ```
@@ -81,4 +85,4 @@ pip install -e .
 - **Management commands:** `app_cz/management/commands/archive_old_codes.py`, `app_cz/management/commands/reset_nk_sync.py`, `app_factory/management/commands/sync_molvest_reference.py`, plus `run_scheduler`/`run_tasks_worker` in `app_scheduler`.
 - **Live events** are written via `log_event()` from `app_event/utils.py` (module/level/message/actor/metadata); use it instead of ad-hoc logging for user-visible feed entries.
 - **`requirements.txt` is UTF-16LE-encoded** (Windows BOM `FF FE`), so Read/Edit tools see it as binary. The Dockerfile converts it via `iconv`; keep the encoding intact when editing.
-- **Docker** (`docker-compose.yml`: web + Postgres 15) is available but not the primary dev flow. Container runs `migrate` **on both DBs** (`--database archive` too) + `collectstatic` + `run_all.py`, and the Dockerfile patches `settings.py` to take `DB_HOST` from env via `sed` — don't mirror that hack in local code.
+- **Docker** (`docker-compose.yml`: web + Postgres 15) is available but not the primary dev flow. The container CMD runs `python app_cz/management/commands/reset_nk_sync.py` (executes the file directly, not via `manage.py`), then `makemigrations` + `migrate` **on both DBs** (`--database archive` too) + `collectstatic` + `run_all.py`. The Dockerfile patches `settings.py` to take `DB_HOST` from env via `sed` and strips `pywin32`/`git+` lines from the UTF-16 requirements — don't mirror those hacks in local code.
