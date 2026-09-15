@@ -1,6 +1,10 @@
-# Git / IDE / локальные артефакты — не попадают в контекст сборки.
+# Git / CI / IDE / локальные артефакты — не попадают в контекст сборки.
 .git
+.github
 .gitignore
+deploy.sh
+deploy.ps1
+requirements_ci.txt
 .venv
 venv/
 env/

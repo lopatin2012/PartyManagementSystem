@@ -1,0 +1,66 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Ветка для деплоя"
+        required: true
+        default: main
+        type: string
+      check_only:
+        description: "Только проверки (git pull + build + gate), без миграций и запуска"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: deploy-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy on self-hosted runner
+    # Требуется self-hosted runner, установленный на сервере деплоя с метками
+    # linux и party-management. Настройка — см. README, раздел «CI/CD».
+    runs-on: [self-hosted, linux, party-management]
+
+    env:
+      DEPLOY_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Deploy ${{ env.DEPLOY_BRANCH }}
+        shell: bash
+        env:
+          CHECK_ONLY: ${{ inputs.check_only }}
+        run: |
+          set -euo pipefail
+
+          # Каталог деплоя: repo variable DEPLOY_PATH, иначе — workspace раннера.
+          DEPLOY_PATH="${{ vars.DEPLOY_PATH }}"
+          if [[ -z "${DEPLOY_PATH}" ]]; then
+            DEPLOY_PATH="${GITHUB_WORKSPACE}"
+          fi
+
+          if [[ ! -f "${DEPLOY_PATH}/deploy.sh" ]]; then
+            echo "deploy.sh не найден в ${DEPLOY_PATH}." >&2
+            echo "Убедитесь, что там развёрнут проект (git clone) и задана variable DEPLOY_PATH." >&2
+            exit 1
+          fi
+
+          cd "${DEPLOY_PATH}"
+          chmod +x deploy.sh
+
+          if [[ "${CHECK_ONLY}" == "true" ]]; then
+            ./deploy.sh "${DEPLOY_BRANCH}" --check-only
+          else
+            ./deploy.sh "${DEPLOY_BRANCH}"
+          fi
