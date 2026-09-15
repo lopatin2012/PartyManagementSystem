@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 
+from django.core.paginator import Paginator
 from django.utils import timezone
 from django.db.models import Q
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
@@ -11,6 +12,10 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 
+from app_cz.models import CISCode
+
+from app_helper.search_helper import detect_search_type, clean_datamatrix_code
+
 from app_uip.models import UIP, PartyStatusChoices
 from app_uip.serializers import (
     UIPStatusSerializer,
@@ -18,6 +23,7 @@ from app_uip.serializers import (
     UIPActiveListSerializer,
     UIPBatchResultSerializer,
     UIPReserveRequestSerializer,
+    CISCodeSearchResultSerializer,
 )
 from app_uip.services.uip_reserve import reserve_uips
 
@@ -266,3 +272,111 @@ def api_reserve_uips(request):
         else status.HTTP_400_BAD_REQUEST
     )
     return Response(result, status=response_status)
+
+
+@extend_schema(
+    tags=['УИП'],
+    operation_id='search',
+    summary='Единый поиск по УИП или коду маркировки',
+    description=(
+        'Автоматически определяет тип запроса (номер УИП или код маркировки '
+        'DataMatrix) и возвращает совпадения. Тип можно задать принудительно '
+        'через параметр `type`.'
+    ),
+    parameters=[
+        OpenApiParameter(
+            name='q',
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.QUERY,
+            required=True,
+            description='Поисковый запрос: номер УИП или код маркировки (DataMatrix)',
+        ),
+        OpenApiParameter(
+            name='type',
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.QUERY,
+            required=False,
+            enum=['code', 'uip'],
+            description='Принудительно задать тип поиска (по умолчанию определяется автоматически)',
+        ),
+        OpenApiParameter(
+            name='page',
+            type=OpenApiTypes.INT,
+            location=OpenApiParameter.QUERY,
+            required=False,
+            description='Номер страницы (по умолчанию 1)',
+        ),
+        OpenApiParameter(
+            name='page_size',
+            type=OpenApiTypes.INT,
+            location=OpenApiParameter.QUERY,
+            required=False,
+            description='Размер страницы (по умолчанию 25, максимум 100)',
+        ),
+    ],
+    responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+)
+@api_view(['GET'])
+def api_search(request):
+    """
+    GET /uip/api/v1/search/?q=<запрос>
+
+    Единый поиск, повторяющий страницу /search/: по номеру УИП или коду
+    маркировки. Тип определяется автоматически (app_helper.search_helper).
+    """
+    query = (
+        request.query_params.get('q')
+        or request.query_params.get('query')
+        or ''
+    ).strip()
+
+    if not query:
+        return Response(
+            {
+                'is_error': True,
+                'message': 'Укажите поисковый запрос в параметре q.',
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    forced_type = request.query_params.get('type')
+    if forced_type in ('code', 'uip'):
+        search_type = forced_type
+    else:
+        search_type = detect_search_type(query)
+
+    if search_type == 'uip':
+        queryset = UIP.objects.filter(
+            number__iexact=query
+        ).select_related(
+            'product_sku__product'
+        ).order_by('-created_at')
+        serializer_class = UIPActiveListSerializer
+    else:
+        cleaned_code = clean_datamatrix_code(query)
+        queryset = CISCode.objects.filter(
+            Q(code__iexact=cleaned_code) | Q(code__istartswith=cleaned_code)
+        ).select_related(
+            'production_party__uip',
+            'product_packaging__product',
+        ).order_by('-created_at')
+        serializer_class = CISCodeSearchResultSerializer
+
+    try:
+        page_size = int(request.query_params.get('page_size', 25))
+    except (TypeError, ValueError):
+        page_size = 25
+    page_size = max(1, min(page_size, 100))
+
+    paginator = Paginator(queryset, page_size)
+    page_obj = paginator.get_page(request.query_params.get('page', 1))
+
+    serializer = serializer_class(page_obj.object_list, many=True)
+    return Response({
+        'query': query,
+        'search_type': search_type,
+        'count': paginator.count,
+        'page': page_obj.number,
+        'page_size': page_size,
+        'results': serializer.data,
+    })

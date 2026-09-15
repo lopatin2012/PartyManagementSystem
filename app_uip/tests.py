@@ -16,9 +16,10 @@ from app_factory.models import (
     TypeFormationUIP,
 )
 
+from app_cz.models import CISCode
 from app_cz.services.party_service import build_local_party_number
 
-from app_uip.models import UIP, PartyStatusChoices
+from app_uip.models import UIP, ProductionParty, PartyStatusChoices
 from app_uip.serializers import (
     UIPReserveItemSerializer,
     UIPReserveRequestSerializer,
@@ -585,3 +586,124 @@ class ReReserveBurnedUipTests(TestCase):
         uip.refresh_from_db()
         self.assertEqual(uip.status, PartyStatusChoices.RESERVED_CZ)
         self.assertEqual(uip.reservation_date, date(2025, 1, 1))
+
+
+# ==========================================
+# Единый поиск (УИП / код маркировки).
+# ==========================================
+
+class UIPSearchEndpointTests(TestCase):
+    """Проверка GET /uip/api/v1/search/."""
+
+    URL = '/uip/api/v1/search/'
+    GTIN = '04601751026019'
+    UIP_NUMBER = '04601751026019260101500320000000'
+    CODE = '010460175102601921ABC123'
+
+    def setUp(self):
+        self.sku = create_product(gtin=self.GTIN)
+        self.packaging = ProductPackaging.objects.get(gtin=self.GTIN)
+        self.uip = UIP.objects.create(
+            product_sku=self.sku,
+            number=self.UIP_NUMBER,
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        self.party = ProductionParty.objects.create(
+            uip=self.uip,
+            production_party='1',
+        )
+        self.code = CISCode.objects.create(
+            production_party=self.party,
+            product_packaging=self.packaging,
+            code=self.CODE,
+            level=PackagingLevelChoices.UNIT,
+        )
+
+    def test_search_by_uip_number(self):
+        response = self.client.get(self.URL, {'q': self.UIP_NUMBER})
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['search_type'], 'uip')
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(data['results'][0]['number'], self.UIP_NUMBER)
+
+    def test_search_by_code(self):
+        response = self.client.get(self.URL, {'q': self.CODE})
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['search_type'], 'code')
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(data['results'][0]['code'], self.CODE)
+        self.assertEqual(data['results'][0]['uip_number'], self.UIP_NUMBER)
+        self.assertEqual(data['results'][0]['gtin'], self.GTIN)
+
+    def test_search_by_code_with_gs_separator(self):
+        response = self.client.get(
+            self.URL, {'q': '0104601751026019\x1D21ABC123'}
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['search_type'], 'code')
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(data['results'][0]['code'], self.CODE)
+
+    def test_type_override_forces_uip(self):
+        response = self.client.get(self.URL, {'q': self.CODE, 'type': 'uip'})
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['search_type'], 'uip')
+        self.assertEqual(data['count'], 0)
+
+    def test_missing_query_returns_400(self):
+        response = self.client.get(self.URL)
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(response.json()['is_error'])
+
+    def test_not_found_returns_empty(self):
+        response = self.client.get(
+            self.URL, {'q': '04601751026019260101500320999999'}
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['count'], 0)
+        self.assertEqual(data['results'], [])
+
+    def test_pagination(self):
+        for suffix in ('4', '5'):
+            CISCode.objects.create(
+                production_party=self.party,
+                product_packaging=self.packaging,
+                code=f'010460175102601921ABC12{suffix}',
+                level=PackagingLevelChoices.UNIT,
+            )
+        response = self.client.get(
+            self.URL,
+            {'q': '010460175102601921', 'page_size': 1, 'page': 2},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['search_type'], 'code')
+        self.assertEqual(data['count'], 3)
+        self.assertEqual(data['page'], 2)
+        self.assertEqual(data['page_size'], 1)
+        self.assertEqual(len(data['results']), 1)
+
+
+class UIPActiveListEndpointTests(TestCase):
+    """
+    Регрессия: product_name должен браться из product_sku.product.name
+    (у ProductSKU нет собственного поля name).
+    """
+
+    def test_active_list_includes_product_name(self):
+        sku = create_product()
+        UIP.objects.create(
+            product_sku=sku,
+            number='04601751026019260101500320000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        response = self.client.get('/uip/api/v1/status_parties/active/')
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(data['result'][0]['product_name'], 'Тестовый продукт')
