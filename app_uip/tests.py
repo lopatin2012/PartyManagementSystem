@@ -1,7 +1,9 @@
+from datetime import date
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.test import TestCase
+from django.utils import timezone
 
 from app_factory.models import (
     Product,
@@ -11,7 +13,10 @@ from app_factory.models import (
     ProductGroupChoices,
     StateConditionChoices,
     CardStateChoices,
+    TypeFormationUIP,
 )
+
+from app_cz.services.party_service import build_local_party_number
 
 from app_uip.models import UIP, PartyStatusChoices
 from app_uip.serializers import (
@@ -428,3 +433,155 @@ class ReserveUipsSchemaTests(TestCase):
         properties = component.get('properties', {})
         for field in self.EXPECTED_FIELDS:
             self.assertIn(field, properties, f'Поле "{field}" отсутствует в схеме запроса.')
+
+
+# ==========================================
+# Повторное резервирование сгоревших УИП.
+# ==========================================
+
+BURNED_GTIN = '04601751026019'
+BURNED_ARTICLE = '50032'
+BURNED_DATE = date(2026, 1, 1)
+
+
+def burned_uip_number() -> str:
+    """Детерминированный номер УИП тестового продукта (режим local)."""
+    return build_local_party_number(
+        BURNED_GTIN,
+        BURNED_DATE,
+        BURNED_ARTICLE,
+        '000',
+        TypeFormationUIP.general.value,
+    )
+
+
+class ReReserveBurnedUipTests(TestCase):
+    """
+    УИП, «сгоревший» за 30 дней неиспользования (status=deleted), должен
+    повторно резервироваться тем же номером, если по нему пришёл запрос
+    на использование (генерация или резервирование своих номеров).
+    """
+
+    def setUp(self):
+        self.sku = create_product(article=BURNED_ARTICLE, gtin=BURNED_GTIN)
+
+    def _create_burned_uip(self, reservation_date=date(2025, 1, 1)):
+        return UIP.objects.create(
+            product_sku=self.sku,
+            number=burned_uip_number(),
+            status=PartyStatusChoices.DELETED,
+            reservation_date=reservation_date,
+        )
+
+    def test_generate_re_reserves_burned_uip(self):
+        uip = self._create_burned_uip()
+        uip.is_desync = True
+        uip.save(update_fields=['is_desync'])
+
+        with patch(
+            'app_cz.services.party_service.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = {
+                'is_error': False,
+                'message_error': 'Ошибки отсутствуют',
+                'lst_party_number_info': [{'partyNumber': uip.number}],
+            }
+            result = reserve_uips({
+                'article': BURNED_ARTICLE,
+                'production_date': BURNED_DATE.isoformat(),
+                'mode': 'local',
+            })
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['count'], 1)
+        mock_reserve.assert_called_once()
+
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertEqual(uip.reservation_date, timezone.now().date())
+        self.assertFalse(uip.is_desync)
+
+    def test_generate_cz_rejection_keeps_uip_burned(self):
+        uip = self._create_burned_uip()
+
+        with patch(
+            'app_cz.services.party_service.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = {
+                'is_error': True,
+                'message_error': 'УИП уже зарезервирован',
+            }
+            result = reserve_uips({
+                'article': BURNED_ARTICLE,
+                'production_date': BURNED_DATE.isoformat(),
+                'mode': 'local',
+            })
+
+        self.assertTrue(result['is_error'])
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.DELETED)
+        self.assertEqual(uip.reservation_date, date(2025, 1, 1))
+
+    def test_generate_existing_active_uip_not_re_reserved(self):
+        uip = self._create_burned_uip()
+        uip.change_status(PartyStatusChoices.RESERVED_LOCAL, source='test')
+
+        with patch(
+            'app_cz.services.party_service.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            result = reserve_uips({
+                'article': BURNED_ARTICLE,
+                'production_date': BURNED_DATE.isoformat(),
+                'mode': 'local',
+            })
+
+        self.assertTrue(result['is_error'])
+        mock_reserve.assert_not_called()
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+
+    def test_reserve_own_restores_burned_uip(self):
+        uip = self._create_burned_uip()
+
+        with patch(
+            'app_uip.services.uip_reserve.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = {
+                'is_error': False,
+                'message_error': 'Ошибки отсутствуют',
+                'lst_party_number_info': [{'partyNumber': uip.number}],
+            }
+            result = reserve_uips({
+                'product_group': 'milk',
+                'party_numbers': [uip.number],
+            })
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['results'][0]['restored'], [uip.number])
+
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertEqual(uip.reservation_date, timezone.now().date())
+
+    def test_reserve_own_does_not_touch_active_uip(self):
+        uip = self._create_burned_uip()
+        uip.change_status(PartyStatusChoices.RESERVED_CZ, source='test')
+
+        with patch(
+            'app_uip.services.uip_reserve.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = {
+                'is_error': False,
+                'message_error': 'Ошибки отсутствуют',
+                'lst_party_number_info': [{'partyNumber': uip.number}],
+            }
+            result = reserve_uips({
+                'product_group': 'milk',
+                'party_numbers': [uip.number],
+            })
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['results'][0]['restored'], [])
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_CZ)
+        self.assertEqual(uip.reservation_date, date(2025, 1, 1))

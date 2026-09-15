@@ -8,6 +8,7 @@ from app_cz.services.party_service import (
     generate_uip,
     reserve_parties_honest_sign,
     find_sku_by_gtin,
+    restore_burned_uips,
 )
 from app_factory.models import ProductSKU
 
@@ -141,12 +142,23 @@ def _reserve_own(item: dict) -> dict:
         for info in lst
         if info.get('partyNumber')
     ]
+
+    # Повторное резервирование сгоревших УИП: номер уже зарезервирован в ЧЗ
+    # заново, поэтому локальные УИП, удалённые по истечении 30 дней,
+    # возвращаем в резерв и обновляем дату резервирования.
+    restored = restore_burned_uips(numbers, source='api')
+
+    message = f'Зарезервировано номеров: {len(numbers)} шт.'
+    if restored:
+        message += f' (повторно зарезервировано сгоревших: {len(restored)})'
+
     return {
         'is_error': False,
         'number': ', '.join(numbers),
         'numbers': numbers,
         'count': len(numbers),
-        'message': f'Зарезервировано номеров: {len(numbers)} шт.',
+        'restored': restored,
+        'message': message,
     }
 
 
