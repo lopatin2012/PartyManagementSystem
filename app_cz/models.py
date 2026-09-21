@@ -107,6 +107,23 @@ class CISCode(models.Model):
         """Получаем УИП через производственную партию."""
         return self.production_party.uip
 
+    @property
+    def product(self):
+        """Продукт кода (через упаковку)."""
+        return self.product_packaging.product
+
+    @property
+    def article(self) -> str:
+        """
+        Артикул активного SKU продукта (для отображения в результатах поиска).
+        Использует prefetch_related('product_packaging__product__skus'),
+        чтобы не порождать запрос на каждую карточку.
+        """
+        for sku in self.product_packaging.product.skus.all():
+            if sku.is_active:
+                return sku.article
+        return ''
+
     def clean(self):
         """Проверяем согласованность уровня упаковки."""
         if self.product_packaging_id and self.level != self.product_packaging.level:

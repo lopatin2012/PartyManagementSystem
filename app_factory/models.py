@@ -94,6 +94,23 @@ class Factory(UUIDModel):
     )
     is_active = models.BooleanField(default=True, verbose_name='Действующий')
 
+    # Состояние синхронизации заданий с внешним сервисом «Молвест.Маркировка».
+    # Метка хранится PER-ЗАВОД и двигается только при УСПЕШНОЙ выгрузке —
+    # недоступность одного завода не пропускает его окно изменений.
+    external_sync_changed_since = models.DateTimeField(
+        null=True, blank=True,
+        verbose_name='Метка синхронизации заданий',
+        help_text='Задания, изменённые после этого момента, выгружаются при следующей синхронизации'
+    )
+    external_sync_success_at = models.DateTimeField(
+        null=True, blank=True,
+        verbose_name='Последняя успешная синхронизация заданий'
+    )
+    external_sync_error = models.TextField(
+        blank=True, default='',
+        verbose_name='Последняя ошибка синхронизации заданий'
+    )
+
     class Meta:
         verbose_name = "Завод"
         verbose_name_plural = "1. Заводы"

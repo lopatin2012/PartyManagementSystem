@@ -170,6 +170,11 @@ CACHES = {
 
 ROOT_URLCONF = 'config.urls'
 
+# Аутентификация: стандартные URL Django подключены под префиксом /auth/.
+LOGIN_URL = '/auth/login/'
+LOGIN_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = '/auth/login/'
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',

@@ -1,0 +1,32 @@
+<!-- templates/403.html -->
+
+{% extends 'base.html' %}
+{% load static %}
+
+{% block head %}
+    <link rel="stylesheet" href="{% static 'css/errors.css' %}">
+{% endblock %}
+
+{% block content %}
+    <div class="error-page">
+        <div class="error-card">
+            <div class="error-code">403</div>
+            <h1 class="error-title">Доступ запрещён</h1>
+            <p class="error-text">
+                {{ exception|default:"У вас нет прав для просмотра этой страницы." }}
+            </p>
+            <p class="error-hint">
+                Обратитесь к администратору системы, чтобы получить доступ к разделу.
+            </p>
+            <div class="error-actions">
+                <a href="{% url 'home' %}" class="error-btn error-btn-primary">← На главную</a>
+                {% if can_view_uip %}
+                    <a href="{% url 'uip_list' %}" class="error-btn">К списку УИП</a>
+                {% endif %}
+                {% if not is_authenticated %}
+                    <a href="{% url 'login' %}" class="error-btn">Войти</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+{% endblock %}

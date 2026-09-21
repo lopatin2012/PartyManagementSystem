@@ -1,8 +1,9 @@
 from datetime import date
 from unittest.mock import patch
 
-from django.contrib.auth.models import User
-from django.test import TestCase
+from django.contrib.auth.models import Group, Permission, User
+from django.test import TestCase, override_settings
+from django.urls import reverse
 from django.utils import timezone
 
 from app_factory.models import (
@@ -14,10 +15,21 @@ from app_factory.models import (
     StateConditionChoices,
     CardStateChoices,
     TypeFormationUIP,
+    Factory,
+    Workshop,
+    Line,
 )
 
 from app_cz.models import CISCode
 from app_cz.services.party_service import build_local_party_number
+
+from app_helper.access import (
+    ROLE_ADMIN,
+    ROLE_VIEW,
+    is_admin,
+    can_view_uip,
+    can_generate_uip,
+)
 
 from app_uip.models import UIP, ProductionParty, PartyStatusChoices
 from app_uip.serializers import (
@@ -707,3 +719,166 @@ class UIPActiveListEndpointTests(TestCase):
         data = response.json()
         self.assertEqual(data['count'], 1)
         self.assertEqual(data['result'][0]['product_name'], 'Тестовый продукт')
+
+
+# ==========================================
+# Роли и доступ (группы Django).
+# ==========================================
+
+# В тестах DEBUG выключен, а ManifestStaticFilesStorage требует собранный
+# манифест. Для рендер-тестов подменяем статику на простую.
+STATIC_OVERRIDE = override_settings(STORAGES={
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
+})
+
+
+class AccessRolesTests(TestCase):
+    """Проверка ролевых хелперов (Админ / Просмотр)."""
+
+    def setUp(self):
+        self.admin_group, _ = Group.objects.get_or_create(name=ROLE_ADMIN)
+        self.view_group, _ = Group.objects.get_or_create(name=ROLE_VIEW)
+
+    def _user(self, username, groups=(), **extra):
+        user = User.objects.create_user(username=username, password='pass', **extra)
+        for group in groups:
+            user.groups.add(group)
+        return user
+
+    def test_superuser_is_admin(self):
+        root = User.objects.create_superuser('root', 'root@example.com', 'pass')
+        self.assertTrue(is_admin(root))
+
+    def test_admin_group_member_is_admin(self):
+        user = self._user('adm', [self.admin_group])
+        self.assertTrue(is_admin(user))
+        self.assertTrue(can_generate_uip(user))
+
+    def test_view_group_member_can_view_not_generate(self):
+        user = self._user('viewer', [self.view_group])
+        self.assertFalse(is_admin(user))
+        self.assertTrue(can_view_uip(user))
+        self.assertFalse(can_generate_uip(user))
+
+    def test_viewer_with_add_uip_can_generate(self):
+        user = self._user('viewer-writer', [self.view_group])
+        user.user_permissions.add(
+            Permission.objects.get(
+                content_type__app_label='app_uip', codename='add_uip'
+            )
+        )
+        self.assertTrue(can_generate_uip(user))
+
+    def test_user_without_roles_has_no_uip_access(self):
+        user = self._user('nobody')
+        self.assertFalse(can_view_uip(user))
+        self.assertFalse(can_generate_uip(user))
+
+
+@STATIC_OVERRIDE
+class UIPPageAccessTests(TestCase):
+    """Доступ к странице УИП и генерации по ролям."""
+
+    def setUp(self):
+        self.view_group, _ = Group.objects.get_or_create(name=ROLE_VIEW)
+
+    def _viewer(self, username, with_write=False):
+        user = User.objects.create_user(username=username, password='pass')
+        user.groups.add(self.view_group)
+        if with_write:
+            user.user_permissions.add(
+                Permission.objects.get(
+                    content_type__app_label='app_uip', codename='add_uip'
+                )
+            )
+        return user
+
+    def test_anonymous_redirected_to_login(self):
+        response = self.client.get(reverse('uip_list'))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/auth/login/', response.url)
+
+    def test_viewer_can_open_uip_page(self):
+        self.client.force_login(self._viewer('viewer'))
+        self.assertEqual(self.client.get(reverse('uip_list')).status_code, 200)
+
+    def test_superuser_can_open_uip_page(self):
+        root = User.objects.create_superuser('root-uip', 'root-uip@example.com', 'pass')
+        self.client.force_login(root)
+        self.assertEqual(self.client.get(reverse('uip_list')).status_code, 200)
+
+    def test_user_without_role_forbidden(self):
+        user = User.objects.create_user(username='nobody', password='pass')
+        self.client.force_login(user)
+        response = self.client.get(reverse('uip_list'))
+        self.assertEqual(response.status_code, 403)
+        self.assertContains(response, 'Доступ запрещён', status_code=403)
+
+    def test_viewer_without_write_cannot_generate(self):
+        self.client.force_login(self._viewer('viewer-nowrite'))
+        response = self.client.post(
+            reverse('uip_generate'), data='{}', content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_viewer_with_write_can_reach_generate(self):
+        self.client.force_login(self._viewer('viewer-write', with_write=True))
+        response = self.client.post(
+            reverse('uip_generate'), data='{}', content_type='application/json'
+        )
+        # Доступ есть: пустое тело даёт 400 (нет параметров), но не 403.
+        self.assertEqual(response.status_code, 400)
+
+    def test_admin_page_requires_admin(self):
+        self.client.force_login(self._viewer('viewer-adminpage'))
+        self.assertEqual(self.client.get(reverse('sync_tasks')).status_code, 403)
+
+
+# ==========================================
+# Результаты поиска — карточки и внешнее задание.
+# ==========================================
+
+@STATIC_OVERRIDE
+class SearchResultsCardTests(TestCase):
+    """Поиск отдаёт карточку с внешним номером задания и местом производства."""
+
+    def setUp(self):
+        self.sku = create_product()
+        self.factory = Factory.objects.create(name='Завод Тестовый')
+        self.workshop = Workshop.objects.create(factory=self.factory, name='Цех Тестовый')
+        self.line = Line.objects.create(workshop=self.workshop, name='Линия Тестовая')
+        self.uip = UIP.objects.create(
+            product_sku=self.sku,
+            number='04601751026019260101500320000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        self.party = ProductionParty.objects.create(
+            uip=self.uip,
+            line=self.line,
+            external_number_task='TASK-EXTERNAL-1',
+            production_party='145',
+        )
+        packaging = self.sku.product.packagings.first()
+        self.code = CISCode.objects.create(
+            production_party=self.party,
+            product_packaging=packaging,
+            code='01046017510260192150abc',
+            level=PackagingLevelChoices.UNIT,
+        )
+
+    def test_code_search_shows_external_task_and_place(self):
+        response = self.client.get(reverse('search'), {'q': self.code.code})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['search_type'], 'code')
+        self.assertContains(response, 'TASK-EXTERNAL-1')
+        self.assertContains(response, 'Завод Тестовый')
+        self.assertContains(response, 'Цех Тестовый')
+        self.assertContains(response, 'Линия Тестовая')
+
+    def test_uip_search_shows_external_task(self):
+        response = self.client.get(reverse('search'), {'q': self.uip.number})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['search_type'], 'uip')
+        self.assertContains(response, 'TASK-EXTERNAL-1')
+        self.assertContains(response, 'Завод Тестовый')

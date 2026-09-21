@@ -1,0 +1,26 @@
+<!-- templates/404.html -->
+
+{% extends 'base.html' %}
+{% load static %}
+
+{% block head %}
+    <link rel="stylesheet" href="{% static 'css/errors.css' %}">
+{% endblock %}
+
+{% block content %}
+    <div class="error-page">
+        <div class="error-card">
+            <div class="error-code">404</div>
+            <h1 class="error-title">Страница не найдена</h1>
+            <p class="error-text">
+                Запрашиваемая страница не существует или была перемещена.
+            </p>
+            <div class="error-actions">
+                <a href="{% url 'home' %}" class="error-btn error-btn-primary">← На главную</a>
+                {% if can_view_uip %}
+                    <a href="{% url 'uip_list' %}" class="error-btn">К списку УИП</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+{% endblock %}

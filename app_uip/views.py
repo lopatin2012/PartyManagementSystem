@@ -10,11 +10,12 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAuthenticated
 
 from app_cz.models import CISCode
 
 from app_helper.search_helper import detect_search_type, clean_datamatrix_code
+from app_helper.access import IsAppAdmin
 
 from app_uip.models import UIP, PartyStatusChoices
 from app_uip.serializers import (
@@ -247,7 +248,7 @@ class UIPStatusViewSet(viewsets.ViewSet):
     responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
 )
 @api_view(['POST'])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAppAdmin])
 def api_reserve_uips(request):
     """Внешний API для резервирования УИП в Честном Знаке (один или множество)."""
     serializer = UIPReserveRequestSerializer(data=request.data)

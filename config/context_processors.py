@@ -19,10 +19,19 @@ def service_context(request):
 
 
 def user_context(request):
-    """Информация о пользователе."""
+    """Информация о пользователе и его правах (роли)."""
+    from app_helper.access import (
+        is_admin, is_viewer, can_view_uip, can_generate_uip,
+    )
+
+    user = request.user
     return {
         'user_name': get_user_name(request),
-        'is_authenticated': request.user.is_authenticated,
+        'is_authenticated': user.is_authenticated,
+        'is_admin': is_admin(user),
+        'is_viewer': is_viewer(user),
+        'can_view_uip': can_view_uip(user),
+        'can_generate_uip': can_generate_uip(user),
     }
 
 
@@ -45,13 +54,15 @@ def global_footer_info(request):
 
 def service_status_info(request):
     """Статусы внешних сервисов."""
+    from app_helper.access import is_admin
+
     # 1. Статус СУЗ
     suz_account = SUZAccount.objects.filter(is_active=True).first()
     suz_status = {
         'is_active': bool(suz_account),
         'token_valid': False,
         'expires_in_seconds': 0,
-        'can_manage': request.user.is_authenticated and request.user.is_superuser
+        'can_manage': is_admin(request.user),
     }
 
     if suz_account and suz_account.is_token_valid:

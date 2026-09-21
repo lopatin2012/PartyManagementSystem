@@ -10,14 +10,14 @@
 {% block content %}
     <div class="search-results-container">
         <h1>Результаты поиска</h1>
-        
+
         {% if query %}
             <p class="search-info">
-                Найдено: <strong>{{ total_count }}</strong> результатов по запросу 
+                Найдено: <strong>{{ total_count }}</strong> результатов по запросу
                 "<strong>{{ query }}</strong>"
                 <br>
                 <small>
-                    Тип поиска определён автоматически: 
+                    Тип поиска определён автоматически:
                     {% if search_type == 'code' %}
                         <strong>Код маркировки</strong>
                     {% elif search_type == 'uip' %}
@@ -25,72 +25,128 @@
                     {% endif %}
                 </small>
             </p>
-            
+
             {% if results %}
-                <div class="results-table">
-                    <table>
-                        <thead>
-                            <tr>
-                                {% if search_type == 'code' %}
-                                    <th>Код</th>
-                                    <th>УИП</th>
-                                    <th>GTIN</th>
-                                    <th>Уровень</th>
-                                    <th>Статус ЧЗ</th>
-                                    <th>Статус производства</th>
-                                    <th>Дата создания</th>
-                                {% elif search_type == 'uip' %}
-                                    <th>Номер УИП</th>
-                                    <th>Продукт</th>
-                                    <th>Тип</th>
-                                    <th>Статус</th>
-                                    <th>План</th>
-                                    <th>Факт</th>
-                                    <th>Дата создания</th>
+                <div class="results-cards">
+                    {% for item in results %}
+                        {% if search_type == 'code' %}
+                            <article class="result-card">
+                                <div class="card-head">
+                                    <span class="level-badge level-{{ item.level }}">{{ item.get_level_display }}</span>
+                                    <span class="code-value" title="{{ item.code }}">{{ item.code }}</span>
+                                </div>
+                                <div class="card-grid">
+                                    <div class="card-field">
+                                        <span class="field-label">Продукт</span>
+                                        <span class="field-value">{{ item.product.name|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">GTIN</span>
+                                        <span class="field-value mono">{{ item.product_packaging.gtin|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Артикул</span>
+                                        <span class="field-value">{{ item.article|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Завод</span>
+                                        <span class="field-value">{{ item.production_party.line.workshop.factory.name|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Цех</span>
+                                        <span class="field-value">{{ item.production_party.line.workshop.name|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Линия</span>
+                                        <span class="field-value">{{ item.production_party.line.name|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Внешнее задание</span>
+                                        <span class="field-value">{{ item.production_party.external_number_task|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Партия</span>
+                                        <span class="field-value">{{ item.production_party.production_party|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">УИП</span>
+                                        <span class="field-value mono">{{ item.production_party.uip.number|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Статус ЧЗ</span>
+                                        <span class="status-badge status-{{ item.cz_status }}">{{ item.get_cz_status_display }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Статус производства</span>
+                                        <span class="status-badge prod-status-{{ item.production_status }}">{{ item.get_production_status_display }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Создан</span>
+                                        <span class="field-value">{{ item.created_at|date:"d.m.Y H:i" }}</span>
+                                    </div>
+                                </div>
+                            </article>
+
+                        {% elif search_type == 'uip' %}
+                            <article class="result-card">
+                                <div class="card-head">
+                                    <span class="status-badge uip-status-{{ item.status }}">{{ item.get_status_display }}</span>
+                                    <span class="code-value" title="{{ item.number }}">{{ item.number }}</span>
+                                </div>
+                                <div class="card-grid">
+                                    <div class="card-field">
+                                        <span class="field-label">Продукт</span>
+                                        <span class="field-value">{{ item.product_sku.product.name|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">GTIN</span>
+                                        <span class="field-value mono">{{ item.gtin|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Артикул</span>
+                                        <span class="field-value">{{ item.product_sku.article|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">План</span>
+                                        <span class="field-value">{{ item.planned_quantity }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Факт</span>
+                                        <span class="field-value">{{ item.produced_quantity }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Дата производства</span>
+                                        <span class="field-value">{{ item.production_date|date:"d.m.Y"|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Дата резервирования</span>
+                                        <span class="field-value">{{ item.reservation_date|date:"d.m.Y"|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Создан</span>
+                                        <span class="field-value">{{ item.created_at|date:"d.m.Y H:i" }}</span>
+                                    </div>
+                                </div>
+
+                                {% if item.production_parties.all %}
+                                    <div class="card-parties">
+                                        <div class="parties-title">Производственные задания</div>
+                                        {% for p in item.production_parties.all %}
+                                            <div class="party-row">
+                                                <span class="party-field"><b>Внешнее задание:</b> {{ p.external_number_task|default:"—" }}</span>
+                                                <span class="party-field"><b>Партия:</b> {{ p.production_party|default:"—" }}</span>
+                                                <span class="party-field"><b>Завод:</b> {{ p.line.workshop.factory.name|default:"—" }}</span>
+                                                <span class="party-field"><b>Цех:</b> {{ p.line.workshop.name|default:"—" }}</span>
+                                                <span class="party-field"><b>Линия:</b> {{ p.line.name|default:"—" }}</span>
+                                            </div>
+                                        {% endfor %}
+                                    </div>
                                 {% endif %}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for item in results %}
-                                <tr>
-                                    {% if search_type == 'code' %}
-                                        <td class="code-cell" title="{{ item.code }}">
-                                            {{ item.code|truncatechars:30 }}
-                                        </td>
-                                        <td>{{ item.production_party.uip.number|default:"—" }}</td>
-                                        <td>{{ item.product_packaging.gtin|default:"—" }}</td>
-                                        <td>{{ item.get_level_display }}</td>
-                                        <td>
-                                            <span class="status-badge status-{{ item.cz_status }}">
-                                                {{ item.get_cz_status_display }}
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span class="status-badge prod-status-{{ item.production_status }}">
-                                                {{ item.get_production_status_display }}
-                                            </span>
-                                        </td>
-                                        <td>{{ item.created_at|date:"d.m.Y H:i" }}</td>
-                                        
-                                    {% elif search_type == 'uip' %}
-                                        <td><strong>{{ item.number }}</strong></td>
-                                        <td>{{ item.product_sku.name|default:"—" }}</td>
-                                        <td>{{ item.get_number_type_display }}</td>
-                                        <td>
-                                            <span class="status-badge uip-status-{{ item.status }}">
-                                                {{ item.get_status_display }}
-                                            </span>
-                                        </td>
-                                        <td>{{ item.planned_quantity }}</td>
-                                        <td>{{ item.produced_quantity }}</td>
-                                        <td>{{ item.created_at|date:"d.m.Y H:i" }}</td>
-                                    {% endif %}
-                                </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                            </article>
+                        {% endif %}
+                    {% endfor %}
                 </div>
-                
+
                 <!-- Пагинация -->
                 {% if page_obj.has_other_pages %}
                     <div class="pagination">
@@ -98,31 +154,31 @@
                             <a href="?q={{ query }}&page=1">&laquo; Первая</a>
                             <a href="?q={{ query }}&page={{ page_obj.previous_page_number }}">Предыдущая</a>
                         {% endif %}
-                        
+
                         <span class="current">
                             Страница {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}
                         </span>
-                        
+
                         {% if page_obj.has_next %}
                             <a href="?q={{ query }}&page={{ page_obj.next_page_number }}">Следующая</a>
                             <a href="?q={{ query }}&page={{ page_obj.paginator.num_pages }}">Последняя &raquo;</a>
                         {% endif %}
                     </div>
                 {% endif %}
-                
+
             {% else %}
                 <div class="no-results">
                     <p>По вашему запросу ничего не найдено.</p>
                     <p>Попробуйте проверить правильность введённых данных.</p>
                 </div>
             {% endif %}
-            
+
         {% else %}
             <div class="no-query">
                 <p>Введите поисковый запрос.</p>
             </div>
         {% endif %}
-        
+
         <div class="back-to-search">
             <a href="{% url 'home' %}" class="btn-back">← Новый поиск</a>
         </div>

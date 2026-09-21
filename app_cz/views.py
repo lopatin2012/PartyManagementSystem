@@ -7,7 +7,9 @@ import threading
 import uuid
 from datetime import datetime
 
-from django.contrib.admin.views.decorators import staff_member_required
+from app_helper.access import (
+    admin_required, admin_required_json, generate_uip_required_json, IsAppAdmin,
+)
 from django.core.paginator import Paginator
 from django.db.models import Q
 from django.http import JsonResponse
@@ -23,7 +25,7 @@ from rest_framework import viewsets, filters, status
 from rest_framework.decorators import api_view, action, permission_classes
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
+from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from app_cz.serializers import (
     CISCodeSerializer, UIPSerializer, ProductionPartySerializer, GenerateUIPSerializer
@@ -42,7 +44,7 @@ from app_cz.services.code_sync import (
     sync_codes_task,
     receive_external_task,
     sync_codes_for_party,
-    sync_all_external_tasks,
+    sync_external_parties_and_codes,
 )
 from app_cz.serializers import (
     # Взаимодействие УИП через ЧЗ.
@@ -310,7 +312,7 @@ def api_get_suz_certificates(request):
     responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 500: OpenApiTypes.OBJECT}
 )
 @api_view(['POST'])
-# @permission_classes([IsAdminUser])
+# @permission_classes([IsAppAdmin])
 def api_setup_suz_account(request):
     """Создает или обновляет активную запись СУЗ на основе выбранных данных."""
     try:
@@ -374,7 +376,7 @@ def api_setup_suz_account(request):
     responses={200: OpenApiTypes.OBJECT}
 )
 @api_view(['POST'])
-# @permission_classes([IsAdminUser])
+# @permission_classes([IsAppAdmin])
 def api_reset_suz_account(request):
     """Деактивирует текущую активную запись СУЗ."""
     SUZAccount.objects.filter(is_active=True).update(is_active=False)
@@ -393,7 +395,7 @@ def api_reset_suz_account(request):
     responses={200: OpenApiTypes.OBJECT, 502: OpenApiTypes.OBJECT}
 )
 @api_view(['GET'])
-# @permission_classes([IsAdminUser])
+# @permission_classes([IsAppAdmin])
 def api_get_auth_key(request):
     """
     API-эндпоинт для получения ключа аутентификации TrueAPI.
@@ -426,7 +428,7 @@ def api_get_auth_key(request):
     responses={200: OpenApiTypes.OBJECT, 500: OpenApiTypes.OBJECT}
 )
 @api_view(['POST'])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAppAdmin])
 def api_refresh_suz_token(request):
     """
     Принудительное обновления динамического токена СУЗ.
@@ -472,7 +474,7 @@ def api_refresh_suz_token(request):
     responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT}
 )
 @api_view(['POST'])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAppAdmin])
 def api_generate_parties(request):
     """Внешний API для генерации номеров партий в Честном Знаке."""
     serializer = GeneratePartySerializer(data=request.data)
@@ -503,7 +505,7 @@ def api_generate_parties(request):
     responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT}
 )
 @api_view(['POST'])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAppAdmin])
 def api_reserve_parties(request):
     """Внешний API для резервирования своих номеров партий в Честном Знаке."""
     serializer = ReservePartySerializer(data=request.data)
@@ -533,7 +535,7 @@ def api_reserve_parties(request):
     responses={200: OpenApiTypes.OBJECT, 502: OpenApiTypes.OBJECT}
 )
 @api_view(['GET'])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAppAdmin])
 def api_get_all_reserved_parties(request):
     """Внешний API для получения списка всех зарезервированных партий из ЧЗ."""
     result = get_all_reserved_parties()
@@ -554,7 +556,7 @@ def api_get_all_reserved_parties(request):
     responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT}
 )
 @api_view(['POST'])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAppAdmin])
 def api_close_party_reservation(request):
     """Внешний API для снятия партии с резерва (через отчет о нанесении)."""
     serializer = ClosePartySerializer(data=request.data)
@@ -586,7 +588,7 @@ def api_close_party_reservation(request):
     responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT}
 )
 @api_view(['POST'])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAppAdmin])
 def api_sync_codes_task(request):
     """
     API для синхронизации кодов из рабочего проекта.
@@ -685,7 +687,7 @@ def api_generate_uip(request):
     }
 )
 @api_view(['POST'])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAppAdmin])
 def api_reserve_draft_uip(request):
     """
     Резервирует черновую УИП в Честном Знаке и переводит её в статус RESERVED_LOCAL.
@@ -836,7 +838,7 @@ def api_receive_external_task(request):
     }
 )
 @api_view(['POST'])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAppAdmin])
 def api_sync_task_codes(request):
     """
     Синхронизация кодов маркировки для производственной партии
@@ -881,17 +883,11 @@ def api_sync_task_codes(request):
 # API-методы
 # ==========================================
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(admin_required_json, name='dispatch')
 class SyncPartiesView(View):
     """Синхронизация УИП из Честного Знака (только для админов)."""
 
     def post(self, request):
-        if not request.user.is_superuser:
-            return JsonResponse({
-                'is_error': True,
-                'message': 'Доступ только для администраторов'
-            }, status=403)
-
         result = sync_parties_from_cz()
 
         status_code = (
@@ -902,20 +898,11 @@ class SyncPartiesView(View):
         return JsonResponse(result, status=status_code)
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(generate_uip_required_json, name='dispatch')
 class GenerateUIPView(View):
     """Генерация УИП вручную (только для администраторов)."""
 
     def post(self, request):
-        if not request.user.is_superuser:
-            return JsonResponse(
-                {
-                    'is_error': True,
-                    'message': 'Доступ только для администраторов.'
-                },
-                status=403
-            )
-
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError:
@@ -984,7 +971,7 @@ class GenerateUIPView(View):
 # Страница синхронизации с внешним сервисом (Молвест.Маркировка).
 # ==========================================
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(admin_required, name='dispatch')
 class SyncTasksView(TemplateView):
     """
     Страница отслеживания синхронизации заданий с внешним сервисом.
@@ -1100,7 +1087,7 @@ class SyncTasksView(TemplateView):
         return context
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(admin_required_json, name='dispatch')
 class SyncTaskCodesView(View):
     """
     Ручная синхронизация кодов для одной производственной партии.
@@ -1108,12 +1095,6 @@ class SyncTaskCodesView(View):
     """
 
     def post(self, request):
-        if not request.user.is_superuser:
-            return JsonResponse(
-                {'is_error': True, 'message': 'Доступ только для администраторов'},
-                status=403
-            )
-
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError:
@@ -1143,21 +1124,17 @@ class SyncTaskCodesView(View):
         return JsonResponse(result, status=status_code)
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(admin_required_json, name='dispatch')
 class SyncAllTasksView(View):
     """
-    Запуск полной синхронизации с внешним сервисом вручную.
+    Запуск ПОЛНОЙ синхронизации с внешним сервисом вручную:
+    выгрузка изменённых заданий по всем заводам (персональная метка
+    changed_since) + синхронизация кодов маркировки.
     POST /sync/all/
     """
 
     def post(self, request):
-        if not request.user.is_superuser:
-            return JsonResponse(
-                {'is_error': True, 'message': 'Доступ только для администраторов'},
-                status=403
-            )
-
-        result = sync_all_external_tasks()
+        result = sync_external_parties_and_codes()
 
         status_code = 502 if result.get('is_error') else 200
         return JsonResponse(result, status=status_code)
@@ -1180,7 +1157,7 @@ from app_cz.services.nk_sync_state import (
 )
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(admin_required, name='dispatch')
 class NationalCatalogView(TemplateView):
     """Страница Национального каталога (только для администраторов)."""
     template_name = 'nk/main.html'
@@ -1297,17 +1274,11 @@ class NationalCatalogView(TemplateView):
         return context
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(admin_required_json, name='dispatch')
 class NKSyncProductsView(View):
     """API: Запуск синхронизации товаров Национального каталога (POST)."""
 
     def post(self, request):
-        if not request.user.is_superuser:
-            return JsonResponse(
-                {'is_error': True, 'message': 'Доступ только для администраторов'},
-                status=403,
-            )
-
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError:
@@ -1357,7 +1328,7 @@ class NKSyncProductsView(View):
         return JsonResponse({'is_error': False, 'message': 'Синхронизация запущена'})
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(admin_required_json, name='dispatch')
 class NKSyncProgressView(View):
     """API: Ход выполнения синхронизации НК (GET)."""
 
@@ -1370,15 +1341,12 @@ class NKSyncProgressView(View):
         })
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(admin_required_json, name='dispatch')
 class NKProductCreateView(View):
     """POST: ручное создание Product + ProductPackaging + ProductSKU
     из товара Национального каталога."""
 
     def post(self, request):
-        if not request.user.is_superuser:
-            return JsonResponse({'is_error': True, 'message': 'Доступ только для администраторов'}, status=403)
-
         data = json.loads(request.body)
         nk_product_id = data.get('nk_product_id')
         if not nk_product_id:
@@ -1415,16 +1383,11 @@ class NKProductCreateView(View):
         }, status=400)
 
 
+@method_decorator(admin_required_json, name='dispatch')
 class NKProductDetailView(View):
     """API: Получение товара по good_id или gtin (POST)."""
 
     def post(self, request):
-        if not request.user.is_superuser:
-            return JsonResponse(
-                {'is_error': True, 'message': 'Доступ только для администраторов'},
-                status=403,
-            )
-
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError:

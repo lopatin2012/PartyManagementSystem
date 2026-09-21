@@ -151,9 +151,125 @@ tr:hover {
     transform: translateY(-2px);
 }
 
+/* ==========================================
+   Результаты поиска — карточки.
+   ========================================== */
+.results-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.result-card {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--input-border);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    transition: background 0.2s ease;
+}
+
+.result-card:hover {
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.card-head {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    padding-bottom: 0.75rem;
+    margin-bottom: 0.75rem;
+    border-bottom: 1px solid var(--input-border);
+}
+
+.code-value {
+    font-family: 'Courier New', monospace;
+    font-size: 0.95rem;
+    color: #ffffff;
+    word-break: break-all;
+}
+
+.level-badge {
+    display: inline-block;
+    padding: 0.25rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #111111;
+    background: var(--accent-green);
+    white-space: nowrap;
+}
+
+.level-1 { background-color: #BBCF32; }
+.level-2 { background-color: #FABB1C; }
+.level-3 { background-color: #3D52A1; color: #ffffff; }
+
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 0.55rem 1.25rem;
+}
+
+.card-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+}
+
+.field-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.field-value {
+    font-size: 0.9rem;
+    color: #ffffff;
+    word-break: break-word;
+}
+
+.field-value.mono {
+    font-family: 'Courier New', monospace;
+    font-size: 0.82rem;
+}
+
+.card-parties {
+    margin-top: 0.9rem;
+    padding-top: 0.75rem;
+    border-top: 1px dashed var(--input-border);
+}
+
+.parties-title {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: rgba(255, 255, 255, 0.5);
+    margin-bottom: 0.5rem;
+}
+
+.party-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.25rem;
+    padding: 0.35rem 0;
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.party-field b {
+    color: rgba(255, 255, 255, 0.55);
+    font-weight: 600;
+}
+
 @media (max-width: 768px) {
     .search-results-container {
         padding: 1rem;
+    }
+
+    .card-grid {
+        grid-template-columns: 1fr;
     }
 
     table {

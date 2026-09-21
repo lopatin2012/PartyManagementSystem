@@ -25,6 +25,34 @@ HOUR = timedelta(hours=1)
 DAY = timedelta(days=1)
 WEEK = timedelta(weeks=1)
 
+# Быстрый повтор задач, завершившихся ошибкой: вместо полного интервала
+# (например, часа) повторяем через FAST_RETRY_INTERVAL. Так система быстрее
+# восстанавливается после временной недоступности внешнего сервиса/сети.
+FAST_RETRY_INTERVAL = 5 * MINUTE
+FAST_RETRY_TASKS = {
+    'sync_external_parties_codes',
+}
+
+
+def _effective_interval(name, interval, last_run):
+    """
+    Интервал до следующего запуска задачи.
+
+    Для задач из FAST_RETRY_TASKS, последний запуск которых завершился
+    ошибкой (FAILED), возвращается сокращённый интервал повтора.
+    """
+    if last_run is None or name not in FAST_RETRY_TASKS:
+        return interval
+    try:
+        from django_tasks.base import TaskResultStatus
+        failed_status = TaskResultStatus.FAILED
+    except Exception:
+        failed_status = 'FAILED'
+    if getattr(last_run, 'status', None) == failed_status:
+        return min(interval, FAST_RETRY_INTERVAL)
+    return interval
+
+
 # ==========================================
 # РАСПИСАНИЕ ЗАДАЧ
 # ==========================================
@@ -107,7 +135,9 @@ class Command(BaseCommand):
             )
 
             if last_run and last_run.finished_at:
-                next_run = last_run.finished_at + interval
+                next_run = last_run.finished_at + _effective_interval(
+                    name, interval, last_run
+                )
                 # Если время уже прошло — задача будет запущена при следующей проверке.
                 if next_run <= now:
                     next_run_display = 'сейчас (при следующей проверке)'
@@ -279,16 +309,18 @@ class Command(BaseCommand):
                 self._enqueue(task_func, description, 'первый запуск')
                 continue
 
-            # Проверяем, прошло ли достаточно времени
+            # Проверяем, прошло ли достаточно времени.
+            # Для упавших задач из FAST_RETRY_TASKS интервал сокращённый.
+            effective_interval = _effective_interval(name, interval, last_run)
             time_since = (now - last_run.finished_at).total_seconds()
-            if time_since >= interval.total_seconds():
+            if time_since >= effective_interval.total_seconds():
                 self._enqueue(
                     task_func,
                     description,
                     f'прошло {self._format_interval(int(time_since))}',
                 )
             else:
-                time_left = interval.total_seconds() - time_since
+                time_left = effective_interval.total_seconds() - time_since
                 logger.debug(
                     f'Планировщик: {description} — ещё рано '
                     f'(осталось {self._format_interval(int(time_left))})'

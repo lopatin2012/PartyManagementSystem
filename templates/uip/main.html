@@ -13,8 +13,9 @@
         <h1>{{ page_name }}</h1>
         <p class="subtitle">Всего найдено: <span class="highlight">{{ total_count }}</span> УИП</p>
 
-        {% if user.is_superuser %}
+        {% if is_admin or can_generate_uip %}
         <div class="sync-controls">
+            {% if is_admin %}
             <!-- Кнопка синхронизации -->
             <button id="syncBtn" class="btn-sync" data-url="{% url 'uip_sync' %}" data-csrf="{{ csrf_token }}"
                     onclick="syncParties()">
@@ -26,7 +27,9 @@
                 </svg>
                 Синхронизировать с ЧЗ
             </button>
+            {% endif %}
 
+            {% if can_generate_uip %}
             <!-- кнопка генерации -->
             <button id="generateBtn" class="btn-generate" onclick="openGenerateModal()">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -36,10 +39,12 @@
                 </svg>
                 Сгенерировать УИП
             </button>
+            {% endif %}
 
             <div id="syncStatus" class="sync-status hidden"></div>
         </div>
 
+        {% if can_generate_uip %}
         <!-- Данные продуктов для JS -->
         {{ available_products|json_script:"available-products-data" }}
 
@@ -133,6 +138,7 @@
                 </div>
             </div>
         </div>
+        {% endif %}
         {% endif %}
     </div>
 
@@ -306,7 +312,7 @@
                             </td>
                             <td class="date-cell">{{ uip.created_at|date:"d.m.Y H:i" }}</td>
                             <td class="actions-cell">
-                                {% if user.is_superuser %}
+                                {% if is_admin %}
                                     <!-- Кнопки для взаимодействуя с УИП -->
                                     {% if uip.status == 'draft' %}
                                         <button

@@ -11,6 +11,7 @@ from app_cz.services.party_service import get_available_products
 
 from app_uip.models import UIP, PartyStatusChoices
 
+from app_helper.access import UipPageAccessMixin
 from app_helper.search_helper import detect_search_type
 
 
@@ -80,7 +81,10 @@ class SearchView(View):
             Q(code__iexact=query) | Q(code__istartswith=query)
         ).select_related(
             'production_party__uip',
+            'production_party__line__workshop__factory',
             'product_packaging__product'
+        ).prefetch_related(
+            'product_packaging__product__skus'
         ).order_by('-created_at')
 
     def _search_uip(self, query):
@@ -89,10 +93,12 @@ class SearchView(View):
             number__iexact=query
         ).select_related(
             'product_sku__product'
+        ).prefetch_related(
+            'production_parties__line__workshop__factory'
         ).order_by('-created_at')
 
 
-class UIPListView(TemplateView):
+class UIPListView(UipPageAccessMixin, TemplateView):
     """Страница со списком УИП с фильтрацией и пагинацией."""
     template_name = 'uip/main.html'
 

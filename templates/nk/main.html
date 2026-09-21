@@ -130,7 +130,7 @@
                     <th>На производстве</th>
                     <th>Создан в НК</th>
                     <th>Синхронизирован</th>
-                    {% if user.is_superuser %}<th>Действие</th>{% endif %}
+                    {% if is_admin %}<th>Действие</th>{% endif %}
                 </tr>
             </thead>
             <tbody>
@@ -174,7 +174,7 @@
                     </td>
                     <td class="text-muted">{{ product.create_date|date:"d.m.Y"|default:"—" }}</td>
                     <td class="text-muted">{{ product.synced_at|date:"d.m.Y H:i" }}</td>
-                    {% if user.is_superuser %}
+                    {% if is_admin %}
                     <td>
                         {% if product.is_ready_for_production %}
                         <button class="btn-sm btn-create"
