@@ -1,7 +1,10 @@
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
+from django.db.models.functions import Upper
 from django.utils import timezone
+
+from django.contrib.postgres.indexes import OpClass
 
 from app_factory.models import PackagingLevelChoices
 
@@ -89,6 +92,12 @@ class CISCode(models.Model):
             models.Index(fields=['cz_status', '-created_at']),
             models.Index(fields=['production_status', '-created_at']),
             models.Index(fields=['parent', 'level']),
+            # Индекс под поиск по началу кода: UPPER(code) LIKE 'prefix%'.
+            # Без него префиксный поиск на миллионах кодов делает полный скан.
+            models.Index(
+                OpClass(Upper('code'), name='varchar_pattern_ops'),
+                name='cis_code_upper_prefix_idx',
+            ),
         ]
 
     def __str__(self) -> str:

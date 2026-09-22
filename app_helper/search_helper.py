@@ -71,3 +71,34 @@ def clean_datamatrix_code(code: str) -> str:
     # Удаляем все непечатаемые символы (ASCII < 32)
     # Это включает GS (\x1D), FNC1 и другие управляющие символы
     return ''.join(c for c in code if ord(c) >= 32)
+
+
+def filter_codes_by_query(queryset, query: str):
+    """
+    Поиск кодов маркировки: сначала ТОЧНОЕ совпадение, затем — по началу строки.
+
+    Точное совпадение использует уникальный индекс `code` и отрабатывает за
+    миллисекунды даже на миллионах строк. `iexact`/`istartswith` обычный индекс
+    не используют (в SQL получается UPPER(code) LIKE ...), поэтому префиксный
+    поиск выполняется только как запасной вариант — по функциональному индексу
+    `cis_code_upper_prefix_idx`.
+    """
+    cleaned = clean_datamatrix_code(query)
+
+    exact = queryset.filter(code__exact=cleaned)
+    if exact.exists():
+        return exact
+
+    return queryset.filter(code__istartswith=cleaned)
+
+
+def filter_uips_by_query(queryset, query: str):
+    """
+    Поиск УИП: сначала ТОЧНОЕ совпадение номера (по индексу), затем — без учёта
+    регистра (запасной вариант).
+    """
+    exact = queryset.filter(number__exact=query)
+    if exact.exists():
+        return exact
+
+    return queryset.filter(number__iexact=query)
