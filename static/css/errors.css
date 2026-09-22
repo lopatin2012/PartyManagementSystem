@@ -1,0 +1,80 @@
+/* static/css/errors.css — страницы ошибок (403/404). */
+
+.error-page {
+    min-height: 60vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+}
+
+.error-card {
+    max-width: 560px;
+    width: 100%;
+    text-align: center;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--input-border);
+    border-radius: 16px;
+    padding: 2.5rem 2rem;
+}
+
+.error-code {
+    font-size: 4.5rem;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--accent-green);
+    opacity: 0.85;
+    margin-bottom: 0.5rem;
+}
+
+.error-title {
+    margin: 0 0 1rem;
+    font-size: 1.6rem;
+    color: #ffffff;
+}
+
+.error-text {
+    margin: 0 0 0.75rem;
+    font-size: 1rem;
+    color: rgba(255, 255, 255, 0.85);
+    word-break: break-word;
+}
+
+.error-hint {
+    margin: 0 0 1.5rem;
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.error-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.error-btn {
+    display: inline-block;
+    padding: 0.7rem 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--input-border);
+    color: #ffffff;
+    text-decoration: none;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+
+.error-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateY(-1px);
+}
+
+.error-btn-primary {
+    background: var(--accent-green);
+    color: var(--bg-dark);
+    border-color: var(--accent-green);
+}
+
+.error-btn-primary:hover {
+    background: #d4e84b;
+}

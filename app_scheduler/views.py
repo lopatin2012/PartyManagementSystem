@@ -4,9 +4,10 @@ from datetime import timedelta
 
 from django.http import JsonResponse
 from django.utils import timezone
-from django.contrib.admin.views.decorators import staff_member_required
 from django.utils.decorators import method_decorator
 from django.views import View
+
+from app_helper.access import admin_required_json
 
 from app_scheduler.management.commands.run_scheduler import SCHEDULE
 
@@ -22,7 +23,7 @@ def _nk_sync_state() -> dict:
     return get_sync_state()
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(admin_required_json, name='dispatch')
 class SchedulerStatusView(View):
     """
     API для получения расписания периодических задач.

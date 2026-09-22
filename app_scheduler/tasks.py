@@ -308,12 +308,24 @@ def sync_external_parties_codes_task() -> dict:
     - Синхронизирует коды маркировки по всем внешним заданиям.
 
     Адрес сервера маркировки берётся из модели Factory (ip_address/port_address).
+
+    При ошибках (недоступный завод / не обработанные задания) задача
+    завершается ИСКЛЮЧЕНИЕМ — это фиксируется как FAILED и позволяет
+    планировщику повторить попытку раньше обычного интервала
+    (см. FAST_RETRY_TASKS в run_scheduler).
     """
     from app_cz.services.code_sync import sync_external_parties_and_codes
 
-    return sync_external_parties_and_codes(
+    result = sync_external_parties_and_codes(
         task_path=f'{__name__}.sync_external_parties_codes_task'
     )
+
+    if result.get('is_error'):
+        raise RuntimeError(
+            result.get('message') or 'Синхронизация с внешним сервисом завершилась с ошибками'
+        )
+
+    return result
 
 
 # ==========================================

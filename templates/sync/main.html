@@ -17,7 +17,7 @@
             активных: <span class="highlight">{{ stats.active }}</span>
         </p>
 
-        {% if user.is_superuser %}
+        {% if is_admin %}
         <div class="sync-controls">
             <button id="syncAllBtn" class="btn-sync"
                     data-url="{% url 'sync_all_tasks' %}"
@@ -143,7 +143,7 @@
                         {% endif %}
                     </td>
                     <td class="actions-cell">
-                        {% if user.is_superuser %}
+                        {% if is_admin %}
                             <button class="btn-row-action btn-sync-row"
                                     data-party-id="{{ party.id }}"
                                     data-url="{% url 'sync_task_codes' %}"

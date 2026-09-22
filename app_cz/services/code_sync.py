@@ -78,6 +78,12 @@ NO_SYNC_STATUSES = [
     ProductionPartyStatusChoices.ERROR,
 ]
 
+# Безопасный зазор водяной метки синхронизации заданий: сохраняем метку на это
+# время НАЗАД. Защищает от потери заданий, отредактированных во время запроса
+# или при небольшом расхождении часов нашего сервиса и внешнего. Повторная
+# выгрузка тех же заданий безопасна — receive_external_task идемпотентен.
+WATERMARK_SAFETY_MARGIN = timedelta(minutes=5)
+
 
 def _map_external_status(raw: str):
     """
@@ -904,12 +910,17 @@ def sync_all_external_tasks() -> dict:
 # Синхронизация производственных партий и кодов.
 # ==========================================
 
-def _fetch_external_tasks_changed_since(url: str, changed_since) -> list:
+def _fetch_external_tasks_changed_since(url: str, changed_since):
     """
     Выгружает из внешнего сервиса задания, изменённые после changed_since.
 
     Молвест.Маркировка отдаёт их через GET /task/api_task_external/?changed_since=...
     Формат результата: {'is_error': False, 'count': N, 'result': [...]}.
+
+    Возвращает:
+    - список заданий (возможно пустой) при успешной выгрузке;
+    - None при ошибке сети/ответа. None отличает сбой от «изменений нет» и
+      запрещает сдвигать водяную метку (иначе окно сбоя будет потеряно).
     """
     api_url = f"{url.rstrip('/')}/task/api_task_external/"
     params = {'changed_since': changed_since.isoformat()}
@@ -922,14 +933,46 @@ def _fetch_external_tasks_changed_since(url: str, changed_since) -> list:
         payload = response.json()
     except requests.exceptions.RequestException as e:
         logger.error(f'Ошибка запроса заданий из внешнего сервиса: {e}')
-        return []
+        return None
 
     if not isinstance(payload, dict) or payload.get('is_error'):
         message = payload.get('message') if isinstance(payload, dict) else ''
         logger.error(f'Внешний сервис вернул ошибку при выгрузке заданий: {message}')
-        return []
+        return None
 
     return payload.get('result') or []
+
+
+def get_factory_changed_since(factory, task_path: str = None):
+    """
+    Метка changed_since для конкретного завода.
+
+    Приоритет — сохранённая на заводе метка последней УСПЕШНОЙ выгрузки.
+    Если её нет (первый запуск / поле ещё не заполнено), берётся время
+    последней успешной задачи в django-tasks (или now-24ч).
+    """
+    if getattr(factory, 'external_sync_changed_since', None):
+        return factory.external_sync_changed_since
+    return _last_external_sync_changed_since(task_path)
+
+
+def mark_factory_sync_success(factory, watermark) -> None:
+    """Фиксирует успешную выгрузку завода, сдвигая метку changed_since вперёд."""
+    factory.external_sync_changed_since = watermark
+    factory.external_sync_success_at = timezone.now()
+    factory.external_sync_error = ''
+    factory.save(update_fields=[
+        'external_sync_changed_since',
+        'external_sync_success_at',
+        'external_sync_error',
+    ])
+
+
+def mark_factory_sync_error(factory, message: str) -> None:
+    """Фиксирует ошибку выгрузки завода, НЕ сдвигая метку changed_since."""
+    factory.external_sync_error = (message or '')[:2000]
+    factory.save(update_fields=['external_sync_error'])
+
 
 
 def _last_external_sync_changed_since(task_path: str = None):
@@ -965,17 +1008,20 @@ def sync_external_parties_and_codes(task_path: str = None) -> dict:
     Периодическая синхронизация производственных партий и их кодов.
 
     Двухэтапная:
-    1. Выгружает из Molvest задания, изменённые после последней успешной
-       синхронизации (или за последние 24 часа при первом запуске),
-       и обновляет ProductionParty через receive_external_task.
+    1. Выгружает из Molvest задания, изменённые после метки синхронизации
+       завода (Factory.external_sync_changed_since), и обновляет
+       ProductionParty через receive_external_task. Метка ПЕРСОНАЛЬНАЯ для
+       каждого завода и сдвигается только при его успешной выгрузке — сбой
+       одного завода не пропускает окно изменений. При первом запуске (метки
+       нет) используется время последней успешной задачи или now-24ч.
     2. Синхронизирует коды маркировки по всем внешним заданиям
        (sync_all_external_tasks).
 
     Адрес сервера маркировки определяется по активным заводам
     (Factory.ip_address / Factory.port_address).
 
-    :param task_path: Путь задачи в django-tasks (для определения времени
-                      последней успешной синхронизации).
+    :param task_path: Путь задачи в django-tasks (резервный источник метки
+                      при первом запуске).
     :return: Сводка по синхронизации.
     """
     summary = {
@@ -984,10 +1030,9 @@ def sync_external_parties_and_codes(task_path: str = None) -> dict:
         'parties_created': 0,
         'parties_updated': 0,
         'errors': 0,
+        'failed_factories': [],
         'message': '',
     }
-
-    changed_since = _last_external_sync_changed_since(task_path)
 
     factories = Factory.objects.filter(
         is_active=True,
@@ -1004,12 +1049,31 @@ def sync_external_parties_and_codes(task_path: str = None) -> dict:
         return summary
 
     # Этап 1: выгрузка изменённых заданий и обновление партий.
+    # Метка changed_since — персональная для каждого завода и двигается только
+    # при успешной выгрузке. Сбой одного завода не влияет на остальные.
     skipped_no_uuid = 0
     for factory in factories:
         url = f'http://{factory.ip_address}:{factory.port_address}'
+        changed_since = get_factory_changed_since(factory, task_path)
+        # Время захвата ДО запроса: задания, отредактированные во время запроса,
+        # попадут в следующее окно (метка сохранится на этот момент).
+        capture_at = timezone.now()
+
         tasks = _fetch_external_tasks_changed_since(url, changed_since)
+        if tasks is None:
+            message = (
+                f'Не удалось выгрузить задания завода <{factory.name}> ({url}). '
+                f'Метка синхронизации не изменена — окно будет повторено.'
+            )
+            mark_factory_sync_error(factory, message)
+            summary['errors'] += 1
+            summary['failed_factories'].append(factory.name)
+            logger.warning(message)
+            continue
+
         summary['parties_fetched'] += len(tasks)
 
+        factory_errors = 0
         for task_data in tasks:
             result = receive_external_task(task_data)
             if result.get('skipped_no_uuid'):
@@ -1018,10 +1082,24 @@ def sync_external_parties_and_codes(task_path: str = None) -> dict:
                 skipped_no_uuid += 1
             elif result.get('has_error'):
                 summary['errors'] += 1
+                factory_errors += 1
             elif result.get('created'):
                 summary['parties_created'] += 1
             else:
                 summary['parties_updated'] += 1
+
+        if factory_errors:
+            # Часть заданий не сохранилась — не двигаем метку, повторим окно.
+            mark_factory_sync_error(
+                factory,
+                f'Не обработано заданий: {factory_errors}. Метка не изменена.'
+            )
+            summary['failed_factories'].append(factory.name)
+        else:
+            # Метку двигаем «назад» на безопасный зазор (защита от гонок/часов).
+            mark_factory_sync_success(
+                factory, capture_at - WATERMARK_SAFETY_MARGIN
+            )
 
     summary['skipped_no_uuid'] = skipped_no_uuid
 
@@ -1037,6 +1115,10 @@ def sync_external_parties_and_codes(task_path: str = None) -> dict:
     ]
     if skipped_no_uuid:
         parts.append(f'пропущено без uuid: {skipped_no_uuid}')
+    if summary['failed_factories']:
+        parts.append(
+            f'⚠ заводы с ошибкой: {", ".join(summary["failed_factories"])}'
+        )
     if summary['errors']:
         parts.append(f'⚠ ошибок: {summary["errors"]}')
     summary['message'] = 'Синхронизация партий завершена. ' + ', '.join(parts)

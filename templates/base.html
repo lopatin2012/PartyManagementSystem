@@ -31,7 +31,7 @@
             <a href="{% url 'uip_list' %}" class="nav-link {% if request.resolver_match.url_name == 'uip_list' %}nav-link-active{% endif %}">
                 УИП
             </a>
-            {% if user.is_superuser %}
+            {% if is_admin %}
                 <a href="{% url 'sync_tasks' %}" class="nav-link {% if request.resolver_match.url_name == 'sync_tasks' %}nav-link-active{% endif %}">
                     Синхронизация заданий
                 </a>
@@ -48,7 +48,7 @@
 
         <div class="user-panel">
             {% if is_authenticated %}
-                {% if user.is_superuser %}
+                {% if user.is_staff %}
                     <a class="user-name" href="{% url 'admin:index' %}">{{ user_name }}</a>
                 {% else %}
                     <span class="user-name">{{ user_name }}</span>
@@ -78,7 +78,7 @@
                 <span class="status-title">СУЗ (Честный Знак)</span>
             </div>
             <div class="status-body">
-                {% if user.is_superuser %}
+                {% if is_admin %}
                     {% if not status_suz.is_active %}
                         <p class="status-text">Требуется первичная настройка</p>
                         <button class="btn-status-action" onclick="openSuzModal()">Настроить СУЗ</button>
@@ -140,7 +140,7 @@
     </div>
 
     <!-- ВИДЖЕТ ФОНОВЫХ ЗАДАЧ -->
-    {% if user.is_superuser %}
+    {% if is_admin %}
     <div class="scheduler-widget" id="schedulerWidget">
         <div class="scheduler-header">
             <div class="scheduler-title">
