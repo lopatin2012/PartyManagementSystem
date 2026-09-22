@@ -921,6 +921,20 @@ class SearchQueryHelpersTests(TestCase):
         qs = filter_codes_by_query(CISCode.objects.all(), self.code.code.upper())
         self.assertIn(self.code.code, list(qs.values_list('code', flat=True)))
 
+    def test_codes_with_group_separator_match_raw_query(self):
+        # В БД коды могут содержать GS (\x1d) перед AI 93. Сканер отдаёт код
+        # «сырым» (с GS) — поиск обязан его находить.
+        packaging = self.sku.product.packagings.first()
+        gs_code = '0104601751029423215\x1djeWO93XhW8'
+        CISCode.objects.create(
+            production_party=self.party,
+            product_packaging=packaging,
+            code=gs_code,
+            level=PackagingLevelChoices.UNIT,
+        )
+        qs = filter_codes_by_query(CISCode.objects.all(), gs_code)
+        self.assertEqual(list(qs.values_list('code', flat=True)), [gs_code])
+
     def test_uips_exact_match(self):
         qs = filter_uips_by_query(UIP.objects.all(), self.uip.number)
         self.assertEqual(list(qs.values_list('number', flat=True)), [self.uip.number])
