@@ -1,7 +1,6 @@
 # app_page/views.py
 
 from django.core.paginator import Paginator
-from django.db.models import Q
 from django.shortcuts import render
 from django.views import View
 from django.views.generic import TemplateView
@@ -12,7 +11,11 @@ from app_cz.services.party_service import get_available_products
 from app_uip.models import UIP, PartyStatusChoices
 
 from app_helper.access import UipPageAccessMixin
-from app_helper.search_helper import detect_search_type
+from app_helper.search_helper import (
+    detect_search_type,
+    filter_codes_by_query,
+    filter_uips_by_query,
+)
 
 
 class MainPageView(TemplateView):
@@ -75,10 +78,10 @@ class SearchView(View):
         return render(request, self.template_name, context)
 
     def _search_codes(self, query):
-        """Поиск по кодам маркировки."""
+        """Поиск по кодам маркировки (сначала точное совпадение по индексу)."""
 
-        return CISCode.objects.filter(
-            Q(code__iexact=query) | Q(code__istartswith=query)
+        return filter_codes_by_query(
+            CISCode.objects.all(), query
         ).select_related(
             'production_party__uip',
             'production_party__line__workshop__factory',
@@ -88,9 +91,9 @@ class SearchView(View):
         ).order_by('-created_at')
 
     def _search_uip(self, query):
-        """Поиск по УИП."""
-        return UIP.objects.filter(
-            number__iexact=query
+        """Поиск по УИП (сначала точное совпадение по индексу)."""
+        return filter_uips_by_query(
+            UIP.objects.all(), query
         ).select_related(
             'product_sku__product'
         ).prefetch_related(

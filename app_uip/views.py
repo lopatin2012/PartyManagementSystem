@@ -14,7 +14,11 @@ from rest_framework.permissions import IsAuthenticated
 
 from app_cz.models import CISCode
 
-from app_helper.search_helper import detect_search_type, clean_datamatrix_code
+from app_helper.search_helper import (
+    detect_search_type,
+    filter_codes_by_query,
+    filter_uips_by_query,
+)
 from app_helper.access import IsAppAdmin
 
 from app_uip.models import UIP, PartyStatusChoices
@@ -347,16 +351,15 @@ def api_search(request):
         search_type = detect_search_type(query)
 
     if search_type == 'uip':
-        queryset = UIP.objects.filter(
-            number__iexact=query
+        queryset = filter_uips_by_query(
+            UIP.objects.all(), query
         ).select_related(
             'product_sku__product'
         ).order_by('-created_at')
         serializer_class = UIPActiveListSerializer
     else:
-        cleaned_code = clean_datamatrix_code(query)
-        queryset = CISCode.objects.filter(
-            Q(code__iexact=cleaned_code) | Q(code__istartswith=cleaned_code)
+        queryset = filter_codes_by_query(
+            CISCode.objects.all(), query
         ).select_related(
             'production_party__uip',
             'product_packaging__product',

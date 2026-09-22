@@ -30,6 +30,7 @@ from app_helper.access import (
     can_view_uip,
     can_generate_uip,
 )
+from app_helper.search_helper import filter_codes_by_query, filter_uips_by_query
 
 from app_uip.models import UIP, ProductionParty, PartyStatusChoices
 from app_uip.serializers import (
@@ -882,3 +883,49 @@ class SearchResultsCardTests(TestCase):
         self.assertEqual(response.context['search_type'], 'uip')
         self.assertContains(response, 'TASK-EXTERNAL-1')
         self.assertContains(response, 'Завод Тестовый')
+
+
+class SearchQueryHelpersTests(TestCase):
+    """Точное совпадение вперёд, префикс и регистронезависимый запасной вариант."""
+
+    def setUp(self):
+        self.sku = create_product()
+        self.uip = UIP.objects.create(
+            product_sku=self.sku,
+            number='04601751026019260101500320000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        self.party = ProductionParty.objects.create(
+            uip=self.uip,
+            external_number_task='TASK-HELPER-1',
+            production_party='145',
+        )
+        packaging = self.sku.product.packagings.first()
+        self.code = CISCode.objects.create(
+            production_party=self.party,
+            product_packaging=packaging,
+            code='01046017510260192150abc',
+            level=PackagingLevelChoices.UNIT,
+        )
+
+    def test_codes_exact_match(self):
+        qs = filter_codes_by_query(CISCode.objects.all(), self.code.code)
+        self.assertEqual(list(qs.values_list('code', flat=True)), [self.code.code])
+
+    def test_codes_prefix_fallback(self):
+        qs = filter_codes_by_query(CISCode.objects.all(), self.code.code[:12])
+        self.assertIn(self.code.code, list(qs.values_list('code', flat=True)))
+
+    def test_codes_case_insensitive_fallback(self):
+        # Точного совпадения нет (другой регистр) — срабатывает istartswith.
+        qs = filter_codes_by_query(CISCode.objects.all(), self.code.code.upper())
+        self.assertIn(self.code.code, list(qs.values_list('code', flat=True)))
+
+    def test_uips_exact_match(self):
+        qs = filter_uips_by_query(UIP.objects.all(), self.uip.number)
+        self.assertEqual(list(qs.values_list('number', flat=True)), [self.uip.number])
+
+    def test_uips_no_match(self):
+        qs = filter_uips_by_query(UIP.objects.all(), '0' * 32)
+        self.assertEqual(qs.count(), 0)
+
