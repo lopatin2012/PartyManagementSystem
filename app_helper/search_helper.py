@@ -2,6 +2,8 @@
 
 import re
 
+from django.db.models import Q
+
 
 def detect_search_type(query: str) -> str:
     """
@@ -77,19 +79,31 @@ def filter_codes_by_query(queryset, query: str):
     """
     Поиск кодов маркировки: сначала ТОЧНОЕ совпадение, затем — по началу строки.
 
-    Точное совпадение использует уникальный индекс `code` и отрабатывает за
-    миллисекунды даже на миллионах строк. `iexact`/`istartswith` обычный индекс
-    не используют (в SQL получается UPPER(code) LIKE ...), поэтому префиксный
-    поиск выполняется только как запасной вариант — по функциональному индексу
-    `cis_code_upper_prefix_idx`.
+    Коды в БД могут содержать управляющий символ-разделитель GS (\\x1d) перед
+    AI 93, поэтому проверяем и «сырой» запрос (как отдаёт сканер), и очищенный
+    (без GS). Точное совпадение использует уникальный индекс `code` и работает
+    за миллисекунды даже на миллионах строк; `iexact`/`istartswith` обычный
+    индекс не используют (в SQL получается UPPER(code) LIKE ...), поэтому
+    префиксный поиск идёт только как запасной вариант — по функциональному
+    индексу `cis_code_upper_prefix_idx`.
     """
     cleaned = clean_datamatrix_code(query)
 
-    exact = queryset.filter(code__exact=cleaned)
-    if exact.exists():
-        return exact
+    candidates = [query]
+    if cleaned and cleaned != query:
+        candidates.append(cleaned)
 
-    return queryset.filter(code__istartswith=cleaned)
+    # 1) Точное совпадение (уникальный индекс).
+    for candidate in candidates:
+        exact = queryset.filter(code__exact=candidate)
+        if exact.exists():
+            return exact
+
+    # 2) Запасной вариант — по началу строки.
+    prefix = Q()
+    for candidate in candidates:
+        prefix |= Q(code__istartswith=candidate)
+    return queryset.filter(prefix)
 
 
 def filter_uips_by_query(queryset, query: str):
