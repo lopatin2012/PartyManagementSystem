@@ -220,6 +220,16 @@ def _sync_lines(url: str, factory: Factory, dry_run: bool) -> dict:
 # Синхронизация продуктов.
 # ==========================================
 
+def fetch_factory_products(url: str):
+    """
+    Запрашивает список продуктов завода: {url}/workshop/api/v1/product-list/.
+
+    :return: список словарей продукта (code/name/gtin/active/lines...) или None
+             при ошибке запроса.
+    """
+    return _http_get(url, PRODUCT_LIST_PATH)
+
+
 def _sync_products(url: str, factory: Factory, dry_run: bool) -> dict:
     summary = {
         'fetched': 0, 'created': 0, 'updated': 0,

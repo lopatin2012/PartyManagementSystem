@@ -410,6 +410,22 @@ def register_reserved_uips_task() -> dict:
 
 
 @task(queue_name='default')
+def sync_product_activity_task() -> dict:
+    """
+    Проверка активности продуктов через серверы «Молвест.Маркировка» (раз в сутки).
+
+    Для каждого действующего завода запрашивается
+    `GET {Factory.ip_address:port}/workshop/api/v1/product-list/`; SKU,
+    отсутствующие в списке или помеченные `active=false`, деактивируются.
+    Выполняется перед накоплением резерва УИП, чтобы в резерв не попадала
+    снятая с производства продукция.
+    """
+    from app_factory.services.product_activity_sync import sync_product_activity
+
+    return sync_product_activity()
+
+
+@task(queue_name='default')
 def accumulate_short_shelf_life_reserve_task() -> dict:
     """
     Накопление резерва УИП на окно дат для короткоживущей продукции
