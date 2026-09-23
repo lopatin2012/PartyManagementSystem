@@ -121,8 +121,8 @@ class ProductPackagingAdmin(admin.ModelAdmin):
 
 @admin.register(ProductSKU)
 class ProductSKUAdmin(admin.ModelAdmin):
-    list_display = ('id', 'article', 'product', 'type_formation_uip', is_active_display)
-    list_filter = ('is_active', 'product__group')
+    list_display = ('id', 'article', 'product', 'type_formation_uip', 'reserve_days', is_active_display)
+    list_filter = ('is_active', 'type_formation_uip', 'product__group')
     autocomplete_fields = ('product',)
     search_fields = ('article', 'other_codes', 'product__name', 'product__packagings__gtin')
     ordering = ('-id', 'product', 'article')

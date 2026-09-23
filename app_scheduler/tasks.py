@@ -409,6 +409,27 @@ def register_reserved_uips_task() -> dict:
     return register_eligible_reserved_uips()
 
 
+@task(queue_name='default')
+def accumulate_short_shelf_life_reserve_task() -> dict:
+    """
+    Накопление резерва УИП на окно дат для короткоживущей продукции
+    (раз в сутки).
+
+    Для активных SKU обычного формата с сроком годности продукта менее
+    `UIP_SHORT_SHELF_LIFE_DAYS` (по умолчанию 40 дней) доливает резерв
+    зарезервированных УИП на даты [сегодня; сегодня + ProductSKU.reserve_days].
+
+    По умолчанию работает в безопасном режиме `skip_cz=True` — создаются
+    только черновики без обращения к ЧЗ (оценка объёмов). Для резервирования
+    в ЧЗ запускать с `skip_cz=False`.
+    """
+    from app_uip.services.reserve_accumulation import (
+        accumulate_short_shelf_life_reserve,
+    )
+
+    return accumulate_short_shelf_life_reserve(skip_cz=True)
+
+
 # ==========================================
 # Национальный каталог.
 # ==========================================

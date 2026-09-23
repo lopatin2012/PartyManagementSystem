@@ -285,6 +285,11 @@ class ProductSKU(UUIDModel):
         choices=TypeFormationUIP.choices,
         verbose_name='Тип формирования УИП'
     )
+    reserve_days = models.PositiveSmallIntegerField(
+        default=5,
+        verbose_name='Резерв УИП, дней',
+        help_text='На сколько дней вперёд поддерживать резерв УИП (сегодня + N дней)'
+    )
     is_active = models.BooleanField(default=True, verbose_name='Используется')
 
     class Meta:
