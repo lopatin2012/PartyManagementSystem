@@ -58,9 +58,8 @@ async function syncPartyCodes(btn) {
     const url = btn.dataset.url;
     const csrf = btn.dataset.csrf;
 
-    const originalText = btn.textContent;
     btn.disabled = true;
-    btn.textContent = 'Синхронизация…';
+    btn.classList.add('syncing');
 
     try {
         const resp = await fetch(url, {
@@ -85,6 +84,6 @@ async function syncPartyCodes(btn) {
         alert('Ошибка сети: ' + e.message);
     } finally {
         btn.disabled = false;
-        btn.textContent = originalText;
+        btn.classList.remove('syncing');
     }
 }
