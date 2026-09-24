@@ -110,6 +110,16 @@
     box-shadow: 0 2px 6px rgba(250, 187, 28, 0.3);
 }
 
+/* Кнопка отправки отчёта о нанесении (регистрация УИП). */
+.btn-report {
+    background: var(--accent-green, #BBCF32);
+}
+
+.btn-report:hover:not(:disabled) {
+    background: #c9db4b;
+    box-shadow: 0 2px 6px rgba(187, 207, 50, 0.3);
+}
+
 .btn-row-action:disabled {
     opacity: 0.5;
     cursor: not-allowed;

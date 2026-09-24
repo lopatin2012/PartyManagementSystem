@@ -59,3 +59,12 @@ class ScheduleRegistrationTests(SimpleTestCase):
         from app_scheduler.tasks import accumulate_short_shelf_life_reserve_task
 
         self.assertTrue(hasattr(accumulate_short_shelf_life_reserve_task, 'enqueue'))
+
+    def test_sync_parties_task_in_schedule(self):
+        from app_scheduler.management.commands.run_scheduler import SCHEDULE
+        from app_scheduler.tasks import sync_parties_task
+
+        entries = {name: interval for name, interval, _ in SCHEDULE}
+        self.assertIn('sync_parties', entries)
+        self.assertEqual(entries['sync_parties'], 30 * 60)
+        self.assertTrue(hasattr(sync_parties_task, 'enqueue'))

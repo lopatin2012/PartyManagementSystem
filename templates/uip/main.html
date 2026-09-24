@@ -327,10 +327,21 @@
                                             onclick="reserveDraftUip(this)">
                                             Зарезервировать
                                         </button>
-                                    {% elif uip.status == 'reserved_local' %}
-                                        <span class="action-hint action-hint-ok" title="Уже зарезервирован">✓</span>
-                                    {% elif uip.status == 'reserved_cz' %}
-                                        <span class="action-hint action-hint-ok" title="Создан через ЧЗ">✓</span>
+                                    {% elif uip.status == 'reserved_local' or uip.status == 'reserved_cz' %}
+                                        {% if uip.has_task %}
+                                            <button
+                                                class="btn-row-action btn-report"
+                                                data-uip-id="{{ uip.id }}"
+                                                data-uip-number="{{ uip.number }}"
+                                                data-url="{% url 'api-report-uip' %}"
+                                                data-csrf="{{ csrf_token }}"
+                                                title="Отправить отчёт о нанесении в Честный Знак"
+                                                onclick="reportUip(this)">
+                                                Отправить отчёт о нанесении
+                                            </button>
+                                        {% else %}
+                                            <span class="action-hint action-hint-muted" title="Нет привязанного задания">—</span>
+                                        {% endif %}
                                     {% else %}
                                         <span class="action-hint action-hint-muted">—</span>
                                     {% endif %}

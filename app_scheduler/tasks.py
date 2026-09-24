@@ -410,6 +410,21 @@ def register_reserved_uips_task() -> dict:
 
 
 @task(queue_name='default')
+def sync_parties_task() -> dict:
+    """
+    Синхронизация резерва УИП с Честным Знаком (каждые 30 минут).
+
+    Сверяет список зарезервированных партий в ЧЗ с локальными `reserved_*`:
+    создаёт отсутствующие, обновляет данные, а локальные зарезервированные,
+    которых в ЧЗ уже нет (партия ушла из резерва после отчёта о нанесении),
+    помечает `is_desync=True`.
+    """
+    from app_cz.services.party_service import sync_parties_from_cz
+
+    return sync_parties_from_cz()
+
+
+@task(queue_name='default')
 def sync_product_activity_task() -> dict:
     """
     Проверка активности продуктов через серверы «Молвест.Маркировка» (раз в сутки).

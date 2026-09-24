@@ -11,7 +11,7 @@ from django.db.models import ObjectDoesNotExist
 from django.db import transaction
 from django.utils.dateparse import parse_datetime, parse_date
 
-from app_cz.models import SUZAccount
+from app_cz.models import CISCode, SUZAccount
 from app_cz.suz_config import SUZ
 from app_cz.enums import TypeProduct
 from app_cz.services.suz_client import get_true_api_session_token
@@ -512,6 +512,48 @@ def close_party_reservation(
         }
 
 
+def _is_local_format_number(
+        product_sku: ProductSKU,
+        production_date: date,
+        party_number: str,
+) -> bool:
+    """
+    Совпадает ли номер из ЧЗ с нашим локальным форматом для этого SKU.
+
+    Локальный номер строится `build_local_party_number` по GTIN, дате
+    производства, артикулу и типу формирования УИП. Если он равен номеру
+    из ЧЗ — УИП был зарезервирован вручную (RESERVED_LOCAL), а не
+    сгенерирован Честным Знаком.
+
+    Дата производства берётся из УИП/ЧЗ, а при её отсутствии — из сегмента
+    даты самого номера (14:20).
+    """
+    if product_sku is None or not party_number:
+        return False
+
+    gtin = product_sku.product.consumer_gtin
+    if not gtin:
+        return False
+
+    effective_date = production_date
+    if effective_date is None and len(party_number) >= 20:
+        try:
+            effective_date = datetime.strptime(party_number[14:20], '%y%m%d').date()
+        except ValueError:
+            effective_date = None
+    if effective_date is None:
+        return False
+
+    local_number = build_local_party_number(
+        gtin,
+        effective_date,
+        article=product_sku.article,
+        party='000',
+        type_formation_uip=product_sku.type_formation_uip,
+    )
+    return bool(local_number) and local_number == party_number
+
+
 def sync_parties_from_cz() -> dict:
     """
     Синхронизирует список зарезервированных партий из ЧЗ с локальной базой.
@@ -534,10 +576,13 @@ def sync_parties_from_cz() -> dict:
     lst_party_info = result.get('lst_party_number_info', [])
 
     if not lst_party_info:
+        # В ЧЗ нет зарезервированных партий → все локальные reserved_*
+        # помечаем рассинхроном.
+        desync_count = _mark_local_reserved_not_in_cz(set())
         return {
             'is_error': False,
             'message': 'В ЧЗ нет зарезервированных партий',
-            'created': 0, 'updated': 0, 'desync': 0, 'skipped': 0, 'total': 0,
+            'created': 0, 'updated': 0, 'desync': desync_count, 'skipped': 0, 'total': 0,
         }
 
     # Статусы, нормальные для УИП, числящегося в резерве ЧЗ.
@@ -609,25 +654,44 @@ def sync_parties_from_cz() -> dict:
                         )
                         continue
 
+                    # Если номер из ЧЗ совпадает с нашим локальным форматом — он был
+                    # зарезервирован вручную (RESERVED_LOCAL), иначе сгенерирован ЧЗ.
+                    is_local = _is_local_format_number(
+                        product_sku, production_date, party_number,
+                    )
+                    new_status = (
+                        PartyStatusChoices.RESERVED_LOCAL
+                        if is_local
+                        else PartyStatusChoices.RESERVED_CZ
+                    )
+                    note = (
+                        'Создан при синхронизации с ЧЗ (локальный формат)'
+                        if is_local
+                        else 'Создан при синхронизации с ЧЗ'
+                    )
+
                     uip = UIP.objects.create(
                         number=party_number,
                         product_sku=product_sku,
-                        status=PartyStatusChoices.RESERVED_CZ,
+                        status=new_status,
                         production_date=production_date,
                         reservation_date=reservation_date,
                         planned_quantity=party_info.get('expectedQuantity', 0),
                         is_desync=False,
-                        description='Создан при синхронизации с ЧЗ',
+                        description=note,
                     )
                     UIPStatusLog.objects.create(
                         uip=uip,
                         from_status=None,
-                        to_status=PartyStatusChoices.RESERVED_CZ,
+                        to_status=new_status,
                         source='sync',
-                        note='Создан при синхронизации с ЧЗ',
+                        note=note,
                     )
                     created_count += 1
-                    logger.info(f'Создан УИП: {party_number} (резерв: {reservation_date})')
+                    logger.info(
+                        f'Создан УИП: {party_number} '
+                        f'(статус: {new_status}, резерв: {reservation_date})'
+                    )
                     continue
 
                 # === УИП НАЙДЕН — обновляем ===
@@ -656,6 +720,13 @@ def sync_parties_from_cz() -> dict:
                     )
 
                 updated_count += 1
+
+        # === Сверка в обратную сторону: локальные reserved_*, которых НЕТ в ЧЗ.
+        # В ЧЗ такой УИП больше не зарезервирован (сгорел/снят не через наш
+        # отчёт), но локально всё ещё числится зарезервированным. Помечаем
+        # is_desync, статус и данные НЕ меняем — разбирается администратором.
+        cz_numbers = {p.get('partyNumber') for p in lst_party_info}
+        desync_count += _mark_local_reserved_not_in_cz(cz_numbers)
 
         message = (
             f'Синхронизация завершена. Создано: {created_count}, '
@@ -688,6 +759,143 @@ def sync_parties_from_cz() -> dict:
             'skipped': skipped_count,
             'total': len(lst_party_info),
         }
+
+
+def _collect_uip_codes(uips: list) -> dict:
+    """
+    Собирает по одному коду DataMatrix из заданий каждого УИП.
+
+    Статус кода со стороны завода/1С не обновляется, поэтому фактическую
+    нанесённость проверяем в ЧЗ (пакетно, см. `_register_uips_with_applied_codes`).
+
+    :return: {uip_id: code} — по одному коду на УИП (первый найденный).
+    """
+    codes_by_uip = {}
+    for code_row in (
+        CISCode.objects
+        .filter(production_party__uip__in=uips)
+        .values_list('production_party__uip_id', 'code')
+        .order_by('production_party__uip_id', 'id')
+    ):
+        uip_id, code = code_row
+        codes_by_uip.setdefault(uip_id, code)
+    return codes_by_uip
+
+
+def _register_uips_with_applied_codes(uips: list) -> tuple[list, list]:
+    """
+    Определяет по кодам в ЧЗ, какие зарезервированные УИП были нанесены.
+
+    Для каждого УИП берётся один код из его заданий, все коды проверяются
+    ОДНИМ пакетным запросом. Код со статусом APPLIED/INTRODUCED означает,
+    что УИП зарегистрирован (ушёл из резерва).
+
+    :return: (зарегистрированные UIP, оставшиеся без нанесённых кодов UIP).
+    """
+    from app_cz.services.code_status import (
+        CISCodesStatusChoices,
+        get_cises_statuses,
+        map_cz_status,
+    )
+
+    codes_by_uip = _collect_uip_codes(uips)
+    if not codes_by_uip:
+        return [], list(uips)
+
+    # Группируем коды по товарной группе (pg — параметр /cises/info).
+    uip_by_id = {uip.id: uip for uip in uips}
+    codes_by_group: dict = {}
+    for uip_id, code in codes_by_uip.items():
+        uip = uip_by_id.get(uip_id)
+        if not uip or not uip.product_sku:
+            continue
+        group = uip.product_sku.product.group
+        codes_by_group.setdefault(group, []).append(code)
+
+    applied_codes = set()
+    applied_statuses = {
+        CISCodesStatusChoices.APPLIED,
+        CISCodesStatusChoices.INTRODUCED_INTO_CIRCULATION,
+    }
+    for group, codes in codes_by_group.items():
+        for code, raw_status in get_cises_statuses(codes, group).items():
+            if map_cz_status(raw_status) in applied_statuses:
+                applied_codes.add(code)
+
+    registered = []
+    not_registered = []
+    for uip in uips:
+        code = codes_by_uip.get(uip.id)
+        if code in applied_codes:
+            registered.append(uip)
+        else:
+            not_registered.append(uip)
+    return registered, not_registered
+
+
+def _mark_local_reserved_not_in_cz(cz_numbers: set) -> int:
+    """
+    Обрабатывает локальные УИП в статусах reserved_cz/reserved_local,
+    которых нет в списке зарезервированных партий ЧЗ.
+
+    Для каждого такого УИП берётся код из его задания и пакетно проверяется
+    в ЧЗ:
+    * код APPLIED/INTRODUCED → УИП был зарегистрирован → статус REGISTERED;
+    * иначе → is_desync=True (разбирается администратором).
+
+    УИП, которые есть в ЧЗ, флаг is_desync снимается.
+
+    :param cz_numbers: множество номеров партий, зарезервированных в ЧЗ.
+    :return: количество обработанных (зарегистрированных + рассинхрон) УИП.
+    """
+    reserved_statuses = [
+        PartyStatusChoices.RESERVED_CZ,
+        PartyStatusChoices.RESERVED_LOCAL,
+    ]
+
+    # 1. Локальные reserved_*, которых нет в ЧЗ.
+    stale = list(
+        UIP.objects.filter(
+            status__in=reserved_statuses,
+        )
+        .exclude(number__in=cz_numbers)
+        .select_related('product_sku__product')
+    )
+    marked = 0
+    if stale:
+        registered, not_registered = _register_uips_with_applied_codes(stale)
+        for uip in registered:
+            uip.change_status(
+                PartyStatusChoices.REGISTERED,
+                source='sync',
+                note='УИП зарегистрирован: код нанесён/введён в оборот в ЧЗ',
+            )
+            if uip.is_desync:
+                uip.is_desync = False
+                uip.save(update_fields=['is_desync', 'updated_at'])
+            marked += 1
+
+        not_registered_ids = [uip.id for uip in not_registered]
+        if not_registered_ids:
+            UIP.objects.filter(
+                id__in=not_registered_ids, is_desync=False
+            ).update(is_desync=True, updated_at=timezone.now())
+            marked += len(not_registered_ids)
+
+        logger.warning(
+            f'РАССИНХРОН: локальных зарезервированных УИП нет в резерве ЧЗ — '
+            f'зарегистрировано по кодам: {len(registered)}, '
+            f'помечено is_desync: {len(not_registered_ids)}.'
+        )
+
+    # 2. Локальные reserved_*, которые есть в ЧЗ → снимаем флаг.
+    UIP.objects.filter(
+        status__in=reserved_statuses,
+        is_desync=True,
+        number__in=cz_numbers,
+    ).update(is_desync=False, updated_at=timezone.now())
+
+    return marked
 
 
 def _restore_burned_uip(

@@ -45,6 +45,8 @@ class SUZUrls:
         # --- Эндпоинты True API (markirovka / markirovka.sandbox) ---
         self.true_api = f"{self.DOMAIN_TRUE_API}/api/v3/true-api"
         self.cises_search = f"{self.DOMAIN_TRUE_API}/api/v4/true-api/cises/search"
+        # Пакетная проверка кодов (до 1000 за запрос): статус APPLIED/INTRODUCED.
+        self.cises_info = f"{self.DOMAIN_TRUE_API}/api/v3/true-api/cises/info"
         self.generation_party = f"{self.DOMAIN_TRUE_API}/api/v3/true-api/party-numbers/generate"
         self.reservation_party = f"{self.DOMAIN_TRUE_API}/api/v3/true-api/party-numbers/reserve"
         self.get_all_reserved_party = f"{self.DOMAIN_TRUE_API}/api/v3/true-api/party-numbers/list"

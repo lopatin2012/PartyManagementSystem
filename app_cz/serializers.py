@@ -638,3 +638,10 @@ class ReserveDraftUIPSerializer(serializers.Serializer):
     uip_id = serializers.UUIDField(
         help_text='UUID черновой УИП, который нужно зарезервировать'
     )
+
+
+class ReportUIPSerializer(serializers.Serializer):
+    """Запрос отправки отчёта о нанесении по УИП (ручная регистрация)."""
+    uip_id = serializers.UUIDField(
+        help_text='UUID УИП, по которому нужно отправить отчёт о нанесении'
+    )

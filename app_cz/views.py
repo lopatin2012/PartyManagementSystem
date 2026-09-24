@@ -65,7 +65,9 @@ from app_cz.serializers import (
     ReservedPartyDetailSerializer,
     ReservedPartyCodesSerializer,
     # Резервирование чернового УИП.
-    ReserveDraftUIPSerializer
+    ReserveDraftUIPSerializer,
+    # Отправка отчёта о нанесении по УИП.
+    ReportUIPSerializer,
 )
 from app_factory.models import Product, ProductSKU, NationalCatalogProduct, CardStateChoices, StateConditionChoices
 
@@ -784,6 +786,100 @@ def api_reserve_draft_uip(request):
             'new_status': PartyStatusChoices.RESERVED_LOCAL,
         },
         status=status.HTTP_200_OK
+    )
+
+
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Отправка отчёта о нанесении по УИП",
+    request=ReportUIPSerializer,
+    responses={
+        200: OpenApiTypes.OBJECT,
+        400: OpenApiTypes.OBJECT,
+        403: OpenApiTypes.OBJECT,
+        404: OpenApiTypes.OBJECT,
+    }
+)
+@api_view(['POST'])
+@permission_classes([IsAppAdmin])
+def api_report_uip(request):
+    """
+    Отправляет отчёт о нанесении по УИП и переводит его в статус REGISTERED.
+
+    Код берётся из задания УИП, дата маркировки — дата производства УИП.
+    Доступно только администраторам.
+    """
+    serializer = ReportUIPSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(
+            {
+                'is_error': True,
+                'message': 'Некорректные данные запроса',
+                'errors': serializer.errors,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    uip_id = serializer.validated_data['uip_id']
+
+    try:
+        uip = UIP.objects.select_related('product_sku__product').get(id=uip_id)
+    except UIP.DoesNotExist:
+        return Response(
+            {'is_error': True, 'message': 'УИП не найден.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if uip.status not in (
+        PartyStatusChoices.RESERVED_CZ,
+        PartyStatusChoices.RESERVED_LOCAL,
+    ):
+        return Response(
+            {
+                'is_error': True,
+                'message': (
+                    f'УИП в статусе "{uip.get_status_display()}". '
+                    f'Отчёт о нанесении возможен только для зарезервированных.'
+                ),
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Отчёт возможен только при наличии привязанного задания.
+    if not uip.production_parties.exists():
+        return Response(
+            {
+                'is_error': True,
+                'message': 'У УИП нет привязанного задания — отчёт о нанесении невозможен.',
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    from app_cz.services.reserve_monitor import register_uip
+
+    result = register_uip(
+        uip,
+        source='api',
+        note='Отчёт о нанесении отправлен вручную (веб)',
+    )
+
+    if not result.get('registered'):
+        return Response(
+            {
+                'is_error': True,
+                'message': result.get('reason', 'Не удалось зарегистрировать УИП.'),
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    return Response(
+        {
+            'is_error': False,
+            'message': f'УИП {uip.number} зарегистрирован (отчёт о нанесении отправлен).',
+            'number': uip.number,
+            'new_status': PartyStatusChoices.REGISTERED,
+        },
+        status=status.HTTP_200_OK,
     )
 
 
