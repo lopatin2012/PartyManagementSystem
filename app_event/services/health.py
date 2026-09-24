@@ -3,7 +3,7 @@
 """
 Наблюдаемость: периодическая проверка состояния системы и алерты.
 
-- `run_health_checks()` прогоняет проверки (БД, СУЗ, подписи, заводы, 1С),
+- `run_health_checks()` прогоняет проверки (БД, СУЗ, подписи, заводы),
   пишет историю в `HealthCheck`.
 - При смене состояния сервиса (ok → fail, fail → ok) пишет `EventLog` и
   шлёт письмо получателям группы «Мониторинг» (антидребезг: без повторов
@@ -21,17 +21,14 @@ from app_event.utils import log_event
 
 logger = logging.getLogger(__name__)
 
-# Группа-получатель алертов (см. app_helper.access.ROLE_MONITORING).
-ALERT_GROUP = 'Мониторинг'
-
 # Соответствие код проверки → модуль EventLog.
 _SERVICE_MODULE = {
     'database': 'system',
     'suz': 'cz',
     'signatures': 'cz',
     'factories': 'cz',
-    'onec': 'system',
     'load': 'system',
+    'summary': 'system',
 }
 
 
@@ -48,20 +45,34 @@ def _retention_days() -> int:
 
 
 def get_alert_recipients() -> list:
-    """Email-адреса активных получателей группы «Мониторинг»."""
-    return list(
-        NotificationRecipient.objects
-        .filter(group=ALERT_GROUP, is_active=True)
-        .values_list('email', flat=True)
+    """
+    Email-адреса активных пользователей групп, настроенных на рассылку.
+
+    Адреса берутся из `User.email`; пустые и дубликаты отбрасываются.
+    """
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    groups = NotificationRecipient.objects.filter(is_active=True).values_list(
+        'group_id', flat=True,
     )
+    emails = (
+        User.objects
+        .filter(is_active=True, groups__id__in=list(groups))
+        .exclude(email='')
+        .values_list('email', flat=True)
+        .distinct()
+    )
+    return list(emails)
 
 
 def _send_alert(subject: str, body: str) -> dict:
-    """Ставит письмо в очередь (emails) получателям группы «Мониторинг»."""
+    """Ставит письмо в очередь (emails) получателям групп рассылки."""
     recipients = get_alert_recipients()
     if not recipients:
         logger.warning(
-            f'Алерт «{subject}»: нет получателей группы «{ALERT_GROUP}».'
+            f'Алерт «{subject}»: нет адресатов — у групп рассылки '
+            f'нет активных пользователей с заполненным email.'
         )
         return {'sent': False, 'reason': 'Нет получателей'}
 
@@ -89,7 +100,7 @@ def _last_state(service: str):
 def _diagnose() -> dict:
     """Возвращает {service: {'name', 'ok', 'message', 'details'}}."""
     from app_helper.service_helper import (
-        check_factories, check_onec, check_signatures, check_suz_token,
+        check_factories, check_signatures, check_suz_token,
     )
     from django.db import connection
     from app_helper.load_tracker import get_load_stats
@@ -125,15 +136,29 @@ def _diagnose() -> dict:
         'details': {'items': factories['factories']},
     }
 
-    onec = check_onec()
-    checks['onec'] = {'name': '1С', 'ok': onec['is_ok'], 'message': onec['message']}
-
     load = get_load_stats()
     checks['load'] = {
         'name': 'Нагрузка',
         'ok': not load['is_high_load'],
         'message': 'Нагрузка в норме' if not load['is_high_load'] else 'Высокая нагрузка',
         'details': load,
+    }
+
+    # Общая сводка: успешны ли все проверки.
+    failed = [name for name, info in checks.items() if not info['ok']]
+    checks['summary'] = {
+        'name': 'Общая сводка',
+        'ok': not failed,
+        'message': (
+            'Все проверки пройдены'
+            if not failed
+            else f'Проблемы: {", ".join(failed)}'
+        ),
+        'details': {
+            'checks_total': len(checks),
+            'checks_failed': len(failed),
+            'failed': failed,
+        },
     }
 
     return checks

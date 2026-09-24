@@ -24,7 +24,7 @@ class HealthCheckAdmin(admin.ModelAdmin):
 
 @admin.register(NotificationRecipient)
 class NotificationRecipientAdmin(admin.ModelAdmin):
-    list_display = ('group', 'email', 'is_active', 'created_at')
-    list_filter = ('group', 'is_active')
-    search_fields = ('email', 'group')
-    ordering = ('group', 'email')
+    list_display = ('group', 'is_active', 'created_at')
+    list_filter = ('is_active',)
+    search_fields = ('group__name',)
+    ordering = ('group__name',)

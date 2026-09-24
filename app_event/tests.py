@@ -5,11 +5,15 @@
 from datetime import timedelta
 from unittest.mock import patch
 
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.test import TestCase
 from django.utils import timezone
 
 from app_event.models import EventLog, HealthCheck, NotificationRecipient
 from app_event.services import health as health_service
+
+User = get_user_model()
 
 
 def _fake_checks(ok: bool):
@@ -25,9 +29,12 @@ def _fake_checks(ok: bool):
 
 class HealthCheckTests(TestCase):
     def setUp(self):
-        NotificationRecipient.objects.create(
-            group='Мониторинг', email='monitor@test.local',
+        self.group, _ = Group.objects.get_or_create(name='Мониторинг')
+        NotificationRecipient.objects.get_or_create(group=self.group)
+        self.monitor = User.objects.create_user(
+            username='monitor', password='pass', email='monitor@test.local',
         )
+        self.monitor.groups.add(self.group)
 
     def test_first_run_records_and_alerts(self):
         with patch.object(
@@ -68,15 +75,23 @@ class HealthCheckTests(TestCase):
         mock_alert.assert_called_once()
         self.assertIn('ВОССТАНОВЛЕНО', mock_alert.call_args[0][0])
 
-    def test_get_alert_recipients(self):
-        NotificationRecipient.objects.create(
-            group='Мониторинг', email='off@test.local', is_active=False,
+    def test_get_alert_recipients_from_group_users(self):
+        # Пользователь без email не попадает.
+        no_email = User.objects.create_user(
+            username='noemail', password='pass', email='',
         )
-        NotificationRecipient.objects.create(
-            group='Другая', email='other@test.local',
-        )
+        no_email.groups.add(self.group)
+
         recipients = health_service.get_alert_recipients()
         self.assertEqual(recipients, ['monitor@test.local'])
+
+    def test_recipients_empty_when_inactive_recipient(self):
+        NotificationRecipient.objects.filter(group=self.group).update(is_active=False)
+        self.assertEqual(health_service.get_alert_recipients(), [])
+
+    def test_recipients_empty_when_no_group_users(self):
+        NotificationRecipient.objects.all().delete()
+        self.assertEqual(health_service.get_alert_recipients(), [])
 
     def test_cleanup_removes_old_checks(self):
         old = HealthCheck.objects.create(

@@ -188,18 +188,27 @@ def diagnose_service() -> dict:
         'items': factories['factories'],
     }
 
-    # 5. 1С (если настроен адрес).
-    onec = check_onec()
-    checks['onec'] = {'ok': onec['is_ok'], 'message': onec['message']}
-
-    # 6. Нагрузка.
+    # 5. Нагрузка.
     load = get_load_stats()
     checks['load'] = {
         'ok': not load['is_high_load'],
         **load,
     }
 
-    is_available = all(c['ok'] for c in checks.values())
+    # 6. Общая сводка по сервису.
+    failed = [name for name, c in checks.items() if not c['ok']]
+    checks['summary'] = {
+        'ok': not failed,
+        'message': (
+            'Все проверки пройдены'
+            if not failed
+            else f'Проблемы: {", ".join(failed)}'
+        ),
+        'checks_total': len(checks),
+        'checks_failed': len(failed),
+    }
+
+    is_available = not failed
 
     return {
         'is_available': is_available,

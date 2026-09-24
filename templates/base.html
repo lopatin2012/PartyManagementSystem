@@ -124,17 +124,26 @@
             </div>
         </div>
 
-        <!-- 3. 1С: Предприятие -->
-        <div class="status-card {% if status_1c.is_ok %}status-success{% else %}status-danger{% endif %}">
+        <!-- 3. Общая сводка по сервису -->
+        <div class="status-card {% if status_summary.is_ok %}status-success{% else %}status-danger{% endif %}">
             <div class="status-header">
                 <span class="status-icon"></span>
-                <span class="status-title">1С</span>
+                <span class="status-title">Сервис</span>
             </div>
             <div class="status-body">
-                <p class="status-text">{{ status_1c.message }}</p>
-                <span class="status-badge-small {% if status_1c.is_ok %}status-success{% else %}status-danger{% endif %}">
-                    {% if status_1c.is_ok %}Подключено{% else %}Недоступно{% endif %}
+                <span class="status-badge-small {% if status_summary.is_ok %}status-success{% else %}status-danger{% endif %}">
+                    {% if status_summary.is_ok %}Работает{% else %}Ошибки: {{ status_summary.checks_failed }}/{{ status_summary.checks_total }}{% endif %}
                 </span>
+                {% for check in status_summary.failed_checks %}
+                    <div class="workshop-status">
+                        <span class="workshop-name">{{ check.name }}</span>
+                        <span class="status-badge-small status-danger" title="{{ check.message }}">
+                            {{ check.message }}
+                        </span>
+                    </div>
+                {% empty %}
+                    <p class="status-text">{{ status_summary.message }}</p>
+                {% endfor %}
             </div>
         </div>
     </div>

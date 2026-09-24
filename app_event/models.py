@@ -86,28 +86,28 @@ class HealthCheck(models.Model):
 
 
 class NotificationRecipient(models.Model):
-    """Адрес рассылки уведомлений (по группе-получателю)."""
+    """
+    Настройка рассылки: какая группа получает алерты.
 
-    group = models.CharField(
-        max_length=100, db_index=True,
+    Email-адреса берутся из `User.email` активных пользователей выбранной
+    группы (отдельного поля адреса нет).
+    """
+
+    group = models.OneToOneField(
+        to='auth.Group',
+        on_delete=models.CASCADE,
+        related_name='notification_recipient',
         verbose_name='Группа',
-        help_text='Кому адресовано, например «Мониторинг»'
+        help_text='Группа, участники которой получают алерты (например, «Мониторинг»)',
     )
-    email = models.EmailField(verbose_name='Email')
     is_active = models.BooleanField(default=True, verbose_name='Активен')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Создано')
 
     class Meta:
-        ordering = ['group', 'email']
-        constraints = [
-            models.UniqueConstraint(
-                fields=['group', 'email'],
-                name='unique_recipient_per_group',
-            )
-        ]
+        ordering = ['group__name']
         verbose_name = 'Получатель уведомлений'
         verbose_name_plural = 'Получатели уведомлений'
 
     def __str__(self):
         status = '' if self.is_active else ' [выкл]'
-        return f'{self.group}: {self.email}{status}'
+        return f'{self.group.name}{status}'
