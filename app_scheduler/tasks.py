@@ -137,11 +137,11 @@ def cleanup_expired_reserved_uips_task() -> dict:
 def close_unused_registered_uips_task() -> dict:
     """
     УИП в статусе registered без производственных партий,
-    которые не были использованы в течение 3 дней → CLOSED.
+    которые не были использованы в течение 15 дней → CLOSED.
     """
     from app_uip.models import UIP, UIPStatusLog, PartyStatusChoices, ProductionParty
 
-    threshold = timezone.now() - timedelta(days=3)
+    threshold = timezone.now() - timedelta(days=15)
 
     # Подзапрос: нет связанных ProductionParty.
     no_parties = ~Exists(
@@ -168,7 +168,7 @@ def close_unused_registered_uips_task() -> dict:
     )
 
     if not unused_uips:
-        message = 'Нет УИП для закрытия (3 дня без использования)'
+        message = 'Нет УИП для закрытия (15 дней без использования)'
         logger.info(message)
         return {'closed': 0, 'message': message}
 
@@ -190,7 +190,7 @@ def close_unused_registered_uips_task() -> dict:
             from_status=old_statuses[uip_id],
             to_status=PartyStatusChoices.CLOSED,
             source='auto',
-            note='Автоматическое закрытие: 3 дня без прикрепления к производственной партии',
+            note='Автоматическое закрытие: 15 дней без прикрепления к производственной партии',
         )
         for uip_id in uip_ids
     ]
