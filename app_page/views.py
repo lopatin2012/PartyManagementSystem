@@ -140,6 +140,14 @@ class UIPListView(UipPageAccessMixin, TemplateView):
         if res_to:
             queryset = queryset.filter(reservation_date__lte=res_to)
 
+        # === Количество зарезервированных УИП (без пагинации, по текущему фильтру) ===
+        reserved_count = queryset.filter(
+            status__in=[
+                PartyStatusChoices.RESERVED_CZ,
+                PartyStatusChoices.RESERVED_LOCAL,
+            ]
+        ).count()
+
         # === Пагинация: 100 записей на страницу ===
         paginator = Paginator(queryset, 100)
         page_number = get.get('page', 1)
@@ -185,6 +193,7 @@ class UIPListView(UipPageAccessMixin, TemplateView):
             'paginator': paginator,
             'page_range': page_range,
             'total_count': paginator.count,
+            'reserved_count': reserved_count,
             'query_string': query_string,
             'start_item': start_item,
             'end_item': end_item,
