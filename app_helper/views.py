@@ -3,12 +3,36 @@
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from config.settings import SERVICE_VERSION
 
 from app_helper.service_helper import diagnose_service
+
+
+@extend_schema(
+    tags=["Помощник"],
+    summary="Health-проверка сервиса (публичная, для мониторинга)",
+    responses={200: OpenApiTypes.OBJECT},
+)
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def health(request):
+    """
+    Публичный эндпоинт для систем мониторинга: статус, версия, проверки.
+
+    Возвращает 200, если все проверки прошли, иначе 503.
+    """
+    diagnosis = diagnose_service()
+    payload = {
+        'status': 'ok' if diagnosis['is_available'] else 'fail',
+        'is_available': diagnosis['is_available'],
+        'version': SERVICE_VERSION,
+        'checks': diagnosis['checks'],
+    }
+    return Response(payload, status=200 if diagnosis['is_available'] else 503)
 
 
 @extend_schema(

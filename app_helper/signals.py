@@ -18,7 +18,7 @@ from django.contrib.auth.models import Group, Permission
 from django.db.models.signals import post_migrate
 from django.dispatch import receiver
 
-from app_helper.access import ROLE_ADMIN, ROLE_VIEW, UIP_VIEW_PERM
+from app_helper.access import ROLE_ADMIN, ROLE_VIEW, ROLE_MONITORING, UIP_VIEW_PERM
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +40,12 @@ def setup_default_groups(sender, app_config=None, **kwargs):
         )
         view_group.permissions.set(view_perm)
 
+        # «Мониторинг» — тег для рассылки алертов (права не нужны).
+        Group.objects.get_or_create(name=ROLE_MONITORING)
+
         logger.info(
-            'Группы доступа настроены: «%s» (все права), «%s» (%s).',
-            ROLE_ADMIN, ROLE_VIEW, UIP_VIEW_PERM,
+            'Группы доступа настроены: «%s» (все права), «%s» (%s), «%s».',
+            ROLE_ADMIN, ROLE_VIEW, UIP_VIEW_PERM, ROLE_MONITORING,
         )
     except Exception:
         # Не роняем migrate из-за прав (например, таблиц прав ещё нет).

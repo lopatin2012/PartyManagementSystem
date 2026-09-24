@@ -129,7 +129,27 @@ class SchedulerStatusView(View):
             # Текущее состояние синхронизации НК (видно и для ручного запуска,
             # и для фоновой задачи — окно «Фоновые задачи» отражает конфликты).
             'nk_sync': _nk_sync_state(),
+            # Состояние системы: последняя проверка по каждому сервису.
+            'system_health': self._system_health_state(),
         })
+
+    def _system_health_state(self) -> dict:
+        """Последняя проверка по каждому сервису для виджета состояния."""
+        from app_event.models import HealthCheck
+
+        seen = {}
+        for check in HealthCheck.objects.order_by('-checked_at'):
+            if check.service in seen:
+                continue
+            seen[check.service] = {
+                'service': check.service,
+                'name': check.name,
+                'is_ok': check.is_ok,
+                'level': check.level,
+                'message': check.message,
+                'checked_at': check.checked_at.strftime('%d.%m.%Y %H:%M:%S'),
+            }
+        return {'is_ok': all(c['is_ok'] for c in seen.values()), 'services': list(seen.values())}
 
     def _format_interval(self, seconds: int) -> str:
         if seconds < 60:

@@ -108,6 +108,9 @@ SCHEDULE = [
     # помечаются is_desync.
     ('sync_parties', 30 * MINUTE, 'Синхронизация УИП с ЧЗ (30 минут)'),
 
+    # Проверка состояния системы (БД, СУЗ, подписи, заводы, 1С) — каждые 5 минут.
+    ('check_system_health', 5 * MINUTE, 'Проверка состояния системы (5 минут)'),
+
     # # Раз в сутки в 3:00 — архивация УИП
     # ('archive_stale_uips', 24 * 3600, 'Архивация УИП без активности'),
     #
@@ -200,6 +203,7 @@ class Command(BaseCommand):
             check_uip_burn_task,
             register_reserved_uips_task,
             sync_parties_task,
+            check_system_health_task,
             sync_product_activity_task,
             accumulate_short_shelf_life_reserve_task,
             sync_national_catalog_task,
@@ -222,6 +226,7 @@ class Command(BaseCommand):
             'check_uip_burn': check_uip_burn_task,
             'register_reserved_uips': register_reserved_uips_task,
             'sync_parties': sync_parties_task,
+            'check_system_health': check_system_health_task,
             'sync_product_activity': sync_product_activity_task,
             'accumulate_short_shelf_life_reserve': accumulate_short_shelf_life_reserve_task,
             'sync_national_catalog': sync_national_catalog_task,

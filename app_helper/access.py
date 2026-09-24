@@ -26,6 +26,7 @@ from rest_framework.permissions import BasePermission
 
 ROLE_ADMIN = 'Админ'
 ROLE_VIEW = 'Просмотр'
+ROLE_MONITORING = 'Мониторинг'
 
 # Права на модель УИП.
 UIP_VIEW_PERM = 'app_uip.view_uip'

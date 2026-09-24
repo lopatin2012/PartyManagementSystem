@@ -322,6 +322,16 @@ UIP_SHORT_SHELF_LIFE_DAYS = int(os.getenv('UIP_SHORT_SHELF_LIFE_DAYS', '40'))
 ONEC_URL = os.getenv('ONEC_URL', '')
 
 # ==========================================
+# Наблюдаемость (health-проверки и алерты).
+# ==========================================
+# Включить периодические проверки состояния.
+HEALTH_CHECK_ENABLED = os.getenv('HEALTH_CHECK_ENABLED', '1') == '1'
+# Включить email-алерты при смене состояния сервисов.
+SYSTEM_ALERTS_ENABLED = os.getenv('SYSTEM_ALERTS_ENABLED', '1') == '1'
+# Сколько дней хранить историю HealthCheck.
+HEALTH_RETENTION_DAYS = int(os.getenv('HEALTH_RETENTION_DAYS', '28'))
+
+# ==========================================
 # Лимиты запросов.
 # ==========================================
 # Лимит количества GET/POST-параметров в одном запросе. Увеличен для

@@ -6,8 +6,11 @@ from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 from config.settings import DEBUG
+from app_helper.views import health
 
 urlpatterns = [
+    # Публичная health-проверка для мониторинга.
+    path('health/', health, name='health'),
     path('auth/', include('django.contrib.auth.urls')), # Стандартная аутентификация.
     path('admin/', admin.site.urls, name='admin'),
     path('', include('app_page.urls')), # Страницы.

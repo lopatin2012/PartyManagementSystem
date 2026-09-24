@@ -462,6 +462,29 @@ def accumulate_short_shelf_life_reserve_task() -> dict:
 
 
 # ==========================================
+# Наблюдаемость (health-проверки).
+# ==========================================
+
+@task(queue_name='default')
+def check_system_health_task() -> dict:
+    """
+    Периодическая проверка состояния системы (раз в 5 минут).
+
+    Проверяет БД, СУЗ, сервис подписей, серверы заводов и 1С, пишет историю
+    в HealthCheck и шлёт алерты получателям группы «Мониторинг» при смене
+    состояния. Заодно чистит записи старше HEALTH_RETENTION_DAYS.
+    """
+    from app_event.services.health import (
+        cleanup_old_health_checks,
+        run_health_checks,
+    )
+
+    result = run_health_checks()
+    cleanup_old_health_checks()
+    return result
+
+
+# ==========================================
 # Национальный каталог.
 # ==========================================
 

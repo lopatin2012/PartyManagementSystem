@@ -102,6 +102,57 @@ def check_onec() -> dict:
     return check_url_status(url)
 
 
+def check_signatures() -> dict:
+    """
+    Проверяет доступность внешнего сервиса подписей.
+
+    :return: {'is_ok': bool, 'message': str}
+    """
+    from django.conf import settings
+
+    url = getattr(settings, 'SIGNATURE_SERVICE_URL', '') or ''
+    if url:
+        return check_url_status(url.rstrip('/') + '/')
+
+    # Адрес из модели ExternalService (тип «Сервис подписей»).
+    try:
+        from config.models import ExternalService, TypeServiceChoices
+        service = ExternalService.objects.filter(
+            service_type=TypeServiceChoices.SIGNATURE, is_active=True,
+        ).first()
+        if not service:
+            return {'is_ok': False, 'message': 'Сервис подписей не настроен'}
+        return check_url_status(f'http://{service.ip_address}:{service.port_address}/')
+    except Exception as e:
+        logger.error(f'Проверка сервиса подписей: {e}')
+        return {'is_ok': False, 'message': str(e)}
+
+
+def check_suz_token() -> dict:
+    """
+    Проверяет активную учётную запись СУЗ и срок действия динамического токена.
+
+    :return: {'is_ok': bool, 'message': str}
+    """
+    try:
+        from app_cz.models import SUZAccount
+        account = SUZAccount.objects.filter(is_active=True).first()
+        if account is None:
+            return {'is_ok': False, 'message': 'Активная учётная запись СУЗ не настроена'}
+        if not account.dynamic_token:
+            return {'is_ok': False, 'message': 'Динамический токен СУЗ отсутствует'}
+        if account.token_expires_at and account.token_expires_at < timezone.now():
+            return {'is_ok': False, 'message': 'Динамический токен СУЗ истёк'}
+        expires = (
+            account.token_expires_at.strftime('%Y-%m-%d %H:%M')
+            if account.token_expires_at else 'без срока'
+        )
+        return {'is_ok': True, 'message': f'Токен действителен до {expires}'}
+    except Exception as e:
+        logger.error(f'Проверка СУЗ: {e}')
+        return {'is_ok': False, 'message': str(e)}
+
+
 def diagnose_service() -> dict:
     """
     Самодиагностика сервиса: проверяет БД, внешние зависимости и нагрузку.
@@ -118,29 +169,30 @@ def diagnose_service() -> dict:
         checks['database'] = {'ok': False, 'message': str(e)}
 
     # 2. СУЗ (интеграция с Честным Знаком).
-    try:
-        from app_cz.models import SUZAccount
-        account = SUZAccount.objects.filter(is_active=True).first()
-        if account is None:
-            checks['suz'] = {
-                'ok': False,
-                'message': 'Активная учётная запись СУЗ не настроена'
-            }
-        elif not account.dynamic_token or account.token_expires_at < timezone.now():
-            checks['suz'] = {
-                'ok': False,
-                'message': 'Динамический токен СУЗ отсутствует'
-            }
-        else:
-            checks['suz'] = {
-                'ok': True,
-                'message': 'СУЗ настроен, токен присутствует'
-            }
-    except Exception as e:
-        logger.error(f'Самодиагностика: ошибка проверки СУЗ: {e}')
-        checks['suz'] = {'ok': False, 'message': str(e)}
+    suz = check_suz_token()
+    checks['suz'] = {'ok': suz['is_ok'], 'message': suz['message']}
 
-    # 3. Нагрузка.
+    # 3. Сервис подписей.
+    sig = check_signatures()
+    checks['signatures'] = {'ok': sig['is_ok'], 'message': sig['message']}
+
+    # 4. Серверы заводов (Молвест.Маркировка).
+    factories = check_factories()
+    checks['factories'] = {
+        'ok': factories['is_ok'],
+        'message': (
+            'Все заводы доступны'
+            if factories['is_ok']
+            else 'Не все заводы доступны'
+        ),
+        'items': factories['factories'],
+    }
+
+    # 5. 1С (если настроен адрес).
+    onec = check_onec()
+    checks['onec'] = {'ok': onec['is_ok'], 'message': onec['message']}
+
+    # 6. Нагрузка.
     load = get_load_stats()
     checks['load'] = {
         'ok': not load['is_high_load'],
