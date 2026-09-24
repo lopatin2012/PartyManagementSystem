@@ -10,13 +10,27 @@
 - сбой одного завода не влияет на другие.
 """
 
-from datetime import timedelta
+from datetime import date, timedelta
 from unittest.mock import Mock, patch
+from django.contrib.auth.models import User
 from django.test import TestCase
 from django.utils import timezone
 
-from app_factory.models import Factory
+from app_factory.models import (
+    CardStateChoices,
+    Factory,
+    PackagingLevelChoices,
+    Product,
+    ProductGroupChoices,
+    ProductPackaging,
+    ProductSKU,
+    StateConditionChoices,
+    TypeFormationUIP,
+)
+from app_uip.models import PartyStatusChoices, ProductionParty, UIP
+from app_cz.models import CISCode
 from app_cz.services import code_sync
+from app_cz.services import party_service
 
 
 class FetchExternalTasksChangedSinceTests(TestCase):
@@ -190,3 +204,231 @@ class GetFactoryChangedSinceTests(TestCase):
             self.assertEqual(
                 code_sync.get_factory_changed_since(self.factory), 'FALLBACK'
             )
+
+
+def _create_sku():
+    product = Product.objects.create(
+        group=ProductGroupChoices.MILK,
+        name='Тестовый продукт',
+        shelf_life_in_days=14,
+        item_condition=StateConditionChoices.READY_ORDER_KM,
+        card_status=CardStateChoices.PUBLISHED,
+    )
+    ProductPackaging.objects.create(
+        product=product,
+        level=PackagingLevelChoices.UNIT,
+        gtin='04601751026019',
+        quantity_inside=1,
+    )
+    return ProductSKU.objects.create(product=product, article='50032')
+
+
+class SyncPartiesReserveReconciliationTests(TestCase):
+    """Сверка резерва: локальные reserved_*, отсутствующие в ЧЗ → is_desync."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.number_in_cz = '04601751026019260101500320000000'
+        self.number_not_in_cz = '04601751026019260101500320000001'
+
+    def _uip(self, number, status=PartyStatusChoices.RESERVED_LOCAL,
+             is_desync=False):
+        return UIP.objects.create(
+            product_sku=self.sku,
+            number=number,
+            status=status,
+            is_desync=is_desync,
+        )
+
+    def _sync(self, cz_parties, cises_statuses=None):
+        with patch.object(
+            party_service, 'get_all_reserved_parties',
+            return_value={
+                'is_error': False,
+                'message_error': 'ОК',
+                'lst_party_number_info': cz_parties,
+            },
+        ), patch(
+            'app_cz.services.code_status.get_cises_statuses',
+            return_value=cises_statuses or {},
+        ):
+            return party_service.sync_parties_from_cz()
+
+    def test_local_reserved_missing_in_cz_marked_desync(self):
+        uip_in = self._uip(self.number_in_cz)
+        uip_missing = self._uip(self.number_not_in_cz)
+
+        result = self._sync([{
+            'partyNumber': self.number_in_cz,
+            'gtin': '04601751026019',
+        }])
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['desync'], 1)
+        uip_in.refresh_from_db()
+        uip_missing.refresh_from_db()
+        self.assertFalse(uip_in.is_desync)
+        self.assertTrue(uip_missing.is_desync)
+        # Нет кодов → статус НЕ меняется, только рассинхрон.
+        self.assertEqual(uip_missing.status, PartyStatusChoices.RESERVED_LOCAL)
+
+    def test_missing_in_cz_with_applied_code_registers_uip(self):
+        """Код УИП нанесён в ЧЗ → УИП регистрируется, а не помечается рассинхроном."""
+        uip = self._uip(self.number_not_in_cz)
+        party = ProductionParty.objects.create(
+            uip=uip, production_party='1', external_number_task='task-1',
+        )
+        CISCode.objects.create(
+            production_party=party,
+            product_packaging=self.sku.product.packagings.first(),
+            code='010460175102601921CODE0001',
+            level=PackagingLevelChoices.UNIT,
+        )
+
+        result = self._sync(
+            [],
+            cises_statuses={'010460175102601921CODE0001': 'APPLIED'},
+        )
+
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.REGISTERED)
+        self.assertFalse(uip.is_desync)
+        self.assertEqual(result['desync'], 1)
+
+    def test_desync_flag_cleared_when_back_in_cz(self):
+        uip = self._uip(
+            self.number_in_cz,
+            status=PartyStatusChoices.RESERVED_LOCAL,
+            is_desync=True,
+        )
+
+        result = self._sync([{
+            'partyNumber': self.number_in_cz,
+            'gtin': '04601751026019',
+        }])
+
+        uip.refresh_from_db()
+        self.assertFalse(uip.is_desync)
+        self.assertEqual(result['desync'], 0)
+
+    def test_empty_cz_marks_all_local_reserved(self):
+        self._uip(self.number_in_cz)
+        self._uip(self.number_not_in_cz)
+
+        result = self._sync([])
+
+        self.assertEqual(result['desync'], 2)
+        self.assertTrue(
+            all(UIP.objects.values_list('is_desync', flat=True))
+        )
+
+
+class SyncPartiesFormatDetectionTests(TestCase):
+    """Пункт 2: формат УИП из ЧЗ (локальный vs сгенерированный ЧЗ)."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+        from app_cz.services.party_service import build_local_party_number
+        self.local_number = build_local_party_number(
+            '04601751026019',
+            date(2026, 1, 15),
+            article='50032',
+            party='000',
+            type_formation_uip=TypeFormationUIP.general.value,
+        )
+
+    def _sync(self, cz_parties):
+        with patch.object(
+            party_service, 'get_all_reserved_parties',
+            return_value={
+                'is_error': False,
+                'message_error': 'ОК',
+                'lst_party_number_info': cz_parties,
+            },
+        ), patch(
+            'app_cz.services.code_status.get_cises_statuses',
+            return_value={},
+        ):
+            return party_service.sync_parties_from_cz()
+
+    def test_local_format_number_created_as_reserved_local(self):
+        result = self._sync([{
+            'partyNumber': self.local_number,
+            'gtin': '04601751026019',
+            'productionDate': '2026-01-15',
+        }])
+
+        self.assertEqual(result['created'], 1)
+        uip = UIP.objects.get(number=self.local_number)
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+
+    def test_cz_format_number_created_as_reserved_cz(self):
+        result = self._sync([{
+            'partyNumber': '0460175102601926011520AB12XYZ999',
+            'gtin': '04601751026019',
+            'productionDate': '2026-01-15',
+        }])
+
+        self.assertEqual(result['created'], 1)
+        uip = UIP.objects.get(number='0460175102601926011520AB12XYZ999')
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_CZ)
+
+
+class ReportUipEndpointTests(TestCase):
+    """Пункт 4: кнопка/эндпоинт отправки отчёта о нанесении."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.uip = UIP.objects.create(
+            product_sku=self.sku,
+            number='04601751026019260101500320000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        self.url = '/cz/api/report-uip/'
+
+    def _login(self, superuser=True):
+        user = User.objects.create_superuser(
+            username='admin', password='pass', email='a@a.a'
+        )
+        self.client.force_login(user)
+        return user
+
+    def test_requires_admin(self):
+        response = self.client.post(
+            self.url, data={'uip_id': str(self.uip.id)},
+            content_type='application/json',
+        )
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_no_task_returns_400(self):
+        self._login()
+        response = self.client.post(
+            self.url, data={'uip_id': str(self.uip.id)},
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_successful_report_registers_uip(self):
+        self._login()
+        ProductionParty.objects.create(
+            uip=self.uip, production_party='1', external_number_task='task-1',
+            expiration_datetime=timezone.now(),
+        )
+        self.uip.production_date = date(2026, 1, 15)
+        self.uip.save(update_fields=['production_date'])
+
+        with patch(
+            'app_cz.services.reserve_monitor.send_application_report',
+            return_value={'has_error': False, 'status_close': True, 'responses': []},
+        ), patch(
+            'app_cz.services.reserve_monitor._fetch_code_for_task',
+            return_value='010460175102601921CODE0001',
+        ):
+            response = self.client.post(
+                self.url, data={'uip_id': str(self.uip.id)},
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.uip.refresh_from_db()
+        self.assertEqual(self.uip.status, PartyStatusChoices.REGISTERED)

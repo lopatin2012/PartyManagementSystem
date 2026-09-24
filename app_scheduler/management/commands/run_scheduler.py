@@ -103,9 +103,11 @@ SCHEDULE = [
     # Архивация устаревших кодов маркировки раз в сутки.
     ('archive_old_codes', 1 * DAY, 'Архивация устаревших кодов маркировки (1 сутки)'),
 
-    # # Каждые 30 минут — синхронизация УИП с ЧЗ
-    # ('sync_parties', 30 * 60, 'Синхронизация УИП с ЧЗ'),
-    #
+    # Сверка резерва УИП с ЧЗ — каждые 30 минут.
+    # УИП, ушедшие из резерва ЧЗ (напр., после отчёта о нанесении),
+    # помечаются is_desync.
+    ('sync_parties', 30 * 60, 'Синхронизация УИП с ЧЗ (30 минут)'),
+
     # # Раз в сутки в 3:00 — архивация УИП
     # ('archive_stale_uips', 24 * 3600, 'Архивация УИП без активности'),
     #
@@ -197,6 +199,7 @@ class Command(BaseCommand):
             check_uip_reserve_task,
             check_uip_burn_task,
             register_reserved_uips_task,
+            sync_parties_task,
             sync_product_activity_task,
             accumulate_short_shelf_life_reserve_task,
             sync_national_catalog_task,
@@ -218,6 +221,7 @@ class Command(BaseCommand):
             'check_uip_reserve': check_uip_reserve_task,
             'check_uip_burn': check_uip_burn_task,
             'register_reserved_uips': register_reserved_uips_task,
+            'sync_parties': sync_parties_task,
             'sync_product_activity': sync_product_activity_task,
             'accumulate_short_shelf_life_reserve': accumulate_short_shelf_life_reserve_task,
             'sync_national_catalog': sync_national_catalog_task,

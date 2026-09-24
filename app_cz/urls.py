@@ -35,6 +35,12 @@ urlpatterns = [
         views.api_reserve_draft_uip,
         name='api-reserve-draft-uip'
     ),
+    # Отправка отчёта о нанесении по УИП (ручная регистрация).
+    path(
+        'api/report-uip/',
+        views.api_report_uip,
+        name='api-report-uip'
+    ),
     # Снятие с резерва партии.
     path(
         'api/close-party-reservation/',

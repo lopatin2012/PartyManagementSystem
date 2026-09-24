@@ -242,39 +242,31 @@ def register_uip(uip: UIP, source: str = 'auto', note: str = None) -> dict:
     """
     Регистрирует УИП через отчёт о нанесении (УИП → REGISTERED).
 
-    Отчёт о нанесении требует срок годности — он берётся из производственной
-    партии УИП. Если у УИП нет производственной партии со сроком годности,
-    УИП НЕ регистрируется (пропускается).
-
     Код для отчёта:
     1. один код из задания внешнего сервиса (get_any_code_for_task);
     2. если задания/кода нет — DataMatrix из заданий УИП, не в статусе «нанесён»;
     3. если кодов нет вовсе — код по GTIN у внешнего сервиса.
 
+    В отчёт передаётся дата производства УИП (как дата маркировки), а вместо
+    срока годности — срок годности задания, если он есть, иначе дата
+    производства УИП. Если дата производства неизвестна — УИП не регистрируется.
+
     После успешного отчёта локальные коды помечаются как нанесённые,
     УИП переводится в статус REGISTERED.
     """
-    # 1. Срок годности из производственной партии.
-    exp_date = _get_expiration_date(uip)
-    if exp_date is None:
-        return {
-            'registered': False,
-            'number': uip.number,
-            'reason': 'Нет производственной партии со сроком годности — УИП не регистрируется',
-        }
+    # 1. Задание УИП (для кода и срока годности).
+    party = (
+        ProductionParty.objects
+        .filter(uip=uip)
+        .order_by('-production_datetime_start', '-created_at')
+        .first()
+    )
 
     # 2. Коды для отчёта.
     codes = []
 
     # 2a. Пробуем получить один код из задания внешнего сервиса.
     external_code = None
-    party = (
-        ProductionParty.objects
-        .filter(uip=uip, external_number_task__isnull=False)
-        .exclude(external_number_task='')
-        .order_by('-production_datetime_start', '-created_at')
-        .first()
-    )
     if party and party.external_number_task:
         external_code = _fetch_code_for_task(uip, party.external_number_task)
 
@@ -306,11 +298,30 @@ def register_uip(uip: UIP, source: str = 'auto', note: str = None) -> dict:
             ),
         }
 
-    # 3. Отправка отчёта о нанесении.
+    # 3. Дата производства УИП и срок годности задания.
+    marking_date = uip.production_date.isoformat() if uip.production_date else None
+    exp_date = (
+        party.expiration_datetime.date().isoformat()
+        if party and party.expiration_datetime
+        else None
+    )
+    # Отчёт требует срок годности: если его нет — используем дату производства.
+    if not exp_date:
+        exp_date = marking_date
+    if not exp_date:
+        return {
+            'registered': False,
+            'number': uip.number,
+            'reason': 'Не указана дата производства — отчёт о нанесении невозможен',
+        }
+
+    # 4. Отправка отчёта о нанесении.
     try:
         result = send_application_report(
             sntins=codes,
             batch_number=uip.number,
+            is_marking_date=bool(marking_date),
+            marking_date=marking_date,
             exp_date=exp_date,
         )
     except Exception as e:
@@ -328,7 +339,7 @@ def register_uip(uip: UIP, source: str = 'auto', note: str = None) -> dict:
             'reason': result.get('message', 'Ошибка отчёта о нанесении'),
         }
 
-    # 4. Успех: помечаем локальные коды как нанесённые, статус УИП → REGISTERED.
+    # 5. Успех: помечаем локальные коды как нанесённые, статус УИП → REGISTERED.
     with transaction.atomic():
         CISCode.objects.filter(
             production_party__uip=uip,

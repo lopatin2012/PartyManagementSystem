@@ -554,6 +554,86 @@ async function reserveDraftUip(btn) {
     }
 }
 
+// Отправка отчёта о нанесении по УИП (ручная регистрация).
+async function reportUip(btn) {
+    if (btn.disabled) return;
+
+    const uipId = btn.dataset.uipId;
+    const uipNumber = btn.dataset.uipNumber;
+    const url = btn.dataset.url;
+    const csrf = btn.dataset.csrf;
+
+    if (!confirm(`Отправить отчёт о нанесении по УИП ${uipNumber} в Честный Знак?`)) {
+        return;
+    }
+
+    const cell = btn.closest('td');
+    const oldStatus = cell.querySelector('.row-status');
+    if (oldStatus) oldStatus.remove();
+
+    btn.disabled = true;
+    btn.classList.add('loading');
+    btn.textContent = 'Отправляю…';
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': csrf,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ uip_id: uipId })
+        });
+
+        if (response.status === 403) {
+            showReportError(btn, cell, 'Недостаточно прав для этой операции');
+            return;
+        }
+        if (response.status === 401) {
+            showReportError(btn, cell, 'Сессия истекла, обновите страницу');
+            return;
+        }
+
+        let result;
+        try {
+            result = await response.json();
+        } catch (parseError) {
+            showReportError(btn, cell, `Ошибка сервера (${response.status})`);
+            return;
+        }
+
+        if (!response.ok || result.is_error) {
+            const message = result.message || result.message_error
+                || `Ошибка: ${response.status} ${response.statusText}`;
+            showReportError(btn, cell, message);
+            return;
+        }
+
+        cell.innerHTML = '<span class="row-status success">✓ Зарегистрирован</span>';
+        setTimeout(() => window.location.reload(), 1200);
+
+    } catch (error) {
+        showReportError(btn, cell, 'Ошибка соединения с сервером');
+        console.error('Report UIP error:', error);
+    }
+}
+
+// Показать ошибку рядом с кнопкой отчёта и вернуть её в исходное состояние.
+function showReportError(btn, cell, message) {
+    btn.disabled = false;
+    btn.classList.remove('loading');
+    btn.textContent = 'Отправить отчёт о нанесении';
+
+    const oldStatus = cell.querySelector('.row-status');
+    if (oldStatus) oldStatus.remove();
+
+    const errSpan = document.createElement('span');
+    errSpan.className = 'row-status error';
+    errSpan.textContent = message;
+    errSpan.title = message;
+    cell.appendChild(errSpan);
+}
+
 // Показать ошибку рядом с кнопкой и вернуть её в исходное состояние.
 function showError(btn, cell, message) {
     btn.disabled = false;

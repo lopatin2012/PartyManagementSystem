@@ -1,6 +1,7 @@
 # app_page/views.py
 
 from django.core.paginator import Paginator
+from django.db.models import Exists, OuterRef
 from django.shortcuts import render
 from django.views import View
 from django.views.generic import TemplateView
@@ -8,7 +9,7 @@ from django.views.generic import TemplateView
 from app_cz.models import CISCode
 from app_cz.services.party_service import get_available_products
 
-from app_uip.models import UIP, PartyStatusChoices
+from app_uip.models import UIP, ProductionParty, PartyStatusChoices
 
 from app_helper.access import UipPageAccessMixin
 from app_helper.search_helper import (
@@ -120,8 +121,13 @@ class UIPListView(UipPageAccessMixin, TemplateView):
         res_to = get.get('res_to', '')
 
         # === Базовый queryset ===
+        # has_task — есть ли у УИП привязанное задание (для кнопки отчёта).
         queryset = UIP.objects.select_related(
             'product_sku__product'
+        ).annotate(
+            has_task=Exists(
+                ProductionParty.objects.filter(uip=OuterRef('pk'))
+            )
         ).order_by('-created_at')
 
         # === Применяем фильтры ===
