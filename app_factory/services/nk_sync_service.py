@@ -27,6 +27,33 @@ logger = logging.getLogger(__name__)
 # системе поставщика (источник для «Кода внутри организации» / SKU.article).
 SUPPLIER_CODE_ATTR = 'Код товара в учетной системе поставщика'
 
+# Имя атрибута НК со сроком годности в днях (например, «90»).
+SHELF_LIFE_ATTR = 'Срок годности'
+
+# Дефолтный срок годности (дней), если в НК атрибут отсутствует/не распознан.
+DEFAULT_SHELF_LIFE_DAYS = 100
+
+
+def _extract_shelf_life_days(raw_data: Dict) -> Optional[int]:
+    """
+    Срок годности из атрибутов карточки НК («Срок годности», в днях).
+
+    Значение может содержать посторонние символы — берём ведущее число.
+    Возвращает None, если атрибут отсутствует или не распознан.
+    """
+    import re
+
+    for attr in raw_data.get('good_attrs') or raw_data.get('attrs') or []:
+        if attr.get('attr_name') != SHELF_LIFE_ATTR:
+            continue
+        value = str(attr.get('attr_value', '') or '').strip()
+        match = re.search(r'\d+', value)
+        if match:
+            days = int(match.group())
+            if days > 0:
+                return days
+    return None
+
 
 def _extract_supplier_codes(raw_data: Dict) -> List[str]:
     """Все коды товара в учётной системе поставщика из атрибутов НК.
@@ -205,6 +232,10 @@ def sync_nk_to_products(
             ).first()
 
         product_group = _map_product_group(nk.product_group)
+        # Срок годности из НК; если атрибут отсутствует/не распознан — дефолт.
+        shelf_life = _extract_shelf_life_days(nk.raw_data or {})
+        if shelf_life is None:
+            shelf_life = DEFAULT_SHELF_LIFE_DAYS
 
         if product:
             # Обновляем существующий продукт данными из НК.
@@ -224,6 +255,10 @@ def sync_nk_to_products(
             if product.national_product_id != nk.id:
                 product.national_product = nk
                 changed = True
+            # Срок годности из НК (или дефолт) — перезаписываем.
+            if product.shelf_life_in_days != shelf_life:
+                product.shelf_life_in_days = shelf_life
+                changed = True
             if changed:
                 product.save()
                 products_updated += 1
@@ -232,7 +267,7 @@ def sync_nk_to_products(
             product = Product.objects.create(
                 group=product_group,
                 name=nk.name or f'Товар НК #{nk.good_id}',
-                shelf_life_in_days=30,
+                shelf_life_in_days=shelf_life,
                 item_condition=nk.state_condition or StateConditionChoices.NOT_READY_ORDER_KM,
                 card_status=nk.card_state or CardStateChoices.DRAFT,
                 national_product=nk,

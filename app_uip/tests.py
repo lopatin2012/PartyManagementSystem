@@ -1074,6 +1074,7 @@ class SearchQueryHelpersTests(TestCase):
 # Тесты накопления резерва УИП на дни вперёд.
 # ==========================================
 
+@override_settings(UIP_DRAFT_MODE=True)
 class ReserveAccumulationTests(TestCase):
     """Проверка app_uip.services.reserve_accumulation."""
 
