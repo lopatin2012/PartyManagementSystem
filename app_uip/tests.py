@@ -725,6 +725,9 @@ class UIPActiveListEndpointTests(TestCase):
         self.assertEqual(data['result'][0]['product_name'], 'Тестовый продукт')
 
 
+
+
+
 # ==========================================
 # Роли и доступ (группы Django).
 # ==========================================
@@ -735,6 +738,38 @@ STATIC_OVERRIDE = override_settings(STORAGES={
     'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
     'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
 })
+
+
+@STATIC_OVERRIDE
+class UIPListReservedCountTests(TestCase):
+    """Счётчик зарезервированных УИП на странице /uip/."""
+
+    def test_reserved_count_excludes_drafts(self):
+        sku = create_product()
+        UIP.objects.create(
+            product_sku=sku,
+            number='04601751026019260101500320000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        UIP.objects.create(
+            product_sku=sku,
+            number='04601751026019260101500320000001',
+            status=PartyStatusChoices.RESERVED_CZ,
+        )
+        UIP.objects.create(
+            product_sku=sku,
+            number='04601751026019260101500320000002',
+            status=PartyStatusChoices.DRAFT,
+        )
+
+        user = User.objects.create_superuser(
+            username='admin', password='pass', email='a@a.a'
+        )
+        self.client.force_login(user)
+        response = self.client.get('/uip/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['total_count'], 3)
+        self.assertEqual(response.context['reserved_count'], 2)
 
 
 class AccessRolesTests(TestCase):

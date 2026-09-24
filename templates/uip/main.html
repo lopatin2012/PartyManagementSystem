@@ -11,7 +11,9 @@
 <div class="uip-page">
     <div class="uip-header">
         <h1>{{ page_name }}</h1>
-        <p class="subtitle">Всего найдено: <span class="highlight">{{ total_count }}</span> УИП</p>
+        <p class="subtitle">Всего найдено: <span class="highlight">{{ total_count }}</span> УИП
+            <span class="subtitle-reserved">(зарезервировано: <span class="highlight">{{ reserved_count }}</span>)</span>
+        </p>
 
         {% if is_admin or can_generate_uip %}
         <div class="sync-controls">
@@ -146,6 +148,7 @@
     <div class="table-toolbar">
         <div class="toolbar-info">
             Найдено: <span class="highlight">{{ total_count }}</span> УИП
+            (зарезервировано: <span class="highlight">{{ reserved_count }}</span>)
         </div>
         <div class="toolbar-actions">
             <button type="submit" form="uipFilterForm" class="btn-apply">Применить фильтры</button>
