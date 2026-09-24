@@ -335,6 +335,68 @@ class ReserveUipsServiceTests(TestCase):
 
 
 # ==========================================
+# Тесты ручного ввода УИП.
+# ==========================================
+
+class ReserveManualUipTests(TestCase):
+    """Проверка reserve_manual_uip (ручной ввод серийной части)."""
+
+    def setUp(self):
+        self.sku = create_product()
+
+    def test_builds_and_reserves_number(self):
+        from app_cz.services.party_service import reserve_manual_uip
+
+        with patch(
+            'app_cz.services.party_service.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = {
+                'is_error': False,
+                'message_error': 'ОК',
+                'lst_party_number_info': [],
+            }
+            result = reserve_manual_uip(
+                self.sku, date(2026, 1, 15), 'ABC123456789',
+            )
+
+        self.assertFalse(result['is_error'])
+        number = '04601751026019' + '260115' + 'ABC123456789'
+        self.assertEqual(result['number'], number)
+        self.assertEqual(len(number), 32)
+        uip = UIP.objects.get(number=number)
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertEqual(uip.production_date, date(2026, 1, 15))
+        mock_reserve.assert_called_once()
+
+    def test_invalid_serial_returns_error(self):
+        from app_cz.services.party_service import reserve_manual_uip
+
+        result = reserve_manual_uip(self.sku, date(2026, 1, 15), 'AB!@#')
+        self.assertTrue(result['is_error'])
+        self.assertEqual(UIP.objects.count(), 0)
+
+    def test_wrong_length_returns_error(self):
+        from app_cz.services.party_service import reserve_manual_uip
+
+        # GTIN(14)+дата(6)=20, серийная 1 → 21, не 32.
+        result = reserve_manual_uip(self.sku, date(2026, 1, 15), 'A')
+        self.assertTrue(result['is_error'])
+        self.assertIn('32', result['message'])
+
+    def test_existing_number_returns_error(self):
+        from app_cz.services.party_service import reserve_manual_uip
+
+        number = '04601751026019' + '260115' + 'ABC123456789'
+        UIP.objects.create(
+            product_sku=self.sku, number=number,
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        result = reserve_manual_uip(self.sku, date(2026, 1, 15), 'ABC123456789')
+        self.assertTrue(result['is_error'])
+        self.assertIn('уже существует', result['message'])
+
+
+# ==========================================
 # Тесты эндпоинта.
 # ==========================================
 

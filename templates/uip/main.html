@@ -109,7 +109,25 @@
                                         <input type="radio" name="genMode" value="cz" onchange="updatePreview()">
                                         <span>Честный Знак</span>
                                     </label>
+                                    <label class="mode-option">
+                                        <input type="radio" name="genMode" value="manual" onchange="updatePreview()">
+                                        <span>Вручную</span>
+                                    </label>
                                 </div>
+                            </div>
+
+                            <!-- Ручной ввод номера партии (серийная часть) -->
+                            <div class="form-group hidden" id="manualNumberGroup">
+                                <label for="manualSerial">Номер партии (серийная часть):</label>
+                                <input type="text"
+                                       id="manualSerial"
+                                       class="form-input"
+                                       placeholder="1-12 символов: цифры, латиница, / . , -"
+                                       maxlength="12"
+                                       autocomplete="off"
+                                       oninput="updatePreview(); scheduleManualCheck();"
+                                       onblur="checkManualNumber(true)">
+                                <div class="manual-check-hint" id="manualCheckHint"></div>
                             </div>
 
                             <!-- Тип формирования УИП -->
@@ -133,6 +151,7 @@
                     <button class="btn-secondary" onclick="closeGenerateModal()">Отмена</button>
                     <button id="generateSubmitBtn" class="btn-sync"
                             data-url="{% url 'uip_generate' %}"
+                            data-check-url="{% url 'uip_check_number' %}"
                             data-csrf="{{ csrf_token }}"
                             onclick="submitGenerate()">
                         Сгенерировать

@@ -78,6 +78,7 @@ urlpatterns = [
     # Синхронизация УИП из Честного Знака и генерация УИП.
     path('uip/sync/', views.SyncPartiesView.as_view(), name='uip_sync'),
     path('uip/generate/', views.GenerateUIPView.as_view(), name='uip_generate'),
+    path('uip/check-number/', views.CheckUipNumberView.as_view(), name='uip_check_number'),
 
     # Синхронизация заданий с внешним сервисом (Молвест.Маркировка).
     path('sync/', view=views.SyncTasksView.as_view(), name='sync_tasks'),

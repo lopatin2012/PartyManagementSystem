@@ -37,7 +37,7 @@ from app_cz.services.party_service import (
     reserve_parties_honest_sign,
     get_all_reserved_parties,
     close_party_reservation, generate_uip, find_sku_by_gtin,
-    sync_parties_from_cz,
+    sync_parties_from_cz, reserve_manual_uip,
     get_available_products,
 )
 from app_cz.services.code_sync import (
@@ -1014,6 +1014,7 @@ class GenerateUIPView(View):
         production_date_str = data.get('production_date')
         mode = data.get('mode', 'local')
         party = data.get('party') or '000'
+        party_number = data.get('party_number') or ''
 
         if not product_sku_id or not production_date_str:
             return JsonResponse(
@@ -1050,10 +1051,16 @@ class GenerateUIPView(View):
                 status=400
             )
 
-        result = generate_uip(
-            product_sku, production_date, mode,
-            party=party
-        )
+        # Ручной ввод номера (серийная часть) — отдельный путь.
+        if mode == 'manual':
+            result = reserve_manual_uip(
+                product_sku, production_date, party_number,
+            )
+        else:
+            result = generate_uip(
+                product_sku, production_date, mode,
+                party=party
+            )
 
         status_code = (
             200
@@ -1061,6 +1068,41 @@ class GenerateUIPView(View):
             else 400
         )
         return JsonResponse(result, status=status_code)
+
+
+@method_decorator(generate_uip_required_json, name='dispatch')
+class CheckUipNumberView(View):
+    """
+    Проверка номера УИП: есть ли он в локальной БД (СУП) и в резерве ЧЗ.
+
+    GET /cz/uip/check-number/?number=<полный_номер>
+    Ответ: {'number': ..., 'in_sup': bool, 'in_cz': bool}
+    """
+
+    def get(self, request):
+        number = (request.GET.get('number') or '').strip()
+        if not number:
+            return JsonResponse(
+                {'is_error': True, 'message': 'Не указан номер.'},
+                status=400,
+            )
+
+        in_sup = UIP.objects.filter(number=number).exists()
+
+        in_cz = False
+        cz_result = get_all_reserved_parties()
+        if not cz_result.get('is_error'):
+            cz_numbers = {
+                p.get('partyNumber')
+                for p in cz_result.get('lst_party_number_info', [])
+            }
+            in_cz = number in cz_numbers
+
+        return JsonResponse({
+            'number': number,
+            'in_sup': in_sup,
+            'in_cz': in_cz,
+        })
 
 
 # ==========================================

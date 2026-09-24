@@ -1286,6 +1286,104 @@ def _generate_cz_uip(
         }
 
 
+def reserve_manual_uip(
+        product_sku: ProductSKU,
+        production_date: date,
+        serial_part: str,
+) -> dict:
+    """
+    Ручной ввод УИП: номер собирается из GTIN(14) + дата ГГММДД(6) + серийная
+    часть и резервируется в Честном Знаке как локальный.
+
+    Требования к номеру:
+    * серийная часть — 1-12 символов: цифры, латиница и / . , -;
+    * итоговый номер — ровно 32 символа.
+
+    :param product_sku: продукт (источник GTIN и товарной группы).
+    :param production_date: дата производства.
+    :param serial_part: серийная часть, введённая вручную.
+    """
+    import re as _re
+
+    serial_part = (serial_part or '').strip()
+
+    if not _re.fullmatch(r'[A-Za-z0-9/.,\-]{1,12}', serial_part):
+        return {
+            'is_error': True,
+            'message': (
+                'Серийная часть должна состоять из 1-12 символов: '
+                'цифры, латинские буквы и / . , -'
+            ),
+        }
+
+    gtin = product_sku.product.consumer_gtin
+    if not gtin:
+        return {
+            'is_error': True,
+            'message': 'У продукта не указан GTIN потребительской упаковки.',
+        }
+
+    number = f'{gtin}{production_date.strftime("%y%m%d")}{serial_part}'
+    if len(number) != 32:
+        return {
+            'is_error': True,
+            'message': f'Номер УИП должен быть длиной 32 символа (получено {len(number)}).',
+        }
+
+    existing_uip = UIP.objects.filter(number=number).first()
+    if existing_uip is not None:
+        return {
+            'is_error': True,
+            'message': f'УИП с номером {number} уже существует.',
+        }
+
+    # Резервируем номер в ЧЗ как «свой» (локальный).
+    reserve_result = reserve_parties_honest_sign(
+        product_group=product_sku.product.group,
+        party_numbers=[number],
+    )
+    if reserve_result.get('is_error'):
+        return {
+            'is_error': True,
+            'message': (
+                f'ЧЗ отклонил резервирование номера: '
+                f'{reserve_result.get("message_error", "неизвестная ошибка")}'
+            ),
+        }
+
+    note = 'Зарезервирован вручную (номер введён вручную), зарезервирован в ЧЗ'
+    try:
+        with transaction.atomic():
+            uip = UIP.objects.create(
+                product_sku=product_sku,
+                number=number,
+                status=PartyStatusChoices.RESERVED_LOCAL,
+                production_date=production_date,
+                reservation_date=timezone.now().date(),
+                description=note,
+            )
+            UIPStatusLog.objects.create(
+                uip=uip,
+                from_status=None,
+                to_status=PartyStatusChoices.RESERVED_LOCAL,
+                source='manual_local',
+                note=note,
+            )
+        logger.info(f'Создан УИП (ручной ввод): {number}')
+        return {
+            'is_error': False,
+            'uuid_uip': str(uip.id),
+            'uuid_task': str(uuid7()),
+            'reservation_date': uip.reservation_date,
+            'number': number,
+            'status': str(PartyStatusChoices.RESERVED_LOCAL),
+            'message': f'УИП создан: {number} (статус: {PartyStatusChoices.RESERVED_LOCAL})',
+        }
+    except Exception as e:
+        logger.error(f'Ошибка сохранения УИП (ручной ввод): {e}', exc_info=True)
+        return {'is_error': True, 'message': f'Ошибка сохранения УИП: {str(e)}'}
+
+
 def generate_uip(
         product_sku: ProductSKU,
         production_date: date,

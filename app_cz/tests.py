@@ -374,6 +374,96 @@ class SyncPartiesFormatDetectionTests(TestCase):
         self.assertEqual(uip.status, PartyStatusChoices.RESERVED_CZ)
 
 
+class GenerateUipManualEndpointTests(TestCase):
+    """POST /cz/uip/generate/ в режиме mode=manual."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.url = '/cz/uip/generate/'
+        self.admin = User.objects.create_superuser(
+            username='admin', password='pass', email='a@a.a'
+        )
+
+    def test_manual_generate_creates_reserved_uip(self):
+        self.client.force_login(self.admin)
+        with patch(
+            'app_cz.services.party_service.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = {
+                'is_error': False, 'message_error': 'ОК',
+                'lst_party_number_info': [],
+            }
+            response = self.client.post(
+                self.url,
+                {
+                    'product_sku_id': str(self.sku.id),
+                    'production_date': '2026-01-15',
+                    'mode': 'manual',
+                    'party_number': 'ABC123456789',
+                },
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        number = '04601751026019' + '260115' + 'ABC123456789'
+        self.assertTrue(UIP.objects.filter(number=number).exists())
+
+    def test_manual_generate_wrong_length_returns_400(self):
+        self.client.force_login(self.admin)
+        response = self.client.post(
+            self.url,
+            {
+                'product_sku_id': str(self.sku.id),
+                'production_date': '2026-01-15',
+                'mode': 'manual',
+                'party_number': 'A',
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400)
+
+
+class CheckUipNumberEndpointTests(TestCase):
+    """GET /cz/uip/check-number/ — проверка номера в СУП и ЧЗ."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.url = '/cz/uip/check-number/'
+        self.admin = User.objects.create_superuser(
+            username='admin', password='pass', email='a@a.a'
+        )
+        self.number = '04601751026019260101500320000000'
+
+    def test_in_sup(self):
+        self.client.force_login(self.admin)
+        UIP.objects.create(
+            product_sku=self.sku, number=self.number,
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        with patch(
+            'app_cz.views.get_all_reserved_parties',
+            return_value={'is_error': False, 'lst_party_number_info': []},
+        ):
+            response = self.client.get(self.url, {'number': self.number})
+        data = response.json()
+        self.assertTrue(data['in_sup'])
+        self.assertFalse(data['in_cz'])
+
+    def test_in_cz(self):
+        self.client.force_login(self.admin)
+        with patch(
+            'app_cz.views.get_all_reserved_parties',
+            return_value={
+                'is_error': False,
+                'lst_party_number_info': [{'partyNumber': self.number}],
+            },
+        ):
+            response = self.client.get(self.url, {'number': self.number})
+        data = response.json()
+        self.assertFalse(data['in_sup'])
+        self.assertTrue(data['in_cz'])
+
+
 class ReportUipEndpointTests(TestCase):
     """Пункт 4: кнопка/эндпоинт отправки отчёта о нанесении."""
 

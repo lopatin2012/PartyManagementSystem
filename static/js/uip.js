@@ -113,14 +113,16 @@ function updateFormationType() {
         : '—';
 }
 
-/** Скрывает поле «Производственная партия» для типа «Обычный» (тип 1). */
+/** Скрывает поле «Производственная партия» для типа «Обычный» (тип 1) и режима «Вручную». */
 function updatePartyVisibility() {
     const group = document.getElementById('partyFieldGroup');
     if (!group) return;
+    const modeEl = document.querySelector('input[name="genMode"]:checked');
+    const mode = modeEl ? modeEl.value : 'local';
     const product = getSelectedProduct();
     const type = product ? Number(product.type_formation_uip) : 0;
-    // «Обычный» (тип 1) не использует номер партии в УИП — скрываем поле.
-    group.style.display = (product && type !== 1) ? '' : 'none';
+    // «Обычный» (тип 1) и ручной режим не используют номер партии — скрываем поле.
+    group.style.display = (mode !== 'manual' && product && type !== 1) ? '' : 'none';
 }
 
 function initGenerateModal() {
@@ -337,10 +339,38 @@ function updatePreview() {
 
     const mode = document.querySelector('input[name="genMode"]:checked').value;
 
+    updateManualVisibility();
+
     if (mode === 'cz') {
         previewNumber.textContent = 'Будет получен от Честного Знака';
         previewHint.textContent = 'Формат ЧЗ: GTIN(14) + дата(6) + случайный серийный номер. ' +
             'Примеры: 080051252763252607244PW4fsYzRsV7, 08005125276325260722r43';
+        return;
+    }
+
+    if (mode === 'manual') {
+        const product = getSelectedProduct();
+        const dateInput = document.getElementById('productionDate');
+        const serialInput = document.getElementById('manualSerial');
+        if (!product || !dateInput.value || !serialInput) {
+            previewNumber.textContent = '—';
+            previewHint.textContent = '';
+            return;
+        }
+        const [yyyy, mm, dd] = dateInput.value.split('-');
+        const datePart = yyyy.slice(2) + mm + dd;
+        const serial = serialInput.value.trim();
+        const number = product.gtin + datePart + serial;
+
+        previewNumber.textContent = number || '—';
+        const len = number.length;
+        const lenOk = len === 32;
+        previewHint.innerHTML =
+            '<span class="part-gtin">' + escapeHtml(product.gtin) + '</span>' +
+            '<span class="part-date">' + datePart + '</span>' +
+            '<span class="part-party">' + escapeHtml(serial) + '</span><br>' +
+            '<small>GTIN(14) + дата ГГММДД(6) + серийная часть. ' +
+            'Длина: <b class="' + (lenOk ? 'len-ok' : 'len-bad') + '">' + len + '/32</b></small>';
         return;
     }
 
@@ -364,6 +394,69 @@ function updatePreview() {
 
     previewNumber.textContent = number;
     previewHint.innerHTML = buildPreviewHint(gtin, dateInput.value, article, type, party, number);
+}
+
+/** Показать/скрыть поле ручного ввода номера в зависимости от режима. */
+function updateManualVisibility() {
+    const group = document.getElementById('manualNumberGroup');
+    if (!group) return;
+    const mode = document.querySelector('input[name="genMode"]:checked');
+    const isManual = mode && mode.value === 'manual';
+    group.classList.toggle('hidden', !isManual);
+    if (!isManual) {
+        const hint = document.getElementById('manualCheckHint');
+        if (hint) { hint.textContent = ''; hint.className = 'manual-check-hint'; }
+    }
+}
+
+/** Полный номер для ручного режима (или null). */
+function buildManualNumber() {
+    const product = getSelectedProduct();
+    const dateInput = document.getElementById('productionDate');
+    const serialInput = document.getElementById('manualSerial');
+    if (!product || !dateInput.value || !serialInput || !serialInput.value.trim()) return null;
+    const [yyyy, mm, dd] = dateInput.value.split('-');
+    return product.gtin + yyyy.slice(2) + mm + dd + serialInput.value.trim();
+}
+
+let manualCheckTimer = null;
+
+/** Локальная проверка номера (СУП) с debounce; с ЧЗ — только по blur. */
+function scheduleManualCheck() {
+    if (manualCheckTimer) clearTimeout(manualCheckTimer);
+    manualCheckTimer = setTimeout(() => checkManualNumber(false), 400);
+}
+
+async function checkManualNumber(withCz) {
+    const hint = document.getElementById('manualCheckHint');
+    const number = buildManualNumber();
+    if (!hint) return;
+    if (!number) { hint.textContent = ''; hint.className = 'manual-check-hint'; return; }
+
+    hint.textContent = 'Проверка…';
+    hint.className = 'manual-check-hint';
+
+    const url = document.getElementById('generateSubmitBtn').dataset.checkUrl;
+    try {
+        const params = new URLSearchParams({ number: number });
+        if (withCz) params.set('check_cz', '1');
+        const response = await fetch(url + '?' + params.toString(), {
+            headers: { 'Accept': 'application/json' }
+        });
+        if (!response.ok) { hint.textContent = ''; return; }
+        const data = await response.json();
+
+        const parts = [];
+        parts.push(data.in_sup ? 'Найден в СУП' : 'Нет в СУП');
+        if (withCz) {
+            parts.push(data.in_cz ? 'найден в ЧЗ' : 'нет в ЧЗ');
+        }
+        hint.textContent = parts.join(', ');
+        const exists = data.in_sup || (withCz && data.in_cz);
+        hint.className = 'manual-check-hint ' + (exists ? 'check-bad' : 'check-ok');
+    } catch (e) {
+        hint.textContent = '';
+    }
 }
 
 function openGenerateModal() {
@@ -416,25 +509,50 @@ async function submitGenerate() {
         return;
     }
 
-    // 3. Валидация номера партии.
-    const partyRaw = partyInput ? partyInput.value.trim() : '';
+    // 3. Параметры: номер партии (local/cz) или серийная часть (manual).
     let partyValue = null;
-    if (partyRaw !== '') {
-        const partyNum = parseInt(partyRaw, 10);
-        if (isNaN(partyNum) || partyNum < 0 || partyNum > 999) {
-            showGenerateStatus('Партия должна быть числом от 0 до 999', true);
-            partyInput.focus();
+    let manualSerial = null;
+    if (mode === 'manual') {
+        const serialInput = document.getElementById('manualSerial');
+        manualSerial = serialInput ? serialInput.value.trim() : '';
+        if (!/^[A-Za-z0-9/.,\-]{1,12}$/.test(manualSerial)) {
+            showGenerateStatus('Серийная часть: 1-12 символов (цифры, латиница, / . , -)', true);
+            if (serialInput) serialInput.focus();
             return;
         }
-
-        // Дополняем нулями слева: "5" → "005", "42" → "042".
-        partyValue = partyRaw.padStart(3, '0');
+        const number = buildManualNumber();
+        if (!number || number.length !== 32) {
+            showGenerateStatus('Номер УИП должен быть длиной 32 символа', true);
+            return;
+        }
+    } else {
+        const partyRaw = partyInput ? partyInput.value.trim() : '';
+        if (partyRaw !== '') {
+            const partyNum = parseInt(partyRaw, 10);
+            if (isNaN(partyNum) || partyNum < 0 || partyNum > 999) {
+                showGenerateStatus('Партия должна быть числом от 0 до 999', true);
+                partyInput.focus();
+                return;
+            }
+            // Дополняем нулями слева: "5" → "005", "42" → "042".
+            partyValue = partyRaw.padStart(3, '0');
+        }
     }
-    // Если поле пустое — отправим null, сервер использует дефолт '000'.
 
     btn.disabled = true;
     btn.textContent = 'Генерация...';
     statusDiv.classList.add('hidden');
+
+    const payload = {
+        product_sku_id: radio.value,
+        production_date: dateInput.value,
+        mode: mode
+    };
+    if (mode === 'manual') {
+        payload.party_number = manualSerial;
+    } else {
+        payload.party = partyValue;
+    }
 
     try {
         const response = await fetch(btn.dataset.url, {
@@ -443,12 +561,7 @@ async function submitGenerate() {
                 'X-CSRFToken': btn.dataset.csrf,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                product_sku_id: radio.value,
-                production_date: dateInput.value,
-                mode: mode,
-                party: partyValue
-            })
+            body: JSON.stringify(payload)
         });
 
         const result = await response.json();
