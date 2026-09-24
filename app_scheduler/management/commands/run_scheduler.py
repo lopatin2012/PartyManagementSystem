@@ -78,6 +78,10 @@ SCHEDULE = [
     # Справочники (цеха, линии, продукты) — раз в сутки.
     ('sync_molvest_reference', 1 * DAY, 'Синхронизация справочников с внешним сервисом (1 сутки)'),
 
+    # Проверка активности продуктов на серверах заводов (раз в сутки).
+    # Выполняется перед накоплением резерва УИП.
+    ('sync_product_activity', 1 * DAY, 'Проверка активности продуктов на заводах (1 сутки)'),
+
     # Мониторинг резерва УИП.
     # >50% — предупреждение, >80% — тревога, >90% — снятие устаревших УИП.
     ('check_uip_reserve', 1 * DAY, 'Проверка резерва УИП и уведомления по почте'),
@@ -88,6 +92,10 @@ SCHEDULE = [
 
     # Регистрация зарезервированных УИП через отчёт о нанесении (раз в сутки).
     ('register_reserved_uips', 1 * DAY, 'Регистрация зарезервированных УИП через отчёт о нанесении'),
+
+    # Накопление резерва УИП на несколько дней вперёд для короткоживущей
+    # продукции обычного формата (раз в сутки).
+    ('accumulate_short_shelf_life_reserve', 1 * DAY, 'Накопление резерва УИП на дни вперёд'),
 
     # Синхронизация Национального каталога раз в сутки.
     ('sync_national_catalog', 1 * DAY, 'Синхронизация Национального каталога (1 сутки)'),
@@ -189,6 +197,8 @@ class Command(BaseCommand):
             check_uip_reserve_task,
             check_uip_burn_task,
             register_reserved_uips_task,
+            sync_product_activity_task,
+            accumulate_short_shelf_life_reserve_task,
             sync_national_catalog_task,
             archive_old_codes_task,
         )
@@ -208,6 +218,8 @@ class Command(BaseCommand):
             'check_uip_reserve': check_uip_reserve_task,
             'check_uip_burn': check_uip_burn_task,
             'register_reserved_uips': register_reserved_uips_task,
+            'sync_product_activity': sync_product_activity_task,
+            'accumulate_short_shelf_life_reserve': accumulate_short_shelf_life_reserve_task,
             'sync_national_catalog': sync_national_catalog_task,
             'archive_old_codes': archive_old_codes_task,
         }

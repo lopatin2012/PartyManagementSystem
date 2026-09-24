@@ -44,3 +44,18 @@ class EffectiveIntervalTests(SimpleTestCase):
         self.assertEqual(
             _effective_interval('sync_external_parties_codes', HOUR, None), HOUR
         )
+
+
+class ScheduleRegistrationTests(SimpleTestCase):
+    """Задача накопления резерва зарегистрирована в расписании."""
+
+    def test_accumulate_reserve_task_in_schedule(self):
+        from app_scheduler.management.commands.run_scheduler import SCHEDULE
+
+        names = {name for name, _, _ in SCHEDULE}
+        self.assertIn('accumulate_short_shelf_life_reserve', names)
+
+    def test_accumulate_reserve_task_exists(self):
+        from app_scheduler.tasks import accumulate_short_shelf_life_reserve_task
+
+        self.assertTrue(hasattr(accumulate_short_shelf_life_reserve_task, 'enqueue'))

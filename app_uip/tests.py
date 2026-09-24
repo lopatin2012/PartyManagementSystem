@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth.models import Group, Permission, User
@@ -38,6 +38,9 @@ from app_uip.serializers import (
     UIPReserveRequestSerializer,
 )
 from app_uip.services.uip_reserve import reserve_uips
+from app_uip.services.reserve_accumulation import (
+    accumulate_short_shelf_life_reserve,
+)
 
 
 # ==========================================
@@ -942,4 +945,237 @@ class SearchQueryHelpersTests(TestCase):
     def test_uips_no_match(self):
         qs = filter_uips_by_query(UIP.objects.all(), '0' * 32)
         self.assertEqual(qs.count(), 0)
+
+
+# ==========================================
+# Тесты накопления резерва УИП на дни вперёд.
+# ==========================================
+
+class ReserveAccumulationTests(TestCase):
+    """Проверка app_uip.services.reserve_accumulation."""
+
+    def setUp(self):
+        self.sku = create_product()
+        self.sku.reserve_days = 2
+        self.sku.save(update_fields=['reserve_days'])
+        self.today = timezone.now().date()
+
+    @staticmethod
+    def _cz_success():
+        return {
+            'is_error': False,
+            'message_error': 'Ошибки отсутствуют',
+            'lst_party_number_info': [],
+        }
+
+    def _make_product(self, article, gtin, shelf_life, type_formation=None,
+                      is_active=True):
+        product = Product.objects.create(
+            group=ProductGroupChoices.MILK,
+            name=f'Продукт {article}',
+            shelf_life_in_days=shelf_life,
+            item_condition=StateConditionChoices.READY_ORDER_KM,
+            card_status=CardStateChoices.PUBLISHED,
+        )
+        ProductPackaging.objects.create(
+            product=product,
+            level=PackagingLevelChoices.UNIT,
+            gtin=gtin,
+            quantity_inside=1,
+        )
+        return ProductSKU.objects.create(
+            product=product,
+            article=article,
+            type_formation_uip=type_formation or TypeFormationUIP.general,
+            is_active=is_active,
+        )
+
+    def _number_for(self, production_date):
+        return build_local_party_number(
+            '04601751026019',
+            production_date,
+            article='50032',
+            party='000',
+            type_formation_uip=TypeFormationUIP.general.value,
+        )
+
+    def test_default_mode_creates_drafts_without_cz(self):
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            result = accumulate_short_shelf_life_reserve(pause_seconds=0)
+
+        self.assertFalse(result['is_error'])
+        self.assertTrue(result['skip_cz'])
+        self.assertEqual(result['created'], 3)  # сегодня, +1, +2
+        mock_reserve.assert_not_called()  # в ЧЗ не обращаемся
+        uips = UIP.objects.filter(product_sku=self.sku)
+        self.assertEqual(uips.count(), 3)
+        self.assertEqual(
+            sorted(uips.values_list('production_date', flat=True)),
+            [
+                self.today,
+                self.today + timedelta(days=1),
+                self.today + timedelta(days=2),
+            ],
+        )
+        self.assertEqual(
+            set(uips.values_list('status', flat=True)),
+            {PartyStatusChoices.DRAFT},
+        )
+        self.assertEqual(
+            set(uips.values_list('reservation_date', flat=True)),
+            {None},
+        )
+
+    def test_cz_mode_creates_reserved_uips(self):
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = self._cz_success()
+            result = accumulate_short_shelf_life_reserve(
+                pause_seconds=0, skip_cz=False
+            )
+
+        self.assertFalse(result['is_error'])
+        self.assertFalse(result['skip_cz'])
+        self.assertEqual(result['created'], 3)
+        mock_reserve.assert_called()
+        uips = UIP.objects.filter(product_sku=self.sku)
+        self.assertEqual(
+            set(uips.values_list('status', flat=True)),
+            {PartyStatusChoices.RESERVED_LOCAL},
+        )
+
+    def test_second_run_is_idempotent(self):
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = self._cz_success()
+            accumulate_short_shelf_life_reserve(pause_seconds=0, skip_cz=False)
+            result = accumulate_short_shelf_life_reserve(
+                pause_seconds=0, skip_cz=False
+            )
+
+        self.assertEqual(result['created'], 0)
+        self.assertEqual(result['restored'], 0)
+        self.assertEqual(result['skipped_existing'], 3)
+        self.assertEqual(UIP.objects.filter(product_sku=self.sku).count(), 3)
+
+    def test_excludes_long_shelf_life_other_type_and_inactive(self):
+        long_sku = self._make_product('LONG', '04601751026020', shelf_life=40)
+        other_type = self._make_product(
+            'OTHER', '04601751026021', shelf_life=14,
+            type_formation=TypeFormationUIP.party_beginning,
+        )
+        inactive = self._make_product(
+            'OFF', '04601751026022', shelf_life=14, is_active=False,
+        )
+
+        result = accumulate_short_shelf_life_reserve(pause_seconds=0)
+
+        self.assertEqual(UIP.objects.filter(product_sku=long_sku).count(), 0)
+        self.assertEqual(UIP.objects.filter(product_sku=other_type).count(), 0)
+        self.assertEqual(UIP.objects.filter(product_sku=inactive).count(), 0)
+        self.assertEqual(result['created'], 3)
+        self.assertEqual(UIP.objects.filter(product_sku=self.sku).count(), 3)
+
+    def test_existing_active_skipped_and_deleted_restored(self):
+        active_date = self.today + timedelta(days=1)
+        UIP.objects.create(
+            product_sku=self.sku,
+            number=self._number_for(active_date),
+            status=PartyStatusChoices.RESERVED_LOCAL,
+            production_date=active_date,
+            reservation_date=self.today,
+        )
+
+        deleted_date = self.today + timedelta(days=2)
+        burned = UIP.objects.create(
+            product_sku=self.sku,
+            number=self._number_for(deleted_date),
+            status=PartyStatusChoices.DELETED,
+            production_date=deleted_date,
+            reservation_date=self.today - timedelta(days=30),
+        )
+
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = self._cz_success()
+            result = accumulate_short_shelf_life_reserve(
+                pause_seconds=0, skip_cz=False
+            )
+
+        self.assertEqual(result['created'], 1)  # только сегодня
+        self.assertEqual(result['skipped_existing'], 1)
+        self.assertEqual(result['restored'], 1)
+        burned.refresh_from_db()
+        self.assertEqual(burned.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertEqual(burned.reservation_date, self.today)
+
+    def test_draft_mode_does_not_restore_deleted(self):
+        deleted_date = self.today + timedelta(days=2)
+        burned = UIP.objects.create(
+            product_sku=self.sku,
+            number=self._number_for(deleted_date),
+            status=PartyStatusChoices.DELETED,
+            production_date=deleted_date,
+            reservation_date=self.today - timedelta(days=30),
+        )
+
+        result = accumulate_short_shelf_life_reserve(pause_seconds=0)
+
+        self.assertEqual(result['restored'], 0)
+        burned.refresh_from_db()
+        self.assertEqual(burned.status, PartyStatusChoices.DELETED)
+
+    def test_skips_when_reserve_above_threshold_in_cz_mode(self):
+        with patch(
+            'app_uip.services.reserve_accumulation.get_reserve_stats'
+        ) as mock_stats, patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_stats.return_value = {'count': 9500, 'limit': 10000, 'percent': 95.0}
+            result = accumulate_short_shelf_life_reserve(
+                pause_seconds=0, skip_cz=False
+            )
+
+        self.assertTrue(result['skipped'])
+        self.assertEqual(result['reason'], 'reserve_full')
+        mock_reserve.assert_not_called()
+        self.assertEqual(UIP.objects.count(), 0)
+
+    def test_draft_mode_ignores_reserve_threshold(self):
+        with patch(
+            'app_uip.services.reserve_accumulation.get_reserve_stats'
+        ) as mock_stats:
+            mock_stats.return_value = {'count': 9500, 'limit': 10000, 'percent': 95.0}
+            result = accumulate_short_shelf_life_reserve(pause_seconds=0)
+
+        self.assertFalse(result['skipped'])
+        self.assertEqual(result['created'], 3)
+
+    def test_cz_numbers_are_reserved_in_batches(self):
+        from app_uip.services import reserve_accumulation
+
+        entries = [
+            {'sku': self.sku, 'number': f'number-{i}', 'action': 'create'}
+            for i in range(3)
+        ]
+        with patch.object(reserve_accumulation, 'CZ_BATCH_SIZE', 2), patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as mock_reserve, patch(
+            'app_uip.services.reserve_accumulation.time.sleep'
+        ) as mock_sleep:
+            mock_reserve.return_value = self._cz_success()
+            reserved, errors = reserve_accumulation._reserve_numbers(
+                entries, pause_seconds=10
+            )
+
+        self.assertEqual(mock_reserve.call_count, 2)  # 2 + 1
+        self.assertEqual(len(reserved), 3)
+        self.assertEqual(errors, [])
+        # Пауза только между запросами (не перед первым).
+        self.assertEqual(mock_sleep.call_count, 1)
 
