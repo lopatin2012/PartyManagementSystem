@@ -13,13 +13,13 @@
 * на одну дату создаётся ровно один УИП; если УИП уже есть — пропускаем;
 * «сгоревший» (`deleted`) УИП повторно резервируется тем же номером;
 * номер формируется локально (`build_local_party_number`);
-* по умолчанию (`skip_cz=True`) создаются только ЧЕРНОВИКИ без обращения к ЧЗ —
-  чтобы оценить объёмы; при `skip_cz=False` номера резервируются в ЧЗ как
-  «свои» пачками не более `CZ_BATCH_SIZE` с паузой `CZ_BATCH_PAUSE_SECONDS`
-  между запросами, в разрезе товарных групп;
+* режим задаётся настройкой `UIP_DRAFT_MODE` (по умолчанию — черновики без
+  обращения к ЧЗ, чтобы оценить объёмы); при `UIP_DRAFT_MODE=0` номера
+  резервируются в ЧЗ как «свои» пачками не более `CZ_BATCH_SIZE` с паузой
+  `CZ_BATCH_PAUSE_SECONDS` между запросами, в разрезе товарных групп;
 * генерация номеров самим ЧЗ автоматически не используется;
-* при `skip_cz=False`, если заполнение резерва превышает `RELEASE_PERCENT`
-  (90%) — накопление пропускается, чтобы не ухудшать ситуацию.
+* при резервировании в ЧЗ, если заполнение резерва превышает `RELEASE_PERCENT`
+  (95%) — накопление пропускается, чтобы не ухудшать ситуацию.
 """
 
 import logging
@@ -226,20 +226,23 @@ def _persist_entries(entries: list[dict], skip_cz: bool) -> tuple[int, int]:
 
 def accumulate_short_shelf_life_reserve(
         pause_seconds: float = None,
-        skip_cz: bool = True,
+        skip_cz: bool = None,
 ) -> dict:
     """
     Доливает резерв УИП на окно дат для короткоживущей продукции.
 
     :param pause_seconds: пауза между запросами в ЧЗ (по умолчанию
                           CZ_BATCH_PAUSE_SECONDS). Используется при skip_cz=False.
-    :param skip_cz: True (по умолчанию) — создавать только черновики без
-                    обращения к ЧЗ (оценка объёмов); False — резервировать
-                    «свои» номера в ЧЗ.
+    :param skip_cz: True — создавать только черновики без обращения к ЧЗ
+                    (оценка объёмов); False — резервировать «свои» номера в ЧЗ.
+                    None — берётся из настройки UIP_DRAFT_MODE.
     :return: сводка выполнения.
     """
     if pause_seconds is None:
         pause_seconds = CZ_BATCH_PAUSE_SECONDS
+    if skip_cz is None:
+        from app_cz.services.party_service import uip_draft_mode
+        skip_cz = uip_draft_mode()
 
     if not skip_cz:
         stats = get_reserve_stats()

@@ -371,8 +371,8 @@ def check_uip_reserve_task() -> dict:
     """
     Периодическая проверка заполнения резерва УИП и уведомления по почте.
 
-    - >50% — предупреждение, >80% — тревога.
-    - >90% — снятие с резерва устаревших УИП через отчёт о нанесении
+    - >60% — предупреждение, >75% — тревога.
+    - >95% — снятие с резерва устаревших УИП через отчёт о нанесении
       (кодами DataMatrix из заданий, либо кодом по GTIN из внешнего сервиса).
     """
     from app_cz.services.reserve_monitor import check_uip_reserve_and_notify
@@ -450,15 +450,15 @@ def accumulate_short_shelf_life_reserve_task() -> dict:
     `UIP_SHORT_SHELF_LIFE_DAYS` (по умолчанию 40 дней) доливает резерв
     зарезервированных УИП на даты [сегодня; сегодня + ProductSKU.reserve_days].
 
-    По умолчанию работает в безопасном режиме `skip_cz=True` — создаются
-    только черновики без обращения к ЧЗ (оценка объёмов). Для резервирования
-    в ЧЗ запускать с `skip_cz=False`.
+    Режим (черновики или реальное резервирование в ЧЗ) определяется
+    настройкой `UIP_DRAFT_MODE`: 1 — только черновики (оценка объёмов),
+    0 — резервирование в ЧЗ.
     """
     from app_uip.services.reserve_accumulation import (
         accumulate_short_shelf_life_reserve,
     )
 
-    return accumulate_short_shelf_life_reserve(skip_cz=True)
+    return accumulate_short_shelf_life_reserve()
 
 
 # ==========================================

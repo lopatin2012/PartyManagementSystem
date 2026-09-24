@@ -333,6 +333,31 @@ class ReserveUipsServiceTests(TestCase):
         self.assertIsNotNone(uip)
         self.assertEqual(uip.status, PartyStatusChoices.DRAFT)
 
+    @override_settings(UIP_DRAFT_MODE=True)
+    def test_draft_mode_setting_default_creates_draft(self):
+        """Без явного skip_cz используется настройка UIP_DRAFT_MODE=True."""
+        result = reserve_uips({
+            'article': '50032',
+            'production_date': '2026-01-01',
+            'mode': 'local',
+        })
+        self.assertFalse(result['is_error'])
+        uip = UIP.objects.get(number=result['results'][0]['number'])
+        self.assertEqual(uip.status, PartyStatusChoices.DRAFT)
+
+    @override_settings(UIP_DRAFT_MODE=False)
+    def test_explicit_skip_cz_overrides_setting(self):
+        """Явный skip_cz=True важнее настройки UIP_DRAFT_MODE=False."""
+        result = reserve_uips({
+            'article': '50032',
+            'production_date': '2026-01-01',
+            'mode': 'local',
+            'skip_cz': True,
+        })
+        self.assertFalse(result['is_error'])
+        uip = UIP.objects.get(number=result['results'][0]['number'])
+        self.assertEqual(uip.status, PartyStatusChoices.DRAFT)
+
 
 # ==========================================
 # Тесты ручного ввода УИП.
@@ -534,6 +559,7 @@ def burned_uip_number() -> str:
     )
 
 
+@override_settings(UIP_DRAFT_MODE=False)
 class ReReserveBurnedUipTests(TestCase):
     """
     УИП, «сгоревший» за 30 дней неиспользования (status=deleted), должен
@@ -1233,7 +1259,7 @@ class ReserveAccumulationTests(TestCase):
         ) as mock_stats, patch(
             'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
         ) as mock_reserve:
-            mock_stats.return_value = {'count': 9500, 'limit': 10000, 'percent': 95.0}
+            mock_stats.return_value = {'count': 9700, 'limit': 10000, 'percent': 97.0}
             result = accumulate_short_shelf_life_reserve(
                 pause_seconds=0, skip_cz=False
             )

@@ -29,6 +29,18 @@ logger = logging.getLogger(__name__)
 MAX_BATCH_SIZE = 50
 
 
+def uip_draft_mode() -> bool:
+    """
+    Глобальный режим черновиков УИП (настройка UIP_DRAFT_MODE).
+
+    True — создавать черновики без обращения к ЧЗ; False — резервировать
+    в ЧЗ. Используется как значение по умолчанию для `skip_cz`, когда
+    вызывающий код не передал его явно.
+    """
+    from django.conf import settings
+    return bool(getattr(settings, 'UIP_DRAFT_MODE', True))
+
+
 def validate_party_number(party_number: str) -> bool:
     """
     Валидация номера партии (УИП) согласно правилам Честного Знака.
@@ -1038,7 +1050,7 @@ def _generate_local_uip(
         is_external_service: bool,
         party: str = None,
         target_status: str = None,
-        skip_cz: bool = False,
+        skip_cz: bool = None,
         type_formation_uip: int = TypeFormationUIP.general.value
 ) -> dict:
     """
@@ -1051,7 +1063,11 @@ def _generate_local_uip(
     :param target_status: Переопределить статус создаваемого УИП.
                           Если None: DRAFT при skip_cz, иначе RESERVED_LOCAL.
     :param skip_cz: Если True — НЕ резервировать в ЧЗ (черновик для тестов).
+                    Если None — берётся из настройки UIP_DRAFT_MODE.
     """
+    if skip_cz is None:
+        skip_cz = uip_draft_mode()
+
     number = build_local_party_number(
         gtin,
         production_date,
@@ -1391,7 +1407,7 @@ def generate_uip(
         party: str = '000',
         is_external_service: bool = False,
         target_status: str = None,
-        skip_cz: bool = False,
+        skip_cz: bool = None,
 ) -> dict:
     """
     Точка входа генерации УИП внутри сервиса.
@@ -1401,7 +1417,8 @@ def generate_uip(
     :param party: Номер партии.
     :param is_external_service: Запрос УИП из внешней системы.
     :param target_status: Переопределить статус создаваемого УИП.
-    :param skip_cz: Не взаимодействовать с ЧЗ (черновик для тестов, только для local).
+    :param skip_cz: Не взаимодействовать с ЧЗ (черновик, только для local).
+                    None — берётся из настройки UIP_DRAFT_MODE.
     """
 
     if not product_sku:

@@ -663,12 +663,13 @@ def api_generate_uip(request):
         )
 
     # Используем единый генератор УИП. Единичное количество, без множества.
+    # skip_cz: явный параметр запроса, иначе — из настройки UIP_DRAFT_MODE.
     result = generate_uip(
         product_sku=product_sku,
         production_date=data['production_date'],
         mode=data['mode'],
         is_external_service=True,
-        skip_cz=data.get('skip_cz', True) # Черновик на время ввода разработки.
+        skip_cz=data.get('skip_cz'),
     )
 
     if result.get('is_error'):

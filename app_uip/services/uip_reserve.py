@@ -65,7 +65,8 @@ def _reserve_generate(item: dict, is_external_service: bool) -> dict:
     mode = item.get('mode', 'local')
     party = item.get('party')
     target_status = item.get('target_status')
-    skip_cz = item.get('skip_cz', False)
+    # Если skip_cz не задан явно — берётся из настройки UIP_DRAFT_MODE.
+    skip_cz = item.get('skip_cz')
     count = int(item.get('count') or 1)
     if count < 1:
         count = 1

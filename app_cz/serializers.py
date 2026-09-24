@@ -624,8 +624,8 @@ class GenerateUIPSerializer(serializers.Serializer):
         help_text='local — согласованный формат, cz — формирует Честный Знак'
     )
     skip_cz = serializers.BooleanField(
-        default=False,
-        help_text='Создать черновик'
+        required=False, allow_null=True, default=None,
+        help_text='Создать черновик; не указано — из настройки UIP_DRAFT_MODE'
     )
 
     def validate(self, attrs):

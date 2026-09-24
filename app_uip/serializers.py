@@ -143,8 +143,9 @@ class UIPReserveItemSerializer(serializers.Serializer):
         help_text='Переопределить статус создаваемого УИП'
     )
     skip_cz = serializers.BooleanField(
-        required=False, default=False,
-        help_text='Создать черновик (только для local)'
+        required=False, allow_null=True, default=None,
+        help_text='Создать черновик (только для local); '
+                  'не указано — из настройки UIP_DRAFT_MODE'
     )
 
     # === Путь резервирования своих номеров. ===
