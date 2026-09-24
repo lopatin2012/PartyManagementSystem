@@ -614,7 +614,6 @@ async function reserveDraftUip(btn) {
 
     btn.disabled = true;
     btn.classList.add('loading');
-    btn.textContent = 'Резервирую…';
 
     try {
         const response = await fetch(url, {
@@ -686,7 +685,6 @@ async function reportUip(btn) {
 
     btn.disabled = true;
     btn.classList.add('loading');
-    btn.textContent = 'Отправляю…';
 
     try {
         const response = await fetch(url, {
@@ -735,7 +733,6 @@ async function reportUip(btn) {
 function showReportError(btn, cell, message) {
     btn.disabled = false;
     btn.classList.remove('loading');
-    btn.textContent = 'Отправить отчёт о нанесении';
 
     const oldStatus = cell.querySelector('.row-status');
     if (oldStatus) oldStatus.remove();
@@ -751,9 +748,7 @@ function showReportError(btn, cell, message) {
 function showError(btn, cell, message) {
     btn.disabled = false;
     btn.classList.remove('loading');
-    btn.textContent = 'Зарезервировать';
 
-    // Убираем предыдущий статус, если был.
     const oldStatus = cell.querySelector('.row-status');
     if (oldStatus) oldStatus.remove();
 

@@ -338,25 +338,31 @@
                                     <!-- Кнопки для взаимодействуя с УИП -->
                                     {% if uip.status == 'draft' %}
                                         <button
-                                            class="btn-row-action btn-reserve"
+                                            class="btn-row-action btn-reserve btn-icon"
                                             data-uip-id="{{ uip.id }}"
                                             data-uip-number="{{ uip.number }}"
                                             data-url="{% url 'api-reserve-draft-uip' %}"
                                             data-csrf="{{ csrf_token }}"
+                                            title="Зарезервировать УИП в Честном Знаке"
                                             onclick="reserveDraftUip(this)">
-                                            Зарезервировать
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+                                            </svg>
                                         </button>
                                     {% elif uip.status == 'reserved_local' or uip.status == 'reserved_cz' %}
                                         {% if uip.has_task %}
                                             <button
-                                                class="btn-row-action btn-report"
+                                                class="btn-row-action btn-report btn-icon"
                                                 data-uip-id="{{ uip.id }}"
                                                 data-uip-number="{{ uip.number }}"
                                                 data-url="{% url 'api-report-uip' %}"
                                                 data-csrf="{{ csrf_token }}"
                                                 title="Отправить отчёт о нанесении в Честный Знак"
                                                 onclick="reportUip(this)">
-                                                Отправить отчёт о нанесении
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                    <path d="M9 11l3 3L22 4"></path>
+                                                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                                                </svg>
                                             </button>
                                         {% else %}
                                             <span class="action-hint action-hint-muted" title="Нет привязанного задания">—</span>

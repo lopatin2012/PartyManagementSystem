@@ -134,6 +134,22 @@
     box-shadow: 0 2px 6px rgba(187, 207, 50, 0.3);
 }
 
+/* Иконочная кнопка (без текста). */
+.btn-icon {
+    padding: 0.4rem;
+    width: 30px;
+    height: 30px;
+    justify-content: center;
+}
+
+.btn-icon.loading {
+    color: transparent;
+}
+
+.btn-icon.loading svg {
+    visibility: hidden;
+}
+
 .btn-row-action:disabled {
     opacity: 0.5;
     cursor: not-allowed;

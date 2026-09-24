@@ -458,10 +458,35 @@ class CheckUipNumberEndpointTests(TestCase):
                 'lst_party_number_info': [{'partyNumber': self.number}],
             },
         ):
-            response = self.client.get(self.url, {'number': self.number})
+            response = self.client.get(
+                self.url, {'number': self.number, 'check_cz': '1'},
+            )
         data = response.json()
         self.assertFalse(data['in_sup'])
         self.assertTrue(data['in_cz'])
+
+    def test_local_check_does_not_call_cz(self):
+        self.client.force_login(self.admin)
+        with patch('app_cz.views.get_all_reserved_parties') as mock_cz:
+            response = self.client.get(self.url, {'number': self.number})
+        data = response.json()
+        self.assertFalse(data['in_sup'])
+        self.assertFalse(data['in_cz'])
+        mock_cz.assert_not_called()
+
+    def test_cz_unavailable_does_not_crash(self):
+        self.client.force_login(self.admin)
+        with patch(
+            'app_cz.views.get_all_reserved_parties',
+            side_effect=RuntimeError('нет связи с сервисом подписей'),
+        ):
+            response = self.client.get(
+                self.url, {'number': self.number, 'check_cz': '1'},
+            )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertFalse(data['in_cz'])
+        self.assertTrue(data['cz_unavailable'])
 
 
 class ReportUipEndpointTests(TestCase):

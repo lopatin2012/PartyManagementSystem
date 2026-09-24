@@ -1089,19 +1089,31 @@ class CheckUipNumberView(View):
 
         in_sup = UIP.objects.filter(number=number).exists()
 
+        # ЧЗ опрашиваем только по запросу (check_cz=1) и без падения при
+        # недоступности внешнего сервиса подписей/сети.
+        check_cz = str(request.GET.get('check_cz', '')).lower() in ('1', 'true', 'yes')
         in_cz = False
-        cz_result = get_all_reserved_parties()
-        if not cz_result.get('is_error'):
-            cz_numbers = {
-                p.get('partyNumber')
-                for p in cz_result.get('lst_party_number_info', [])
-            }
-            in_cz = number in cz_numbers
+        cz_unavailable = False
+        if check_cz:
+            try:
+                cz_result = get_all_reserved_parties()
+                if cz_result.get('is_error'):
+                    cz_unavailable = True
+                else:
+                    cz_numbers = {
+                        p.get('partyNumber')
+                        for p in cz_result.get('lst_party_number_info', [])
+                    }
+                    in_cz = number in cz_numbers
+            except Exception as e:
+                logger.warning(f'Проверка номера {number} в ЧЗ недоступна: {e}')
+                cz_unavailable = True
 
         return JsonResponse({
             'number': number,
             'in_sup': in_sup,
             'in_cz': in_cz,
+            'cz_unavailable': cz_unavailable,
         })
 
 
