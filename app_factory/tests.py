@@ -206,3 +206,50 @@ class NKShelfLifeTests(TestCase):
             {'attr_name': 'Срок годности', 'attr_value': '90 суток'},
         ]}
         self.assertEqual(_extract_shelf_life_days(raw), 90)
+
+
+class PackagingSharedAcrossArticlesTests(TestCase):
+    """Упаковка по GTIN общая для артикулов; активность артикула её не гасит."""
+
+    def _product(self, name):
+        return Product.objects.create(
+            group=ProductGroupChoices.MILK,
+            name=name,
+            shelf_life_in_days=14,
+            item_condition=StateConditionChoices.READY_ORDER_KM,
+            card_status=CardStateChoices.PUBLISHED,
+        )
+
+    def test_second_article_does_not_deactivate_packaging(self):
+        from app_factory.services.molvest_reference_sync import (
+            _sync_product_details,
+        )
+
+        product = self._product('Творог')
+        summary = {
+            'skus_created': 0, 'packagings_created': 0,
+            'locations_created': 0, 'skipped': 0,
+        }
+        lines = {}
+
+        # Первый артикул активен → создаётся UNIT-упаковка.
+        _sync_product_details(
+            product,
+            {'code': '15652', 'gtin': '04601751027917', 'active': True},
+            '15652', '04601751027917', True, summary, lines,
+        )
+        packaging = ProductPackaging.objects.get(gtin='04601751027917')
+        self.assertTrue(packaging.is_active)
+
+        # Второй (архивный) артикул того же GTIN не должен гасить упаковку.
+        _sync_product_details(
+            product,
+            {'code': '15638', 'gtin': '04601751027917', 'active': False},
+            '15638', '04601751027917', False, summary, lines,
+        )
+        packaging.refresh_from_db()
+        self.assertTrue(packaging.is_active)
+        # Упаковка одна (по GTIN), не задублирована.
+        self.assertEqual(
+            ProductPackaging.objects.filter(gtin='04601751027917').count(), 1
+        )

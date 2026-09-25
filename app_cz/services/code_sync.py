@@ -634,6 +634,10 @@ def sync_codes_task(
             level=PackagingLevelChoices.UNIT,
             is_active=True,
         ).first()
+        # Fallback: если активной UNIT-упаковки нет — берём любую активную
+        # (защита от кривых данных по упаковкам).
+        if packaging is None:
+            packaging = product.packagings.filter(is_active=True).first()
         if packaging is None:
             _mark_party_sync(
                 party, False,
