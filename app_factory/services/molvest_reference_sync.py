@@ -335,19 +335,22 @@ def _sync_product_details(
         return
 
     # === Упаковка (потребительская, уровень 1) ===
+    # GTIN уникален глобально: несколько артикулов одного продукта делят одну
+    # упаковку. Активность упаковки НЕ зависит от активности отдельного
+    # артикула — иначе архивный артикул гасит общую UNIT-упаковку.
     if gtin:
         storage_days = _as_int(item.get('date_expiration_code'), 60) or 60
         code_tnved = (item.get('tn_ved') or '').strip() or None
         try:
             packaging, packaging_created = ProductPackaging.objects.update_or_create(
-                product=product,
-                level=PackagingLevelChoices.UNIT,
+                gtin=gtin,
                 defaults={
-                    'gtin': gtin,
+                    'product': product,
+                    'level': PackagingLevelChoices.UNIT,
                     'quantity_inside': 1,
                     'code_storage_period_in_days': storage_days,
                     'code_tnved': code_tnved,
-                    'is_active': active,
+                    'is_active': True,
                 },
             )
             if packaging_created:

@@ -280,23 +280,30 @@ def sync_nk_to_products(
             skus_created += 1
 
         # Создаём/обновляем упаковки.
-        # Идентифицируем упаковку по GTIN (он уникален), а не по уровню:
-        # у товара может быть несколько упаковок одного уровня
-        # (например, две коробки разной вместимости).
+        # GTIN уникален глобально, поэтому обновляем упаковку ПО GTIN, а не по
+        # (product, level): так несколько артикулов делят одну упаковку и не
+        # создаётся дубль/ошибка уникальности. Упаковку не гасим — is_active=True.
         for pkg_data in packagings_data:
             gtin = pkg_data['gtin']
             if not gtin:
                 continue
-            _, created = ProductPackaging.objects.update_or_create(
-                product=product,
-                gtin=gtin,
-                defaults={
-                    'level': pkg_data['level'],
-                    'quantity_inside': pkg_data.get('quantity_inside', 1),
-                    'code_storage_period_in_days': 30,
-                },
-            )
-            if created:
+            packaging = ProductPackaging.objects.filter(gtin=gtin).first()
+            if packaging:
+                packaging.product = product
+                packaging.level = pkg_data['level']
+                packaging.quantity_inside = pkg_data.get('quantity_inside', 1)
+                packaging.is_active = True
+                packaging.save(update_fields=[
+                    'product', 'level', 'quantity_inside', 'is_active',
+                ])
+            else:
+                ProductPackaging.objects.create(
+                    product=product,
+                    gtin=gtin,
+                    level=pkg_data['level'],
+                    quantity_inside=pkg_data.get('quantity_inside', 1),
+                    code_storage_period_in_days=30,
+                )
                 packagings_created += 1
 
         done += 1

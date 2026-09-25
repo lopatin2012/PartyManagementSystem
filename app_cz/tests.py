@@ -228,6 +228,37 @@ class SyncCodesErrorDetailsTests(TestCase):
         self.assertEqual(result['error_details'][0]['url'], 'http://127.0.0.1:8010')
         self.assertIn('сервер завода недоступен', result['error_details'][0]['message'])
 
+    def test_fallback_packaging_when_unit_inactive(self):
+        """Нет активной UNIT — берётся любая активная упаковка, ошибки нет."""
+        from app_factory.models import ProductPackaging
+
+        # Гасим UNIT-упаковку продукта, оставляем активную GROUP.
+        ProductPackaging.objects.filter(
+            product=self.sku.product, level=1,
+        ).update(is_active=False)
+        ProductPackaging.objects.create(
+            product=self.sku.product,
+            level=2,
+            gtin='04601751026099',
+            quantity_inside=6,
+        )
+
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            'is_error': False, 'sntins_camera': [], 'sntins_printer': [],
+        }
+        with patch('app_cz.services.code_sync.requests.get', return_value=response):
+            result = code_sync.sync_codes_task(
+                url='http://127.0.0.1:8010',
+                task_id='task-1',
+                production_party_id=str(self.party.id),
+            )
+
+        self.assertFalse(result.get('has_error'))
+        self.party.refresh_from_db()
+        self.assertNotIn('потребительская упаковка', self.party.last_sync_message or '')
+
 
 class GetFactoryChangedSinceTests(TestCase):
     """get_factory_changed_since: сохранённая метка имеет приоритет."""
