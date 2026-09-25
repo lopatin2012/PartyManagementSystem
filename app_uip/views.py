@@ -12,7 +12,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from app_cz.models import CISCode
+from app_cz.models import CISCode, CISCodeArchive
 
 from app_helper.search_helper import (
     detect_search_type,
@@ -29,6 +29,7 @@ from app_uip.serializers import (
     UIPBatchResultSerializer,
     UIPReserveRequestSerializer,
     CISCodeSearchResultSerializer,
+    CISCodeArchiveSearchResultSerializer,
 )
 from app_uip.services.uip_reserve import reserve_uips
 
@@ -350,6 +351,7 @@ def api_search(request):
     else:
         search_type = detect_search_type(query)
 
+    in_archive = False
     if search_type == 'uip':
         queryset = filter_uips_by_query(
             UIP.objects.all(), query
@@ -365,6 +367,16 @@ def api_search(request):
             'product_packaging__product',
         ).order_by('-created_at')
         serializer_class = CISCodeSearchResultSerializer
+
+        # Fallback: если в рабочей таблице код не найден — ищем в архиве.
+        if not queryset.exists():
+            archive_qs = filter_codes_by_query(
+                CISCodeArchive.objects.using('archive').all(), query
+            ).order_by('-created_at')
+            if archive_qs.exists():
+                queryset = archive_qs
+                serializer_class = CISCodeArchiveSearchResultSerializer
+                in_archive = True
 
     try:
         page_size = int(request.query_params.get('page_size', 25))
@@ -382,5 +394,6 @@ def api_search(request):
         'count': paginator.count,
         'page': page_obj.number,
         'page_size': page_size,
+        'in_archive': in_archive,
         'results': serializer.data,
     })

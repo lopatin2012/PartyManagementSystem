@@ -24,12 +24,62 @@
                         <strong>УИП (номер партии)</strong>
                     {% endif %}
                 </small>
+                {% if in_archive %}
+                    <br><span class="archive-notice">Код найден в архиве (старше 45 дней).</span>
+                {% endif %}
             </p>
 
             {% if results %}
                 <div class="results-cards">
                     {% for item in results %}
-                        {% if search_type == 'code' %}
+                        {% if search_type == 'code' and in_archive %}
+                            <article class="result-card archive-card">
+                                <div class="card-head">
+                                    <span class="level-badge level-{{ item.level }}">{{ item.get_level_display }}</span>
+                                    <span class="code-value" title="{{ item.code }}">{{ item.code }}</span>
+                                    <span class="archive-badge">Архив</span>
+                                </div>
+                                <div class="card-grid">
+                                    <div class="card-field">
+                                        <span class="field-label">Продукт</span>
+                                        <span class="field-value">{{ item.product_name|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">GTIN</span>
+                                        <span class="field-value mono">{{ item.gtin|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Артикул</span>
+                                        <span class="field-value">{{ item.sku_article|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Партия</span>
+                                        <span class="field-value">{{ item.party_number|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">УИП</span>
+                                        <span class="field-value mono">{{ item.uip_number|default:"—" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Статус ЧЗ</span>
+                                        <span class="status-badge status-{{ item.cz_status }}">{{ item.get_cz_status_display }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Статус производства</span>
+                                        <span class="status-badge prod-status-{{ item.production_status }}">{{ item.get_production_status_display }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Создан</span>
+                                        <span class="field-value">{{ item.created_at|date:"d.m.Y H:i" }}</span>
+                                    </div>
+                                    <div class="card-field">
+                                        <span class="field-label">Архивирован</span>
+                                        <span class="field-value">{{ item.archived_at|date:"d.m.Y H:i" }}</span>
+                                    </div>
+                                </div>
+                            </article>
+
+                        {% elif search_type == 'code' %}
                             <article class="result-card">
                                 <div class="card-head">
                                     <span class="level-badge level-{{ item.level }}">{{ item.get_level_display }}</span>

@@ -172,6 +172,27 @@ tr:hover {
     background: rgba(255, 255, 255, 0.07);
 }
 
+/* Архивные результаты поиска. */
+.archive-notice {
+    color: var(--accent-yellow, #FABB1C);
+    font-weight: 600;
+}
+
+.archive-card {
+    border-color: rgba(250, 187, 28, 0.5);
+}
+
+.archive-badge {
+    margin-left: auto;
+    background: rgba(250, 187, 28, 0.15);
+    color: var(--accent-yellow, #FABB1C);
+    border: 1px solid rgba(250, 187, 28, 0.4);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
 .card-head {
     display: flex;
     align-items: center;

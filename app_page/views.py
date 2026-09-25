@@ -6,7 +6,7 @@ from django.shortcuts import render
 from django.views import View
 from django.views.generic import TemplateView
 
-from app_cz.models import CISCode
+from app_cz.models import CISCode, CISCodeArchive
 from app_cz.services.party_service import get_available_products
 
 from app_uip.models import UIP, ProductionParty, PartyStatusChoices
@@ -58,8 +58,13 @@ class SearchView(View):
             return render(request, self.template_name, context)
 
         # Выполняем поиск в зависимости от определённого типа.
+        in_archive = False
         if search_type == 'code':
             results = self._search_codes(query)
+            if not results.exists():
+                # Fallback: код не найден в рабочей таблице — ищем в архиве.
+                results = self._search_archived_codes(query)
+                in_archive = results.exists()
         elif search_type == 'uip':
             results = self._search_uip(query)
         else:
@@ -74,6 +79,7 @@ class SearchView(View):
             'results': page_obj,
             'total_count': paginator.count,
             'page_obj': page_obj,
+            'in_archive': in_archive,
         })
 
         return render(request, self.template_name, context)
@@ -89,6 +95,12 @@ class SearchView(View):
             'product_packaging__product'
         ).prefetch_related(
             'product_packaging__product__skus'
+        ).order_by('-created_at')
+
+    def _search_archived_codes(self, query):
+        """Поиск по кодам в архиве (денормализованная таблица)."""
+        return filter_codes_by_query(
+            CISCodeArchive.objects.using('archive').all(), query
         ).order_by('-created_at')
 
     def _search_uip(self, query):
