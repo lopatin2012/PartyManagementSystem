@@ -20,7 +20,7 @@ from app_factory.models import (
     Line,
 )
 
-from app_cz.models import CISCode
+from app_cz.models import CISCode, CISCodeArchive
 from app_cz.services.party_service import build_local_party_number
 
 from app_helper.access import (
@@ -1014,6 +1014,48 @@ class SearchResultsCardTests(TestCase):
         self.assertEqual(response.context['search_type'], 'uip')
         self.assertContains(response, 'TASK-EXTERNAL-1')
         self.assertContains(response, 'Завод Тестовый')
+
+
+@STATIC_OVERRIDE
+class SearchArchiveFallbackTests(TestCase):
+    """Если кода нет в рабочей таблице, поиск идёт в архивную."""
+
+    databases = {'default', 'archive'}
+
+    def setUp(self):
+        self.code = '01046017510260192150arch'
+        CISCodeArchive.objects.using('archive').create(
+            id=999999,
+            code=self.code,
+            level=PackagingLevelChoices.UNIT,
+            cz_status=2,
+            production_status=3,
+            uip_number='04601751026019260101500320000000',
+            party_number='145',
+            product_name='Архивный продукт',
+            sku_article='99999',
+            gtin='04601751026019',
+            created_at=timezone.now(),
+            updated_at=timezone.now(),
+        )
+
+    def test_api_search_falls_back_to_archive(self):
+        response = self.client.get(
+            '/uip/api/v1/search/', {'q': self.code}
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['in_archive'])
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(data['results'][0]['code'], self.code)
+        self.assertTrue(data['results'][0]['archived'])
+
+    def test_page_search_falls_back_to_archive(self):
+        response = self.client.get(reverse('search'), {'q': self.code})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['in_archive'])
+        self.assertContains(response, 'Архивный продукт')
+        self.assertContains(response, 'Архив')
 
 
 class SearchQueryHelpersTests(TestCase):

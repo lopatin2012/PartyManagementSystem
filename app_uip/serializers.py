@@ -4,7 +4,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from app_cz.enums import TypeProduct
-from app_cz.models import CISCode
+from app_cz.models import CISCode, CISCodeArchive
 
 from app_uip.models import UIP, PartyStatusChoices
 
@@ -109,6 +109,31 @@ class CISCodeSearchResultSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.CharField(allow_null=True))
     def get_uip_number(self, obj):
         return obj.production_party.uip.number if obj.production_party.uip else None
+
+
+class CISCodeArchiveSearchResultSerializer(serializers.ModelSerializer):
+    """Результат поиска по коду в архиве (денормализованные поля)."""
+    level_display = serializers.CharField(source='get_level_display', read_only=True)
+    cz_status_display = serializers.CharField(source='get_cz_status_display', read_only=True)
+    production_status_display = serializers.CharField(
+        source='get_production_status_display', read_only=True
+    )
+    uip_number = serializers.CharField(read_only=True)
+    archived = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CISCodeArchive
+        fields = [
+            'id', 'code', 'uip_number', 'gtin',
+            'level', 'level_display',
+            'cz_status', 'cz_status_display',
+            'production_status', 'production_status_display',
+            'created_at', 'updated_at', 'archived',
+        ]
+
+    @extend_schema_field(serializers.BooleanField)
+    def get_archived(self, obj):
+        return True
 
 
 class UIPReserveItemSerializer(serializers.Serializer):
