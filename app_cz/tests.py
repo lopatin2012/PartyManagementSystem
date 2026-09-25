@@ -547,3 +547,45 @@ class ReportUipEndpointTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.uip.refresh_from_db()
         self.assertEqual(self.uip.status, PartyStatusChoices.REGISTERED)
+
+
+class RegisterUipMarkingDateTests(TestCase):
+    """Дата маркировки в отчёте не может быть в будущем (min(production_date, today))."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.uip = UIP.objects.create(
+            product_sku=self.sku,
+            number='04601751026019260101500320000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        ProductionParty.objects.create(
+            uip=self.uip, production_party='1', external_number_task='task-1',
+        )
+
+    def _register(self, production_date):
+        from app_cz.services.reserve_monitor import register_uip
+
+        self.uip.production_date = production_date
+        self.uip.save(update_fields=['production_date'])
+        with patch(
+            'app_cz.services.reserve_monitor.send_application_report',
+            return_value={'has_error': False, 'status_close': True, 'responses': []},
+        ) as mock_report, patch(
+            'app_cz.services.reserve_monitor._fetch_code_for_task',
+            return_value='010460175102601921CODE0001',
+        ):
+            register_uip(self.uip)
+        return mock_report.call_args.kwargs
+
+    def test_future_production_date_clamped_to_today(self):
+        future = timezone.now().date() + timedelta(days=5)
+        kwargs = self._register(future)
+        self.assertEqual(kwargs['marking_date'], timezone.now().date().isoformat())
+        # Срок годности задания нет → fallback = ограниченная дата.
+        self.assertEqual(kwargs['exp_date'], timezone.now().date().isoformat())
+
+    def test_past_production_date_kept(self):
+        past = timezone.now().date() - timedelta(days=5)
+        kwargs = self._register(past)
+        self.assertEqual(kwargs['marking_date'], past.isoformat())

@@ -299,13 +299,19 @@ def register_uip(uip: UIP, source: str = 'auto', note: str = None) -> dict:
         }
 
     # 3. Дата производства УИП и срок годности задания.
-    marking_date = uip.production_date.isoformat() if uip.production_date else None
+    # Отчёт о нанесении нельзя подать будущей датой, поэтому дату маркировки
+    # ограничиваем сегодняшним днём: marking_date = min(production_date, today).
+    today = timezone.now().date()
+    if uip.production_date:
+        marking_date = min(uip.production_date, today).isoformat()
+    else:
+        marking_date = None
     exp_date = (
         party.expiration_datetime.date().isoformat()
         if party and party.expiration_datetime
         else None
     )
-    # Отчёт требует срок годности: если его нет — используем дату производства.
+    # Отчёт требует срок годности: если его нет — используем дату маркировки.
     if not exp_date:
         exp_date = marking_date
     if not exp_date:
