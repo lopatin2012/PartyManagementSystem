@@ -145,3 +145,33 @@ class ProductActivitySyncTests(TestCase):
         self.assertTrue(result['is_error'])
         self.assertIn(str(self.factory.id), result['failed_factories'])
         self.assertTrue(sku.is_active)
+
+
+class NKShelfLifeTests(TestCase):
+    """Срок годности продукта берётся из атрибутов карточки НК."""
+
+    def test_extract_shelf_life_days(self):
+        from app_factory.services.nk_sync_service import _extract_shelf_life_days
+
+        raw = {'good_attrs': [
+            {'attr_name': 'Срок годности', 'attr_value': '180'},
+        ]}
+        self.assertEqual(_extract_shelf_life_days(raw), 180)
+
+    def test_extract_shelf_life_missing_returns_none(self):
+        from app_factory.services.nk_sync_service import _extract_shelf_life_days
+
+        self.assertIsNone(_extract_shelf_life_days({'good_attrs': []}))
+        self.assertIsNone(
+            _extract_shelf_life_days(
+                {'good_attrs': [{'attr_name': 'Что-то', 'attr_value': '5'}]}
+            )
+        )
+
+    def test_extract_shelf_life_parses_prefixed_value(self):
+        from app_factory.services.nk_sync_service import _extract_shelf_life_days
+
+        raw = {'good_attrs': [
+            {'attr_name': 'Срок годности', 'attr_value': '90 суток'},
+        ]}
+        self.assertEqual(_extract_shelf_life_days(raw), 90)

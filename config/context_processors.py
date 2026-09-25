@@ -6,7 +6,7 @@ from django.conf import settings
 
 from app_helper.user_helper import get_user_name
 from app_helper.load_tracker import get_requests_per_hour
-from app_helper.service_helper import check_factories, check_onec
+from app_helper.service_helper import check_factories
 from app_cz.models import SUZAccount
 from config.settings import SERVICE_MODE_TEXT, SERVICE_MODE_COLOR, SERVICE_VERSION, DEBUG
 
@@ -73,11 +73,31 @@ def service_status_info(request):
     # 2. Серверы маркировки заводов (Молвест.Маркировка) — реальная проверка.
     status_factories = check_factories()
 
-    # 3. 1С: Предприятие — реальная проверка.
-    status_1c = check_onec()
+    # 3. Общая сводка по сервису (все проверки).
+    from app_helper.service_helper import diagnose_service
+    diagnosis = diagnose_service()
+    failed_checks = [
+        {
+            'name': name,
+            'message': info.get('message', 'недоступно'),
+        }
+        for name, info in diagnosis['checks'].items()
+        if not info['ok'] and name != 'summary'
+    ]
+    status_summary = {
+        'is_ok': diagnosis['is_available'],
+        'checks_total': len(diagnosis['checks']) - 1,  # без самой сводки
+        'checks_failed': len(failed_checks),
+        'failed_checks': failed_checks,
+        'message': (
+            'Сервис работает штатно'
+            if diagnosis['is_available']
+            else 'Есть проблемы с сервисами'
+        ),
+    }
 
     return {
         'status_suz': suz_status,
         'status_factories': status_factories,
-        'status_1c': status_1c,
+        'status_summary': status_summary,
     }

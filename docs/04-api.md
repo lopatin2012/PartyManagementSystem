@@ -145,6 +145,8 @@
 | `GET /cz/api/get-all-reserved-parties/` | Все зарезервированные партии из ЧЗ |
 | `POST /cz/api/close-party-reservation/` | Снятие с резерва через отчёт о нанесении |
 | `POST /cz/api/v1/generate-uip/` | Генерация одного УИП (внешние системы) |
+| `POST /cz/uip/generate/` | Генерация УИП из веба (`mode`: local/cz/manual; при `manual` — `party_number`) |
+| `GET /cz/uip/check-number/` | Проверка номера УИП в СУП и резерве ЧЗ (`?number=...`) |
 | `POST /cz/api/reserve-draft-uip/` | Резервирование черновой УИП |
 
 **Генерация номеров:** тело `{product_group, party_info_list: [{gtin, productionDate, count}]}`.

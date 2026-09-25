@@ -5,7 +5,7 @@
 
 - Подсчёт зарезервированных УИП относительно лимита (по умолчанию 10000, задан ЧЗ).
 - Email-уведомления при превышении порогов заполнения:
-  > 50% — предупреждение, > 80% — тревога, > 90% — тревога + снятие с резерва устаревших УИП.
+  > 60% — предупреждение, > 75% — тревога, > 95% — тревога + снятие с резерва устаревших УИП.
 - Снятие с резерва устаревших УИП (до сгорания которых осталось немного времени)
   через отчёт о нанесении:
   * сначала запрашивается один код из задания у внешнего сервиса «Молвест.Маркировка»
@@ -36,9 +36,9 @@ from app_uip.models import UIP, ProductionParty, PartyStatusChoices
 logger = logging.getLogger(__name__)
 
 # === Пороги заполнения резерва (проценты от лимита). ===
-WARN_PERCENT = 50
-CRITICAL_PERCENT = 80
-RELEASE_PERCENT = 90
+WARN_PERCENT = 60
+CRITICAL_PERCENT = 75
+RELEASE_PERCENT = 95
 
 # === Параметры «сгорания» УИП. ===
 # УИП сгорает через 30 дней после резервирования (установлено ЧЗ).
@@ -299,13 +299,19 @@ def register_uip(uip: UIP, source: str = 'auto', note: str = None) -> dict:
         }
 
     # 3. Дата производства УИП и срок годности задания.
-    marking_date = uip.production_date.isoformat() if uip.production_date else None
+    # Отчёт о нанесении нельзя подать будущей датой, поэтому дату маркировки
+    # ограничиваем сегодняшним днём: marking_date = min(production_date, today).
+    today = timezone.now().date()
+    if uip.production_date:
+        marking_date = min(uip.production_date, today).isoformat()
+    else:
+        marking_date = None
     exp_date = (
         party.expiration_datetime.date().isoformat()
         if party and party.expiration_datetime
         else None
     )
-    # Отчёт требует срок годности: если его нет — используем дату производства.
+    # Отчёт требует срок годности: если его нет — используем дату маркировки.
     if not exp_date:
         exp_date = marking_date
     if not exp_date:
@@ -550,8 +556,8 @@ def _notify(subject: str, body: str, recipients: list) -> dict:
 def check_uip_reserve_and_notify() -> dict:
     """
     Проверяет заполнение резерва УИП и при необходимости:
-    - отправляет email-уведомление (>50% — предупреждение, >80% — тревога);
-    - снимает с резерва устаревшие УИП (>90%) и сообщает о результате.
+    - отправляет email-уведомление (>60% — предупреждение, >75% — тревога);
+    - снимает с резерва устаревшие УИП (>95%) и сообщает о результате.
 
     :return: Сводка проверки.
     """

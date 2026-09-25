@@ -109,7 +109,25 @@
                                         <input type="radio" name="genMode" value="cz" onchange="updatePreview()">
                                         <span>Честный Знак</span>
                                     </label>
+                                    <label class="mode-option">
+                                        <input type="radio" name="genMode" value="manual" onchange="updatePreview()">
+                                        <span>Вручную</span>
+                                    </label>
                                 </div>
+                            </div>
+
+                            <!-- Ручной ввод номера партии (серийная часть) -->
+                            <div class="form-group hidden" id="manualNumberGroup">
+                                <label for="manualSerial">Номер партии (серийная часть):</label>
+                                <input type="text"
+                                       id="manualSerial"
+                                       class="form-input"
+                                       placeholder="1-12 символов: цифры, латиница, / . , -"
+                                       maxlength="12"
+                                       autocomplete="off"
+                                       oninput="updatePreview(); scheduleManualCheck();"
+                                       onblur="checkManualNumber(true)">
+                                <div class="manual-check-hint" id="manualCheckHint"></div>
                             </div>
 
                             <!-- Тип формирования УИП -->
@@ -133,6 +151,7 @@
                     <button class="btn-secondary" onclick="closeGenerateModal()">Отмена</button>
                     <button id="generateSubmitBtn" class="btn-sync"
                             data-url="{% url 'uip_generate' %}"
+                            data-check-url="{% url 'uip_check_number' %}"
                             data-csrf="{{ csrf_token }}"
                             onclick="submitGenerate()">
                         Сгенерировать
@@ -319,25 +338,31 @@
                                     <!-- Кнопки для взаимодействуя с УИП -->
                                     {% if uip.status == 'draft' %}
                                         <button
-                                            class="btn-row-action btn-reserve"
+                                            class="btn-row-action btn-reserve btn-icon"
                                             data-uip-id="{{ uip.id }}"
                                             data-uip-number="{{ uip.number }}"
                                             data-url="{% url 'api-reserve-draft-uip' %}"
                                             data-csrf="{{ csrf_token }}"
+                                            title="Зарезервировать УИП в Честном Знаке"
                                             onclick="reserveDraftUip(this)">
-                                            Зарезервировать
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+                                            </svg>
                                         </button>
                                     {% elif uip.status == 'reserved_local' or uip.status == 'reserved_cz' %}
                                         {% if uip.has_task %}
                                             <button
-                                                class="btn-row-action btn-report"
+                                                class="btn-row-action btn-report btn-icon"
                                                 data-uip-id="{{ uip.id }}"
                                                 data-uip-number="{{ uip.number }}"
                                                 data-url="{% url 'api-report-uip' %}"
                                                 data-csrf="{{ csrf_token }}"
                                                 title="Отправить отчёт о нанесении в Честный Знак"
                                                 onclick="reportUip(this)">
-                                                Отправить отчёт о нанесении
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                    <path d="M9 11l3 3L22 4"></path>
+                                                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                                                </svg>
                                             </button>
                                         {% else %}
                                             <span class="action-hint action-hint-muted" title="Нет привязанного задания">—</span>

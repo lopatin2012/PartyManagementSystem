@@ -110,6 +110,20 @@
     box-shadow: 0 2px 6px rgba(250, 187, 28, 0.3);
 }
 
+/* Подсказка проверки номера в ручном режиме. */
+.manual-check-hint {
+    margin-top: 0.35rem;
+    font-size: 0.8rem;
+    min-height: 1em;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.manual-check-hint.check-ok { color: var(--accent-green, #BBCF32); }
+.manual-check-hint.check-bad { color: #e05656; }
+
+.preview-hint .len-ok { color: var(--accent-green, #BBCF32); }
+.preview-hint .len-bad { color: #e05656; }
+
 /* Кнопка отправки отчёта о нанесении (регистрация УИП). */
 .btn-report {
     background: var(--accent-green, #BBCF32);
@@ -118,6 +132,22 @@
 .btn-report:hover:not(:disabled) {
     background: #c9db4b;
     box-shadow: 0 2px 6px rgba(187, 207, 50, 0.3);
+}
+
+/* Иконочная кнопка (без текста). */
+.btn-icon {
+    padding: 0.4rem;
+    width: 30px;
+    height: 30px;
+    justify-content: center;
+}
+
+.btn-icon.loading {
+    color: transparent;
+}
+
+.btn-icon.loading svg {
+    visibility: hidden;
 }
 
 .btn-row-action:disabled {

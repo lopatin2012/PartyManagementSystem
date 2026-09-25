@@ -70,3 +70,14 @@ class ScheduleRegistrationTests(SimpleTestCase):
         self.assertIn('sync_parties', entries)
         self.assertEqual(entries['sync_parties'], timedelta(minutes=30))
         self.assertTrue(hasattr(sync_parties_task, 'enqueue'))
+
+    def test_system_health_task_in_schedule(self):
+        from datetime import timedelta
+
+        from app_scheduler.management.commands.run_scheduler import SCHEDULE
+        from app_scheduler.tasks import check_system_health_task
+
+        entries = {name: interval for name, interval, _ in SCHEDULE}
+        self.assertIn('check_system_health', entries)
+        self.assertEqual(entries['check_system_health'], timedelta(minutes=5))
+        self.assertTrue(hasattr(check_system_health_task, 'enqueue'))

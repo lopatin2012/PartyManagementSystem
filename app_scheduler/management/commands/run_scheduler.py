@@ -64,7 +64,7 @@ SCHEDULE = [
 
     # Работа со статусами УИП.
     ('cleanup_expired_reserved', 1 * DAY, 'Удаление УИП без регистрации (30 дней)'),
-    ('close_unused_registered', 1 * DAY, 'Закрытие УИП без использования (3 дня)'),
+    ('close_unused_registered', 1 * DAY, 'Закрытие УИП без использования (15 дней)'),
     ('archive_stale_closed', 1 * DAY, 'Архивация закрытых УИП (30+ дней)'),
 
     # Очистка данных.
@@ -83,8 +83,8 @@ SCHEDULE = [
     ('sync_product_activity', 1 * DAY, 'Проверка активности продуктов на заводах (1 сутки)'),
 
     # Мониторинг резерва УИП.
-    # >50% — предупреждение, >80% — тревога, >90% — снятие устаревших УИП.
-    ('check_uip_reserve', 1 * DAY, 'Проверка резерва УИП и уведомления по почте'),
+    # >60% — предупреждение, >75% — тревога, >95% — снятие устаревших УИП.
+    ('check_uip_reserve', 1 * HOUR, 'Проверка резерва УИП и уведомления по почте (1 час)'),
 
     # Контроль сгорания УИП.
     # До сгорания осталось менее 7 дней — предупреждение по почте.
@@ -107,6 +107,9 @@ SCHEDULE = [
     # УИП, ушедшие из резерва ЧЗ (напр., после отчёта о нанесении),
     # помечаются is_desync.
     ('sync_parties', 30 * MINUTE, 'Синхронизация УИП с ЧЗ (30 минут)'),
+
+    # Проверка состояния системы (БД, СУЗ, подписи, заводы) — каждые 5 минут.
+    ('check_system_health', 5 * MINUTE, 'Проверка состояния системы (5 минут)'),
 
     # # Раз в сутки в 3:00 — архивация УИП
     # ('archive_stale_uips', 24 * 3600, 'Архивация УИП без активности'),
@@ -200,6 +203,7 @@ class Command(BaseCommand):
             check_uip_burn_task,
             register_reserved_uips_task,
             sync_parties_task,
+            check_system_health_task,
             sync_product_activity_task,
             accumulate_short_shelf_life_reserve_task,
             sync_national_catalog_task,
@@ -222,6 +226,7 @@ class Command(BaseCommand):
             'check_uip_burn': check_uip_burn_task,
             'register_reserved_uips': register_reserved_uips_task,
             'sync_parties': sync_parties_task,
+            'check_system_health': check_system_health_task,
             'sync_product_activity': sync_product_activity_task,
             'accumulate_short_shelf_life_reserve': accumulate_short_shelf_life_reserve_task,
             'sync_national_catalog': sync_national_catalog_task,

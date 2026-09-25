@@ -374,6 +374,121 @@ class SyncPartiesFormatDetectionTests(TestCase):
         self.assertEqual(uip.status, PartyStatusChoices.RESERVED_CZ)
 
 
+class GenerateUipManualEndpointTests(TestCase):
+    """POST /cz/uip/generate/ в режиме mode=manual."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.url = '/cz/uip/generate/'
+        self.admin = User.objects.create_superuser(
+            username='admin', password='pass', email='a@a.a'
+        )
+
+    def test_manual_generate_creates_reserved_uip(self):
+        self.client.force_login(self.admin)
+        with patch(
+            'app_cz.services.party_service.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = {
+                'is_error': False, 'message_error': 'ОК',
+                'lst_party_number_info': [],
+            }
+            response = self.client.post(
+                self.url,
+                {
+                    'product_sku_id': str(self.sku.id),
+                    'production_date': '2026-01-15',
+                    'mode': 'manual',
+                    'party_number': 'ABC123456789',
+                },
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        number = '04601751026019' + '260115' + 'ABC123456789'
+        self.assertTrue(UIP.objects.filter(number=number).exists())
+
+    def test_manual_generate_wrong_length_returns_400(self):
+        self.client.force_login(self.admin)
+        response = self.client.post(
+            self.url,
+            {
+                'product_sku_id': str(self.sku.id),
+                'production_date': '2026-01-15',
+                'mode': 'manual',
+                'party_number': 'A',
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400)
+
+
+class CheckUipNumberEndpointTests(TestCase):
+    """GET /cz/uip/check-number/ — проверка номера в СУП и ЧЗ."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.url = '/cz/uip/check-number/'
+        self.admin = User.objects.create_superuser(
+            username='admin', password='pass', email='a@a.a'
+        )
+        self.number = '04601751026019260101500320000000'
+
+    def test_in_sup(self):
+        self.client.force_login(self.admin)
+        UIP.objects.create(
+            product_sku=self.sku, number=self.number,
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        with patch(
+            'app_cz.views.get_all_reserved_parties',
+            return_value={'is_error': False, 'lst_party_number_info': []},
+        ):
+            response = self.client.get(self.url, {'number': self.number})
+        data = response.json()
+        self.assertTrue(data['in_sup'])
+        self.assertFalse(data['in_cz'])
+
+    def test_in_cz(self):
+        self.client.force_login(self.admin)
+        with patch(
+            'app_cz.views.get_all_reserved_parties',
+            return_value={
+                'is_error': False,
+                'lst_party_number_info': [{'partyNumber': self.number}],
+            },
+        ):
+            response = self.client.get(
+                self.url, {'number': self.number, 'check_cz': '1'},
+            )
+        data = response.json()
+        self.assertFalse(data['in_sup'])
+        self.assertTrue(data['in_cz'])
+
+    def test_local_check_does_not_call_cz(self):
+        self.client.force_login(self.admin)
+        with patch('app_cz.views.get_all_reserved_parties') as mock_cz:
+            response = self.client.get(self.url, {'number': self.number})
+        data = response.json()
+        self.assertFalse(data['in_sup'])
+        self.assertFalse(data['in_cz'])
+        mock_cz.assert_not_called()
+
+    def test_cz_unavailable_does_not_crash(self):
+        self.client.force_login(self.admin)
+        with patch(
+            'app_cz.views.get_all_reserved_parties',
+            side_effect=RuntimeError('нет связи с сервисом подписей'),
+        ):
+            response = self.client.get(
+                self.url, {'number': self.number, 'check_cz': '1'},
+            )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertFalse(data['in_cz'])
+        self.assertTrue(data['cz_unavailable'])
+
+
 class ReportUipEndpointTests(TestCase):
     """Пункт 4: кнопка/эндпоинт отправки отчёта о нанесении."""
 
@@ -432,3 +547,45 @@ class ReportUipEndpointTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.uip.refresh_from_db()
         self.assertEqual(self.uip.status, PartyStatusChoices.REGISTERED)
+
+
+class RegisterUipMarkingDateTests(TestCase):
+    """Дата маркировки в отчёте не может быть в будущем (min(production_date, today))."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.uip = UIP.objects.create(
+            product_sku=self.sku,
+            number='04601751026019260101500320000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        ProductionParty.objects.create(
+            uip=self.uip, production_party='1', external_number_task='task-1',
+        )
+
+    def _register(self, production_date):
+        from app_cz.services.reserve_monitor import register_uip
+
+        self.uip.production_date = production_date
+        self.uip.save(update_fields=['production_date'])
+        with patch(
+            'app_cz.services.reserve_monitor.send_application_report',
+            return_value={'has_error': False, 'status_close': True, 'responses': []},
+        ) as mock_report, patch(
+            'app_cz.services.reserve_monitor._fetch_code_for_task',
+            return_value='010460175102601921CODE0001',
+        ):
+            register_uip(self.uip)
+        return mock_report.call_args.kwargs
+
+    def test_future_production_date_clamped_to_today(self):
+        future = timezone.now().date() + timedelta(days=5)
+        kwargs = self._register(future)
+        self.assertEqual(kwargs['marking_date'], timezone.now().date().isoformat())
+        # Срок годности задания нет → fallback = ограниченная дата.
+        self.assertEqual(kwargs['exp_date'], timezone.now().date().isoformat())
+
+    def test_past_production_date_kept(self):
+        past = timezone.now().date() - timedelta(days=5)
+        kwargs = self._register(past)
+        self.assertEqual(kwargs['marking_date'], past.isoformat())

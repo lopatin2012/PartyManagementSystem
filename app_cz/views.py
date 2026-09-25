@@ -37,7 +37,7 @@ from app_cz.services.party_service import (
     reserve_parties_honest_sign,
     get_all_reserved_parties,
     close_party_reservation, generate_uip, find_sku_by_gtin,
-    sync_parties_from_cz,
+    sync_parties_from_cz, reserve_manual_uip,
     get_available_products,
 )
 from app_cz.services.code_sync import (
@@ -663,12 +663,13 @@ def api_generate_uip(request):
         )
 
     # Используем единый генератор УИП. Единичное количество, без множества.
+    # skip_cz: явный параметр запроса, иначе — из настройки UIP_DRAFT_MODE.
     result = generate_uip(
         product_sku=product_sku,
         production_date=data['production_date'],
         mode=data['mode'],
         is_external_service=True,
-        skip_cz=data.get('skip_cz', True) # Черновик на время ввода разработки.
+        skip_cz=data.get('skip_cz'),
     )
 
     if result.get('is_error'):
@@ -1014,6 +1015,7 @@ class GenerateUIPView(View):
         production_date_str = data.get('production_date')
         mode = data.get('mode', 'local')
         party = data.get('party') or '000'
+        party_number = data.get('party_number') or ''
 
         if not product_sku_id or not production_date_str:
             return JsonResponse(
@@ -1050,10 +1052,16 @@ class GenerateUIPView(View):
                 status=400
             )
 
-        result = generate_uip(
-            product_sku, production_date, mode,
-            party=party
-        )
+        # Ручной ввод номера (серийная часть) — отдельный путь.
+        if mode == 'manual':
+            result = reserve_manual_uip(
+                product_sku, production_date, party_number,
+            )
+        else:
+            result = generate_uip(
+                product_sku, production_date, mode,
+                party=party
+            )
 
         status_code = (
             200
@@ -1061,6 +1069,53 @@ class GenerateUIPView(View):
             else 400
         )
         return JsonResponse(result, status=status_code)
+
+
+@method_decorator(generate_uip_required_json, name='dispatch')
+class CheckUipNumberView(View):
+    """
+    Проверка номера УИП: есть ли он в локальной БД (СУП) и в резерве ЧЗ.
+
+    GET /cz/uip/check-number/?number=<полный_номер>
+    Ответ: {'number': ..., 'in_sup': bool, 'in_cz': bool}
+    """
+
+    def get(self, request):
+        number = (request.GET.get('number') or '').strip()
+        if not number:
+            return JsonResponse(
+                {'is_error': True, 'message': 'Не указан номер.'},
+                status=400,
+            )
+
+        in_sup = UIP.objects.filter(number=number).exists()
+
+        # ЧЗ опрашиваем только по запросу (check_cz=1) и без падения при
+        # недоступности внешнего сервиса подписей/сети.
+        check_cz = str(request.GET.get('check_cz', '')).lower() in ('1', 'true', 'yes')
+        in_cz = False
+        cz_unavailable = False
+        if check_cz:
+            try:
+                cz_result = get_all_reserved_parties()
+                if cz_result.get('is_error'):
+                    cz_unavailable = True
+                else:
+                    cz_numbers = {
+                        p.get('partyNumber')
+                        for p in cz_result.get('lst_party_number_info', [])
+                    }
+                    in_cz = number in cz_numbers
+            except Exception as e:
+                logger.warning(f'Проверка номера {number} в ЧЗ недоступна: {e}')
+                cz_unavailable = True
+
+        return JsonResponse({
+            'number': number,
+            'in_sup': in_sup,
+            'in_cz': in_cz,
+            'cz_unavailable': cz_unavailable,
+        })
 
 
 # ==========================================

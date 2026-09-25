@@ -137,11 +137,11 @@ def cleanup_expired_reserved_uips_task() -> dict:
 def close_unused_registered_uips_task() -> dict:
     """
     УИП в статусе registered без производственных партий,
-    которые не были использованы в течение 3 дней → CLOSED.
+    которые не были использованы в течение 15 дней → CLOSED.
     """
     from app_uip.models import UIP, UIPStatusLog, PartyStatusChoices, ProductionParty
 
-    threshold = timezone.now() - timedelta(days=3)
+    threshold = timezone.now() - timedelta(days=15)
 
     # Подзапрос: нет связанных ProductionParty.
     no_parties = ~Exists(
@@ -168,7 +168,7 @@ def close_unused_registered_uips_task() -> dict:
     )
 
     if not unused_uips:
-        message = 'Нет УИП для закрытия (3 дня без использования)'
+        message = 'Нет УИП для закрытия (15 дней без использования)'
         logger.info(message)
         return {'closed': 0, 'message': message}
 
@@ -190,7 +190,7 @@ def close_unused_registered_uips_task() -> dict:
             from_status=old_statuses[uip_id],
             to_status=PartyStatusChoices.CLOSED,
             source='auto',
-            note='Автоматическое закрытие: 3 дня без прикрепления к производственной партии',
+            note='Автоматическое закрытие: 15 дней без прикрепления к производственной партии',
         )
         for uip_id in uip_ids
     ]
@@ -371,8 +371,8 @@ def check_uip_reserve_task() -> dict:
     """
     Периодическая проверка заполнения резерва УИП и уведомления по почте.
 
-    - >50% — предупреждение, >80% — тревога.
-    - >90% — снятие с резерва устаревших УИП через отчёт о нанесении
+    - >60% — предупреждение, >75% — тревога.
+    - >95% — снятие с резерва устаревших УИП через отчёт о нанесении
       (кодами DataMatrix из заданий, либо кодом по GTIN из внешнего сервиса).
     """
     from app_cz.services.reserve_monitor import check_uip_reserve_and_notify
@@ -450,15 +450,38 @@ def accumulate_short_shelf_life_reserve_task() -> dict:
     `UIP_SHORT_SHELF_LIFE_DAYS` (по умолчанию 40 дней) доливает резерв
     зарезервированных УИП на даты [сегодня; сегодня + ProductSKU.reserve_days].
 
-    По умолчанию работает в безопасном режиме `skip_cz=True` — создаются
-    только черновики без обращения к ЧЗ (оценка объёмов). Для резервирования
-    в ЧЗ запускать с `skip_cz=False`.
+    Режим (черновики или реальное резервирование в ЧЗ) определяется
+    настройкой `UIP_DRAFT_MODE`: 1 — только черновики (оценка объёмов),
+    0 — резервирование в ЧЗ.
     """
     from app_uip.services.reserve_accumulation import (
         accumulate_short_shelf_life_reserve,
     )
 
-    return accumulate_short_shelf_life_reserve(skip_cz=True)
+    return accumulate_short_shelf_life_reserve()
+
+
+# ==========================================
+# Наблюдаемость (health-проверки).
+# ==========================================
+
+@task(queue_name='default')
+def check_system_health_task() -> dict:
+    """
+    Периодическая проверка состояния системы (раз в 5 минут).
+
+    Проверяет БД, СУЗ, сервис подписей и серверы заводов, пишет историю
+    в HealthCheck и шлёт алерты группам-получателям при смене состояния.
+    Заодно чистит записи старше HEALTH_RETENTION_DAYS.
+    """
+    from app_event.services.health import (
+        cleanup_old_health_checks,
+        run_health_checks,
+    )
+
+    result = run_health_checks()
+    cleanup_old_health_checks()
+    return result
 
 
 # ==========================================

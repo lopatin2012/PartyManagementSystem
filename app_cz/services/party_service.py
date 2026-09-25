@@ -29,6 +29,18 @@ logger = logging.getLogger(__name__)
 MAX_BATCH_SIZE = 50
 
 
+def uip_draft_mode() -> bool:
+    """
+    Глобальный режим черновиков УИП (настройка UIP_DRAFT_MODE).
+
+    True — создавать черновики без обращения к ЧЗ; False — резервировать
+    в ЧЗ. Используется как значение по умолчанию для `skip_cz`, когда
+    вызывающий код не передал его явно.
+    """
+    from django.conf import settings
+    return bool(getattr(settings, 'UIP_DRAFT_MODE', True))
+
+
 def validate_party_number(party_number: str) -> bool:
     """
     Валидация номера партии (УИП) согласно правилам Честного Знака.
@@ -1038,7 +1050,7 @@ def _generate_local_uip(
         is_external_service: bool,
         party: str = None,
         target_status: str = None,
-        skip_cz: bool = False,
+        skip_cz: bool = None,
         type_formation_uip: int = TypeFormationUIP.general.value
 ) -> dict:
     """
@@ -1051,7 +1063,11 @@ def _generate_local_uip(
     :param target_status: Переопределить статус создаваемого УИП.
                           Если None: DRAFT при skip_cz, иначе RESERVED_LOCAL.
     :param skip_cz: Если True — НЕ резервировать в ЧЗ (черновик для тестов).
+                    Если None — берётся из настройки UIP_DRAFT_MODE.
     """
+    if skip_cz is None:
+        skip_cz = uip_draft_mode()
+
     number = build_local_party_number(
         gtin,
         production_date,
@@ -1286,6 +1302,104 @@ def _generate_cz_uip(
         }
 
 
+def reserve_manual_uip(
+        product_sku: ProductSKU,
+        production_date: date,
+        serial_part: str,
+) -> dict:
+    """
+    Ручной ввод УИП: номер собирается из GTIN(14) + дата ГГММДД(6) + серийная
+    часть и резервируется в Честном Знаке как локальный.
+
+    Требования к номеру:
+    * серийная часть — 1-12 символов: цифры, латиница и / . , -;
+    * итоговый номер — ровно 32 символа.
+
+    :param product_sku: продукт (источник GTIN и товарной группы).
+    :param production_date: дата производства.
+    :param serial_part: серийная часть, введённая вручную.
+    """
+    import re as _re
+
+    serial_part = (serial_part or '').strip()
+
+    if not _re.fullmatch(r'[A-Za-z0-9/.,\-]{1,12}', serial_part):
+        return {
+            'is_error': True,
+            'message': (
+                'Серийная часть должна состоять из 1-12 символов: '
+                'цифры, латинские буквы и / . , -'
+            ),
+        }
+
+    gtin = product_sku.product.consumer_gtin
+    if not gtin:
+        return {
+            'is_error': True,
+            'message': 'У продукта не указан GTIN потребительской упаковки.',
+        }
+
+    number = f'{gtin}{production_date.strftime("%y%m%d")}{serial_part}'
+    if len(number) != 32:
+        return {
+            'is_error': True,
+            'message': f'Номер УИП должен быть длиной 32 символа (получено {len(number)}).',
+        }
+
+    existing_uip = UIP.objects.filter(number=number).first()
+    if existing_uip is not None:
+        return {
+            'is_error': True,
+            'message': f'УИП с номером {number} уже существует.',
+        }
+
+    # Резервируем номер в ЧЗ как «свой» (локальный).
+    reserve_result = reserve_parties_honest_sign(
+        product_group=product_sku.product.group,
+        party_numbers=[number],
+    )
+    if reserve_result.get('is_error'):
+        return {
+            'is_error': True,
+            'message': (
+                f'ЧЗ отклонил резервирование номера: '
+                f'{reserve_result.get("message_error", "неизвестная ошибка")}'
+            ),
+        }
+
+    note = 'Зарезервирован вручную (номер введён вручную), зарезервирован в ЧЗ'
+    try:
+        with transaction.atomic():
+            uip = UIP.objects.create(
+                product_sku=product_sku,
+                number=number,
+                status=PartyStatusChoices.RESERVED_LOCAL,
+                production_date=production_date,
+                reservation_date=timezone.now().date(),
+                description=note,
+            )
+            UIPStatusLog.objects.create(
+                uip=uip,
+                from_status=None,
+                to_status=PartyStatusChoices.RESERVED_LOCAL,
+                source='manual_local',
+                note=note,
+            )
+        logger.info(f'Создан УИП (ручной ввод): {number}')
+        return {
+            'is_error': False,
+            'uuid_uip': str(uip.id),
+            'uuid_task': str(uuid7()),
+            'reservation_date': uip.reservation_date,
+            'number': number,
+            'status': str(PartyStatusChoices.RESERVED_LOCAL),
+            'message': f'УИП создан: {number} (статус: {PartyStatusChoices.RESERVED_LOCAL})',
+        }
+    except Exception as e:
+        logger.error(f'Ошибка сохранения УИП (ручной ввод): {e}', exc_info=True)
+        return {'is_error': True, 'message': f'Ошибка сохранения УИП: {str(e)}'}
+
+
 def generate_uip(
         product_sku: ProductSKU,
         production_date: date,
@@ -1293,7 +1407,7 @@ def generate_uip(
         party: str = '000',
         is_external_service: bool = False,
         target_status: str = None,
-        skip_cz: bool = False,
+        skip_cz: bool = None,
 ) -> dict:
     """
     Точка входа генерации УИП внутри сервиса.
@@ -1303,7 +1417,8 @@ def generate_uip(
     :param party: Номер партии.
     :param is_external_service: Запрос УИП из внешней системы.
     :param target_status: Переопределить статус создаваемого УИП.
-    :param skip_cz: Не взаимодействовать с ЧЗ (черновик для тестов, только для local).
+    :param skip_cz: Не взаимодействовать с ЧЗ (черновик, только для local).
+                    None — берётся из настройки UIP_DRAFT_MODE.
     """
 
     if not product_sku:
