@@ -27,7 +27,12 @@ from app_factory.models import (
     StateConditionChoices,
     TypeFormationUIP,
 )
-from app_uip.models import PartyStatusChoices, ProductionParty, UIP
+from app_uip.models import (
+    PartyStatusChoices,
+    ProductionParty,
+    ProductionPartyStatusChoices,
+    UIP,
+)
 from app_cz.models import CISCode
 from app_cz.services import code_sync
 from app_cz.services import party_service
@@ -181,6 +186,47 @@ class SyncExternalPartiesWatermarkTests(TestCase):
         self.assertIsNone(other.external_sync_changed_since)
         self.assertIn(other.name, result['failed_factories'])
         self.assertNotIn(self.factory.name, result['failed_factories'])
+
+
+class SyncCodesErrorDetailsTests(TestCase):
+    """sync_all_external_tasks собирает детали ошибок кодов."""
+
+    def setUp(self):
+        from app_factory.models import Line, Workshop
+
+        self.factory = Factory.objects.create(
+            name='Завод кодов', ip_address='127.0.0.1', port_address=8010,
+        )
+        workshop = Workshop.objects.create(factory=self.factory, name='Цех')
+        self.line = Line.objects.create(workshop=workshop, name='Линия')
+        self.sku = _create_sku()
+        self.uip = UIP.objects.create(
+            product_sku=self.sku,
+            number='04601751026019260101500320000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        self.party = ProductionParty.objects.create(
+            uip=self.uip,
+            line=self.line,
+            production_party='1',
+            external_number_task='task-1',
+            is_external=True,
+            status=ProductionPartyStatusChoices.CREATED,
+        )
+
+    def test_error_details_collected(self):
+        with patch.object(
+            code_sync, 'sync_codes_for_party',
+            return_value={'has_error': True, 'message': 'сервер завода недоступен'},
+        ):
+            result = code_sync.sync_all_external_tasks()
+
+        self.assertTrue(result['is_error'])
+        self.assertEqual(result['errors'], 1)
+        self.assertEqual(result['error_details'][0]['party'], 'task-1')
+        self.assertEqual(result['error_details'][0]['factory'], 'Завод кодов')
+        self.assertEqual(result['error_details'][0]['url'], 'http://127.0.0.1:8010')
+        self.assertIn('сервер завода недоступен', result['error_details'][0]['message'])
 
 
 class GetFactoryChangedSinceTests(TestCase):

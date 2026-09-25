@@ -662,19 +662,26 @@ def sync_codes_task(
         response.raise_for_status()
         payload = response.json()
     except requests.exceptions.RequestException as e:
-        logger.error(f'Ошибка запроса к внешнему сервису: {e}')
+        logger.error(f'Ошибка запроса к внешнему сервису ({api_url}): {e}')
         _mark_party_sync(party, False, f'Не удалось получить коды: {str(e)}')
         return {
             'has_error': True,
-            'message': f'Не удалось получить коды из внешнего сервиса: {str(e)}'
+            'url': api_url,
+            'message': (
+                f'Не удалось получить коды из внешнего сервиса ({api_url}): {str(e)}'
+            ),
         }
 
     if isinstance(payload, dict):
         if payload.get('is_error'):
             message = payload.get('message') or 'Внешний сервис вернул ошибку.'
             _mark_party_sync(party, False, message)
-            logger.error(f'{message} task_id={task_id}')
-            return {'has_error': True, 'message': message}
+            logger.error(f'{message} ({api_url}, task_id={task_id})')
+            return {
+                'has_error': True,
+                'url': api_url,
+                'message': f'{message} ({api_url})',
+            }
 
         camera_codes = payload.get('sntins_camera') or []
         printer_codes = payload.get('sntins_printer') or []
@@ -861,6 +868,7 @@ def sync_all_external_tasks() -> dict:
         'codes_created': 0,
         'codes_updated': 0,
         'errors': 0,
+        'error_details': [],
         'message': '',
     }
 
@@ -888,6 +896,13 @@ def sync_all_external_tasks() -> dict:
         summary['parties_synced'] += 1
         if result.get('has_error'):
             summary['errors'] += 1
+            factory = get_factory_for_party(party)
+            summary['error_details'].append({
+                'party': party.external_number_task or str(party.id),
+                'factory': factory.name if factory else None,
+                'url': result.get('url') or build_external_service_url(party),
+                'message': result.get('message', 'ошибка синхронизации кодов'),
+            })
         else:
             summary['codes_created'] += result.get('synced_count', 0)
             summary['codes_updated'] += result.get('updated_count', 0)
@@ -1121,7 +1136,25 @@ def sync_external_parties_and_codes(task_path: str = None) -> dict:
         )
     if summary['errors']:
         parts.append(f'⚠ ошибок: {summary["errors"]}')
+
+    # Детали ошибок этапа кодов (для диагностики в traceback задачи).
+    codes_errors = codes_summary.get('error_details') or []
+    if codes_summary.get('errors'):
+        parts.append(f'⚠ ошибок кодов: {codes_summary["errors"]}')
+
     summary['message'] = 'Синхронизация партий завершена. ' + ', '.join(parts)
+
+    # Расширенное сообщение с причинами — попадает в RuntimeError задачи.
+    details = []
+    for name in summary['failed_factories']:
+        details.append(f'завод «{name}»: не удалось выгрузить задания')
+    for err in codes_errors:
+        factory = f' (завод «{err["factory"]}»)' if err.get('factory') else ''
+        url = f' [{err["url"]}]' if err.get('url') else ''
+        details.append(f'задание {err["party"]}{factory}{url}: {err["message"]}')
+    if details:
+        summary['message'] += '. Причины: ' + '; '.join(details[:10])
+
     summary['is_error'] = summary['is_error'] or summary['errors'] > 0
 
     logger.info(summary['message'])

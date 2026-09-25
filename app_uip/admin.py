@@ -1,4 +1,5 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.db import transaction
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
@@ -122,6 +123,51 @@ class UIPAdmin(admin.ModelAdmin):
     list_per_page = 25
 
     readonly_fields = ('created_at', 'updated_at', 'closed_at', 'archived_at')
+
+    actions = ['delete_selected_uips']
+
+    @admin.action(description='Удалить выбранные УИП (только черновики)')
+    def delete_selected_uips(self, request, queryset):
+        """
+        Корректное массовое удаление УИП.
+
+        Удаляются только УИП в статусе «Черновик» и только если у связанных
+        производственных партий нет кодов маркировки (CISCode PROTECT).
+        Сначала удаляются логи статусов и производственные партии, затем УИП —
+        так учитываются FK-ограничения (в БД они RESTRICT).
+        """
+        from app_cz.models import CISCode
+
+        drafts = list(queryset.filter(status=PartyStatusChoices.DRAFT))
+        skipped_status = queryset.exclude(status=PartyStatusChoices.DRAFT).count()
+        skipped_codes = 0
+        deleted = 0
+
+        for uip in drafts:
+            party_ids = list(
+                ProductionParty.objects.filter(uip=uip).values_list('id', flat=True)
+            )
+            if party_ids and CISCode.objects.filter(
+                production_party_id__in=party_ids
+            ).exists():
+                # Есть коды — не удаляем (PROTECT), чтобы не потерять данные.
+                skipped_codes += 1
+                continue
+
+            with transaction.atomic():
+                UIPStatusLog.objects.filter(uip=uip).delete()
+                ProductionParty.objects.filter(uip=uip).delete()
+                uip.delete()
+            deleted += 1
+
+        parts = [f'Удалено УИП: {deleted}']
+        if skipped_status:
+            parts.append(f'пропущено (не черновик): {skipped_status}')
+        if skipped_codes:
+            parts.append(f'пропущено (есть коды маркировки): {skipped_codes}')
+
+        level = messages.SUCCESS if deleted else messages.WARNING
+        self.message_user(request, '. '.join(parts), level=level)
 
     fieldsets = (
         ('Основная информация', {

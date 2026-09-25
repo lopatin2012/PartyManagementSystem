@@ -32,7 +32,12 @@ from app_helper.access import (
 )
 from app_helper.search_helper import filter_codes_by_query, filter_uips_by_query
 
-from app_uip.models import UIP, ProductionParty, PartyStatusChoices
+from app_uip.models import (
+    UIP,
+    ProductionParty,
+    PartyStatusChoices,
+    UIPStatusLog,
+)
 from app_uip.serializers import (
     UIPReserveItemSerializer,
     UIPReserveRequestSerializer,
@@ -1302,4 +1307,86 @@ class ReserveAccumulationTests(TestCase):
         self.assertEqual(errors, [])
         # Пауза только между запросами (не перед первым).
         self.assertEqual(mock_sleep.call_count, 1)
+
+
+# ==========================================
+# Админка: массовое удаление черновиков.
+# ==========================================
+
+class UIPAdminDeleteActionTests(TestCase):
+    """UIPAdmin.delete_selected_uips — только черновики, с учётом каскадов."""
+
+    def setUp(self):
+        from django.contrib.admin.sites import AdminSite
+        from app_uip.admin import UIPAdmin
+
+        self.site = AdminSite()
+        self.admin = UIPAdmin(UIP, self.site)
+        self.sku = create_product()
+        self.user = User.objects.create_superuser(
+            username='admin', password='pass', email='a@a.a'
+        )
+
+    def _request(self):
+        from django.contrib.messages.storage.fallback import FallbackStorage
+        from django.test import RequestFactory
+
+        request = RequestFactory().post('/admin/app_uip/uip/')
+        request.user = self.user
+        request.session = {}
+        request._messages = FallbackStorage(request)
+        return request
+
+    def test_deletes_draft_with_logs_and_parties(self):
+        uip = UIP.objects.create(
+            product_sku=self.sku,
+            number='04601751026019260101500320000000',
+            status=PartyStatusChoices.DRAFT,
+        )
+        UIPStatusLog.objects.create(
+            uip=uip, from_status=None, to_status=PartyStatusChoices.DRAFT,
+            source='admin',
+        )
+        ProductionParty.objects.create(
+            uip=uip, production_party='1',
+        )
+
+        self.admin.delete_selected_uips(
+            self._request(), UIP.objects.filter(id=uip.id),
+        )
+
+        self.assertFalse(UIP.objects.filter(id=uip.id).exists())
+        self.assertFalse(UIPStatusLog.objects.filter(uip_id=uip.id).exists())
+        self.assertFalse(ProductionParty.objects.filter(uip_id=uip.id).exists())
+
+    def test_skips_non_draft(self):
+        uip = UIP.objects.create(
+            product_sku=self.sku,
+            number='04601751026019260101500320000001',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        self.admin.delete_selected_uips(
+            self._request(), UIP.objects.filter(id=uip.id),
+        )
+        self.assertTrue(UIP.objects.filter(id=uip.id).exists())
+
+    def test_skips_uip_with_codes(self):
+        uip = UIP.objects.create(
+            product_sku=self.sku,
+            number='04601751026019260101500320000002',
+            status=PartyStatusChoices.DRAFT,
+        )
+        party = ProductionParty.objects.create(uip=uip, production_party='2')
+        packaging = self.sku.product.packagings.first()
+        CISCode.objects.create(
+            production_party=party,
+            product_packaging=packaging,
+            code='010460175102601921DRAFTCODE01',
+            level=PackagingLevelChoices.UNIT,
+        )
+
+        self.admin.delete_selected_uips(
+            self._request(), UIP.objects.filter(id=uip.id),
+        )
+        self.assertTrue(UIP.objects.filter(id=uip.id).exists())
 
