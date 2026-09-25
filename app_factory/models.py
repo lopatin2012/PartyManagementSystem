@@ -290,6 +290,15 @@ class ProductSKU(UUIDModel):
         verbose_name='Резерв УИП, дней',
         help_text='На сколько дней вперёд поддерживать резерв УИП (сегодня + N дней)'
     )
+    sku_links = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='Связи с внешними системами',
+        help_text=(
+            'Записи вида {system, molvest_uuid, gtin, article, factory, active} — '
+            'сопоставление артикула с продуктом завода (артикул уникален на завод)'
+        ),
+    )
     is_active = models.BooleanField(default=True, verbose_name='Используется')
 
     class Meta:
