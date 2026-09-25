@@ -225,6 +225,7 @@ class SyncCodesErrorDetailsTests(TestCase):
         self.assertEqual(result['errors'], 1)
         self.assertEqual(result['error_details'][0]['party'], 'task-1')
         self.assertEqual(result['error_details'][0]['factory'], 'Завод кодов')
+        self.assertEqual(result['error_details'][0]['url'], 'http://127.0.0.1:8010')
         self.assertIn('сервер завода недоступен', result['error_details'][0]['message'])
 
 

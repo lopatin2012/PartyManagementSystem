@@ -662,19 +662,26 @@ def sync_codes_task(
         response.raise_for_status()
         payload = response.json()
     except requests.exceptions.RequestException as e:
-        logger.error(f'Ошибка запроса к внешнему сервису: {e}')
+        logger.error(f'Ошибка запроса к внешнему сервису ({api_url}): {e}')
         _mark_party_sync(party, False, f'Не удалось получить коды: {str(e)}')
         return {
             'has_error': True,
-            'message': f'Не удалось получить коды из внешнего сервиса: {str(e)}'
+            'url': api_url,
+            'message': (
+                f'Не удалось получить коды из внешнего сервиса ({api_url}): {str(e)}'
+            ),
         }
 
     if isinstance(payload, dict):
         if payload.get('is_error'):
             message = payload.get('message') or 'Внешний сервис вернул ошибку.'
             _mark_party_sync(party, False, message)
-            logger.error(f'{message} task_id={task_id}')
-            return {'has_error': True, 'message': message}
+            logger.error(f'{message} ({api_url}, task_id={task_id})')
+            return {
+                'has_error': True,
+                'url': api_url,
+                'message': f'{message} ({api_url})',
+            }
 
         camera_codes = payload.get('sntins_camera') or []
         printer_codes = payload.get('sntins_printer') or []
@@ -893,6 +900,7 @@ def sync_all_external_tasks() -> dict:
             summary['error_details'].append({
                 'party': party.external_number_task or str(party.id),
                 'factory': factory.name if factory else None,
+                'url': result.get('url') or build_external_service_url(party),
                 'message': result.get('message', 'ошибка синхронизации кодов'),
             })
         else:
@@ -1142,7 +1150,8 @@ def sync_external_parties_and_codes(task_path: str = None) -> dict:
         details.append(f'завод «{name}»: не удалось выгрузить задания')
     for err in codes_errors:
         factory = f' (завод «{err["factory"]}»)' if err.get('factory') else ''
-        details.append(f'задание {err["party"]}{factory}: {err["message"]}')
+        url = f' [{err["url"]}]' if err.get('url') else ''
+        details.append(f'задание {err["party"]}{factory}{url}: {err["message"]}')
     if details:
         summary['message'] += '. Причины: ' + '; '.join(details[:10])
 
