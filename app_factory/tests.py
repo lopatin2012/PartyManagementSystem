@@ -61,7 +61,14 @@ class ProductActivitySyncTests(TestCase):
         workshop = Workshop.objects.create(factory=self.factory, name='Цех 1')
         Line.objects.create(workshop=workshop, name='Линия 1')
 
-    def test_deactivates_missing_and_inactive_products(self):
+    def _sync(self, product_list):
+        with patch(
+            'app_factory.services.product_activity_sync.fetch_factory_products',
+            return_value=product_list,
+        ):
+            return sync_product_activity()
+
+    def test_activity_from_molvest_activates_and_deactivates(self):
         _, sku_active = create_sku_with_line(
             self.factory, 'A1', '04601751026011',
         )
@@ -71,80 +78,104 @@ class ProductActivitySyncTests(TestCase):
         _, sku_missing = create_sku_with_line(
             self.factory, 'A3', '04601751026013',
         )
+        # A3 выключен в СУП, но в Молвест активен — должен включиться.
+        sku_missing.is_active = False
+        sku_missing.save(update_fields=['is_active'])
 
-        product_list = [
-            {'code': 'A1', 'name': 'Продукт A1', 'gtin': '04601751026011', 'active': True},
-            {'code': 'A2', 'name': 'Продукт A2', 'gtin': '04601751026012', 'active': False},
-            # A3 отсутствует
-        ]
-
-        with patch(
-            'app_factory.services.product_activity_sync.fetch_factory_products',
-            return_value=product_list,
-        ):
-            result = sync_product_activity()
+        result = self._sync([
+            {'code': 'A1', 'name': 'A1', 'gtin': '04601751026011',
+             'uuid_str': str(sku_active.product_id), 'active': True},
+            {'code': 'A2', 'name': 'A2', 'gtin': '04601751026012',
+             'uuid_str': str(sku_disabled.product_id), 'active': False},
+            {'code': 'A3', 'name': 'A3', 'gtin': '04601751026013',
+             'uuid_str': str(sku_missing.product_id), 'active': True},
+        ])
 
         self.assertFalse(result['is_error'])
-        self.assertEqual(result['deactivated'], 2)
         sku_active.refresh_from_db()
         sku_disabled.refresh_from_db()
         sku_missing.refresh_from_db()
         self.assertTrue(sku_active.is_active)
         self.assertFalse(sku_disabled.is_active)
-        self.assertFalse(sku_missing.is_active)
+        self.assertTrue(sku_missing.is_active)
 
-    def test_product_deactivated_when_all_skus_inactive(self):
+    def test_sku_links_filled_per_factory(self):
+        _, sku = create_sku_with_line(self.factory, 'L1', '04601751026051')
+
+        self._sync([
+            {'code': 'L1', 'name': 'L1', 'gtin': '04601751026051',
+             'uuid_str': str(sku.product_id), 'active': True},
+        ])
+
+        sku.refresh_from_db()
+        self.assertEqual(len(sku.sku_links), 1)
+        link = sku.sku_links[0]
+        self.assertEqual(link['system'], 'molvest')
+        self.assertEqual(link['article'], 'L1')
+        self.assertEqual(link['gtin'], '04601751026051')
+        self.assertEqual(link['factory'], str(self.factory.id))
+        self.assertTrue(link['active'])
+
+    def test_creates_missing_sku_by_article(self):
+        product, _ = create_sku_with_line(self.factory, 'N1', '04601751026061')
+
+        self._sync([
+            {'code': 'N1', 'name': 'N1', 'gtin': '04601751026061',
+             'uuid_str': str(product.id), 'active': True},
+            # Второй артикул того же продукта (пластинка сменилась).
+            {'code': 'N1-1', 'name': 'N1 (новая)', 'gtin': '04601751026061',
+             'uuid_str': str(product.id), 'active': True},
+        ])
+
+        self.assertTrue(
+            ProductSKU.objects.filter(product=product, article='N1-1').exists()
+        )
+
+    def test_product_deactivated_when_no_active_sku(self):
         product, sku = create_sku_with_line(
             self.factory, 'B1', '04601751026021',
         )
 
-        with patch(
-            'app_factory.services.product_activity_sync.fetch_factory_products',
-            return_value=[],  # продукт пропал из списка завода
-        ):
-            sync_product_activity()
+        self._sync([
+            {'code': 'B1', 'name': 'B1', 'gtin': '04601751026021',
+             'uuid_str': str(product.id), 'active': False},
+        ])
 
         product.refresh_from_db()
         sku.refresh_from_db()
         self.assertFalse(sku.is_active)
         self.assertFalse(product.is_active)
 
-    def test_product_stays_active_if_other_sku_active(self):
-        product, sku_one = create_sku_with_line(
-            self.factory, 'C1', '04601751026031',
-        )
-        line = self.factory.workshop_set.first().line_set.first()
-        sku_two = ProductSKU.objects.create(product=product, article='C2')
-        ProductProductionLocation.objects.create(product_sku=sku_two, line=line)
-
-        with patch(
-            'app_factory.services.product_activity_sync.fetch_factory_products',
-            return_value=[
-                {'code': 'C2', 'name': 'Продукт C2', 'active': True},
-            ],
-        ):
-            sync_product_activity()
-
-        product.refresh_from_db()
-        sku_one.refresh_from_db()
-        sku_two.refresh_from_db()
-        self.assertFalse(sku_one.is_active)
-        self.assertTrue(sku_two.is_active)
-        self.assertTrue(product.is_active)
-
     def test_failed_factory_does_not_deactivate(self):
         _, sku = create_sku_with_line(self.factory, 'D1', '04601751026041')
 
-        with patch(
-            'app_factory.services.product_activity_sync.fetch_factory_products',
-            return_value=None,  # сервер недоступен
-        ):
-            result = sync_product_activity()
+        result = self._sync(None)  # сервер недоступен
 
         sku.refresh_from_db()
         self.assertTrue(result['is_error'])
         self.assertIn(str(self.factory.id), result['failed_factories'])
         self.assertTrue(sku.is_active)
+
+    def test_live_uip_protects_sku_from_deactivation(self):
+        from app_uip.models import UIP, PartyStatusChoices
+
+        product, sku = create_sku_with_line(self.factory, 'P1', '04601751026071')
+        UIP.objects.create(
+            product_sku=sku,
+            number='04601751026071260101500320000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+
+        result = self._sync([
+            {'code': 'P1', 'name': 'P1', 'gtin': '04601751026071',
+             'uuid_str': str(product.id), 'active': False},
+        ])
+
+        sku.refresh_from_db()
+        product.refresh_from_db()
+        self.assertTrue(sku.is_active)      # защищён живым УИП
+        self.assertTrue(product.is_active)
+        self.assertEqual(result['skus_protected'], 1)
 
 
 class NKShelfLifeTests(TestCase):
