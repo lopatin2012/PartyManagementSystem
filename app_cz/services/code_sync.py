@@ -861,6 +861,7 @@ def sync_all_external_tasks() -> dict:
         'codes_created': 0,
         'codes_updated': 0,
         'errors': 0,
+        'error_details': [],
         'message': '',
     }
 
@@ -888,6 +889,12 @@ def sync_all_external_tasks() -> dict:
         summary['parties_synced'] += 1
         if result.get('has_error'):
             summary['errors'] += 1
+            factory = get_factory_for_party(party)
+            summary['error_details'].append({
+                'party': party.external_number_task or str(party.id),
+                'factory': factory.name if factory else None,
+                'message': result.get('message', 'ошибка синхронизации кодов'),
+            })
         else:
             summary['codes_created'] += result.get('synced_count', 0)
             summary['codes_updated'] += result.get('updated_count', 0)
@@ -1121,7 +1128,24 @@ def sync_external_parties_and_codes(task_path: str = None) -> dict:
         )
     if summary['errors']:
         parts.append(f'⚠ ошибок: {summary["errors"]}')
+
+    # Детали ошибок этапа кодов (для диагностики в traceback задачи).
+    codes_errors = codes_summary.get('error_details') or []
+    if codes_summary.get('errors'):
+        parts.append(f'⚠ ошибок кодов: {codes_summary["errors"]}')
+
     summary['message'] = 'Синхронизация партий завершена. ' + ', '.join(parts)
+
+    # Расширенное сообщение с причинами — попадает в RuntimeError задачи.
+    details = []
+    for name in summary['failed_factories']:
+        details.append(f'завод «{name}»: не удалось выгрузить задания')
+    for err in codes_errors:
+        factory = f' (завод «{err["factory"]}»)' if err.get('factory') else ''
+        details.append(f'задание {err["party"]}{factory}: {err["message"]}')
+    if details:
+        summary['message'] += '. Причины: ' + '; '.join(details[:10])
+
     summary['is_error'] = summary['is_error'] or summary['errors'] > 0
 
     logger.info(summary['message'])
