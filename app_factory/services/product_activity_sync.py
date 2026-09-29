@@ -112,6 +112,56 @@ def _sync_uip_type(url: str, sku: ProductSKU, item: dict) -> str:
     return 'failed'
 
 
+def sync_uip_type_on_request(remote_ip: str, sku: ProductSKU, received_type) -> str:
+    """
+    Приводит тип формирования УИП в Молвест к значению СУП при запросе УИП.
+
+    Внешняя система («Молвест.Маркировка») присылает свой тип формирования
+    УИП вместе с запросом на генерацию. Если он расходится с типом SKU в СУП
+    (СУП — источник истины), записываем тип СУП в Молвест. Завод определяем
+    по IP запроса.
+
+    :return: 'pushed' (записано), 'skipped' (совпадает/не передан/нет завода)
+             или 'failed' (ошибка записи).
+    """
+    if received_type is None:
+        return 'skipped'
+    try:
+        received_type = int(received_type)
+    except (TypeError, ValueError):
+        return 'skipped'
+
+    if received_type == int(sku.type_formation_uip):
+        return 'skipped'
+
+    factory = (
+        Factory.objects.filter(is_active=True, ip_address=remote_ip)
+        .exclude(port_address__isnull=True)
+        .order_by('id')
+        .first()
+    )
+    if factory is None or not factory.ip_address or not factory.port_address:
+        logger.warning(
+            f'Синхронизация типа УИП: завод для IP {remote_ip!r} не найден '
+            f'(SKU {sku.article}).'
+        )
+        return 'skipped'
+
+    url = f'http://{factory.ip_address}:{factory.port_address}'
+    if push_product_uip_type(url, sku.article, sku.type_formation_uip):
+        logger.info(
+            f'Тип УИП SKU {sku.article} синхронизирован в Молвест: '
+            f'{received_type} -> {sku.type_formation_uip} (завод «{factory.name}»).'
+        )
+        return 'pushed'
+
+    logger.warning(
+        f'Не удалось синхронизировать тип УИП SKU {sku.article} '
+        f'в Молвест (завод «{factory.name}»).'
+    )
+    return 'failed'
+
+
 # «Живые» статусы УИП: пока УИП в них, его SKU/продукт не деактивируем.
 LIVE_UIP_STATUSES = ('reserved_cz', 'reserved_local', 'registered')
 

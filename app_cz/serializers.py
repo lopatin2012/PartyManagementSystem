@@ -627,6 +627,13 @@ class GenerateUIPSerializer(serializers.Serializer):
         required=False, allow_null=True, default=None,
         help_text='Создать черновик; не указано — из настройки UIP_DRAFT_MODE'
     )
+    type_formation_uip = serializers.IntegerField(
+        required=False, allow_null=True, default=None,
+        help_text=(
+            'Тип формирования УИП на стороне внешней системы. Используется '
+            'только для сверки: СУП при расхождении синхронизирует продукт.'
+        ),
+    )
 
     def validate(self, attrs):
         if not attrs.get('article') and not attrs.get('gtin'):
