@@ -110,13 +110,16 @@ def build_local_party_number(
             return base_l_just + prepared_party # Добивка до 32.
 
         case TypeFormationUIP.natura.value:
-            base = f'{gtin}{date_str}'.ljust(24, '0') # Добивка до 24.
-            base += '-'
-            today = date.today()
-            year = str(today.year)[2:] # Сокращённый год.
-            week = today.isocalendar()[1] # Номер недели.
-            day_of_week = today.isocalendar()[2] # День недели.
-            return f"{base}{year}{week}{day_of_week}{party}"
+            # GTIN(14) + дата ГГММДД(6) + «0000-» + внутренний номер партии (7).
+            # Номер вводится вручную в графе «Партия» и может содержать
+            # символ-маркер линии в конце (например, «2635798g») — в УИП он
+            # не передаётся, берём только цифровую часть.
+            # Пример: 046017510248312609290000-2635798.
+            base = f'{gtin}{date_str}'.ljust(24, '0')  # GTIN + дата + «0000».
+            match = re.match(r'\d+', party.strip())
+            party_part = match.group(0) if match else party.strip()
+            return f'{base}-{party_part}'
+
 
         case _:
             return uip

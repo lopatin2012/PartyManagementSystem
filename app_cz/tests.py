@@ -666,3 +666,33 @@ class RegisterUipMarkingDateTests(TestCase):
         past = timezone.now().date() - timedelta(days=5)
         kwargs = self._register(past)
         self.assertEqual(kwargs['marking_date'], past.isoformat())
+
+
+class BuildLocalPartyNumberNaturaTests(TestCase):
+    """Локальный УИП формата «НатураПРО» (type_formation_uip=4)."""
+
+    def _build(self, gtin, production_date, party):
+        from app_cz.services.party_service import build_local_party_number
+
+        return build_local_party_number(
+            gtin,
+            production_date,
+            article='14362',
+            party=party,
+            type_formation_uip=TypeFormationUIP.natura.value,
+        )
+
+    def test_natura_format_matches_spec(self):
+        # GTIN(14) + ГГММДД(6) + «0000-» + внутренний номер партии.
+        number = self._build('04601751029980', date(2026, 7, 24), '2619520')
+
+        self.assertEqual(number, '046017510299802607240000-2619520')
+        self.assertEqual(len(number), 32)
+        from app_cz.services.party_service import validate_party_number
+        self.assertTrue(validate_party_number(number))
+
+    def test_natura_strips_line_marker_suffix(self):
+        # В графе «Партия» может быть маркер линии в конце («2635798g»).
+        number = self._build('04601751024831', date(2026, 9, 29), '2635798g')
+
+        self.assertEqual(number, '046017510248312609290000-2635798')
