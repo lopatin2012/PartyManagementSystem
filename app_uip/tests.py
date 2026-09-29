@@ -1432,3 +1432,25 @@ class UIPAdminDeleteActionTests(TestCase):
         )
         self.assertTrue(UIP.objects.filter(id=uip.id).exists())
 
+
+class ProductionPartyStrTests(TestCase):
+    """__str__ партии не падает, когда УИП ещё не привязан."""
+
+    def test_str_without_uip(self):
+        party = ProductionParty.objects.create(production_party='7')
+
+        self.assertEqual(str(party), '— | Партия 7')
+
+    def test_str_with_uip(self):
+        sku = create_product()
+        uip = UIP.objects.create(
+            product_sku=sku,
+            number='04601751026019260101500320000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        party = ProductionParty.objects.create(
+            uip=uip, production_party='8',
+        )
+
+        self.assertEqual(str(party), f'{uip.number} | Партия 8')
+
