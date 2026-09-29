@@ -21,7 +21,10 @@ import logging
 from datetime import datetime, timezone as dt_timezone
 
 from app_factory.models import Factory, Product, ProductSKU
-from app_factory.services.molvest_reference_sync import fetch_factory_products
+from app_factory.services.molvest_reference_sync import (
+    fetch_factory_products,
+    push_product_uip_type,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +85,33 @@ def _find_or_create_sku(product: Product, article: str) -> ProductSKU:
     return ProductSKU.objects.create(product=product, article=article)
 
 
+def _sync_uip_type(url: str, sku: ProductSKU, item: dict) -> str:
+    """
+    Приводит тип формирования УИП в Молвест к значению СУП.
+
+    Сравнивает `type_formation_uip` из product-list завода с
+    `ProductSKU.type_formation_uip` (СУП — источник истины) и при расхождении
+    записывает значение в Молвест. Старые версии сервера завода поле не
+    отдают — тогда пропускаем, ничего не перезаписывая.
+
+    :return: 'pushed' (записано), 'failed' (ошибка записи) или 'skipped'.
+    """
+    external_value = item.get('type_formation_uip')
+    if external_value is None:
+        return 'skipped'
+    try:
+        external_value = int(external_value)
+    except (TypeError, ValueError):
+        return 'skipped'
+
+    if external_value == int(sku.type_formation_uip):
+        return 'skipped'
+
+    if push_product_uip_type(url, sku.article, sku.type_formation_uip):
+        return 'pushed'
+    return 'failed'
+
+
 # «Живые» статусы УИП: пока УИП в них, его SKU/продукт не деактивируем.
 LIVE_UIP_STATUSES = ('reserved_cz', 'reserved_local', 'registered')
 
@@ -116,6 +146,8 @@ def sync_product_activity(factory_ids: list = None) -> dict:
         'skus_activated': 0,
         'skus_deactivated': 0,
         'skus_protected': 0,
+        'uip_types_pushed': 0,
+        'uip_types_failed': 0,
         'products_activated': 0,
         'products_deactivated': 0,
         'details': {},
@@ -148,6 +180,7 @@ def sync_product_activity(factory_ids: list = None) -> dict:
 
         item_map = _build_item_map(data)
         created = activated = deactivated = protected = 0
+        types_pushed = types_failed = 0
         protected_product_ids = _protected_product_ids()
 
         for article, item in item_map.items():
@@ -169,6 +202,13 @@ def sync_product_activity(factory_ids: list = None) -> dict:
                 need_active = sku.is_active
 
             _upsert_link(sku, factory, item)
+
+            # Тип формирования УИП — источник истины СУП, пишем в Молвест.
+            type_result = _sync_uip_type(url, sku, item)
+            if type_result == 'pushed':
+                types_pushed += 1
+            elif type_result == 'failed':
+                types_failed += 1
 
             active = bool(item.get('active', True))
             if active and not sku.is_active:
@@ -200,6 +240,10 @@ def sync_product_activity(factory_ids: list = None) -> dict:
         summary['skus_activated'] += activated
         summary['skus_deactivated'] += deactivated
         summary['skus_protected'] += protected
+        summary['uip_types_pushed'] += types_pushed
+        summary['uip_types_failed'] += types_failed
+        if types_failed:
+            summary['is_error'] = True
         summary['products_activated'] += products_activated
         summary['products_deactivated'] += products_deactivated
         summary['details'][str(factory.id)] = {
@@ -209,11 +253,14 @@ def sync_product_activity(factory_ids: list = None) -> dict:
             'skus_activated': activated,
             'skus_deactivated': deactivated,
             'skus_protected': protected,
+            'uip_types_pushed': types_pushed,
+            'uip_types_failed': types_failed,
         }
         logger.info(
             f'Синхронизация продуктов завода «{factory.name}»: '
             f'артикулов {len(item_map)}, SKU создано {created}, '
-            f'вкл {activated}, выкл {deactivated}.'
+            f'вкл {activated}, выкл {deactivated}, '
+            f'типов УИП записано {types_pushed}, ошибок типа {types_failed}.'
         )
 
     # Итоговая пересборка активности всех затронутых продуктов.
@@ -222,6 +269,8 @@ def sync_product_activity(factory_ids: list = None) -> dict:
         f'SKU создано {summary["skus_created"]}, '
         f'SKU вкл {summary["skus_activated"]}, выкл {summary["skus_deactivated"]}, '
         f'защищено {summary["skus_protected"]}, '
+        f'типов УИП записано {summary["uip_types_pushed"]}, '
+        f'ошибок типа {summary["uip_types_failed"]}, '
         f'продуктов вкл {summary["products_activated"]}, '
         f'выкл {summary["products_deactivated"]}, '
         f'ошибок {len(summary["failed_factories"])}.'

@@ -22,6 +22,7 @@ from app_factory.models import (
     ProductProductionLocation,
     ProductSKU,
     StateConditionChoices,
+    TypeFormationUIP,
     Workshop,
 )
 from app_factory.services.product_activity_sync import sync_product_activity
@@ -176,6 +177,73 @@ class ProductActivitySyncTests(TestCase):
         self.assertTrue(sku.is_active)      # защищён живым УИП
         self.assertTrue(product.is_active)
         self.assertEqual(result['skus_protected'], 1)
+
+    def _push_patch(self, return_value=True):
+        return patch(
+            'app_factory.services.product_activity_sync.push_product_uip_type',
+            return_value=return_value,
+        )
+
+    def test_uip_type_pushed_when_molvest_differs(self):
+        _, sku = create_sku_with_line(self.factory, 'T1', '04601751026081')
+        sku.type_formation_uip = TypeFormationUIP.party_beginning
+        sku.save(update_fields=['type_formation_uip'])
+
+        with self._push_patch() as mock_push:
+            result = self._sync([
+                {'code': 'T1', 'name': 'T1', 'gtin': '04601751026081',
+                 'uuid_str': str(sku.product_id), 'active': True,
+                 'type_formation_uip': TypeFormationUIP.general.value},
+            ])
+
+        mock_push.assert_called_once_with(
+            'http://127.0.0.1:8000', 'T1', TypeFormationUIP.party_beginning.value,
+        )
+        self.assertEqual(result['uip_types_pushed'], 1)
+        self.assertEqual(result['uip_types_failed'], 0)
+
+    def test_uip_type_not_pushed_when_equal(self):
+        _, sku = create_sku_with_line(self.factory, 'T2', '04601751026082')
+
+        with self._push_patch() as mock_push:
+            result = self._sync([
+                {'code': 'T2', 'name': 'T2', 'gtin': '04601751026082',
+                 'uuid_str': str(sku.product_id), 'active': True,
+                 'type_formation_uip': TypeFormationUIP.general.value},
+            ])
+
+        mock_push.assert_not_called()
+        self.assertEqual(result['uip_types_pushed'], 0)
+
+    def test_uip_type_skipped_when_molvest_field_absent(self):
+        _, sku = create_sku_with_line(self.factory, 'T3', '04601751026083')
+        sku.type_formation_uip = TypeFormationUIP.natura
+        sku.save(update_fields=['type_formation_uip'])
+
+        with self._push_patch() as mock_push:
+            result = self._sync([
+                {'code': 'T3', 'name': 'T3', 'gtin': '04601751026083',
+                 'uuid_str': str(sku.product_id), 'active': True},
+            ])
+
+        mock_push.assert_not_called()
+        self.assertEqual(result['uip_types_pushed'], 0)
+        self.assertEqual(result['uip_types_failed'], 0)
+
+    def test_uip_type_push_failure_counted(self):
+        _, sku = create_sku_with_line(self.factory, 'T4', '04601751026084')
+        sku.type_formation_uip = TypeFormationUIP.party_end
+        sku.save(update_fields=['type_formation_uip'])
+
+        with self._push_patch(return_value=False):
+            result = self._sync([
+                {'code': 'T4', 'name': 'T4', 'gtin': '04601751026084',
+                 'uuid_str': str(sku.product_id), 'active': True,
+                 'type_formation_uip': TypeFormationUIP.general.value},
+            ])
+
+        self.assertEqual(result['uip_types_failed'], 1)
+        self.assertTrue(result['is_error'])
 
 
 class NKShelfLifeTests(TestCase):
