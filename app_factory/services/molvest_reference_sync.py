@@ -32,6 +32,7 @@ PRODUCT_LIST_PATH = 'workshop/api/v1/product-list/'
 WORKSHOP_SET_UUID_PATH = 'workshop/api/v1/workshop-set-uuid/'
 LINE_SET_UUID_PATH = 'workshop/api/v1/line-set-uuid/'
 PRODUCT_SET_UUID_PATH = 'workshop/api/v1/product-set-uuid/'
+PRODUCT_SET_UIP_TYPE_PATH = 'workshop/api/v1/product-set-uip-type/'
 
 
 # ==========================================
@@ -228,6 +229,19 @@ def fetch_factory_products(url: str):
              при ошибке запроса.
     """
     return _http_get(url, PRODUCT_LIST_PATH)
+
+
+def push_product_uip_type(url: str, article: str, type_formation_uip: int) -> bool:
+    """
+    Передаёт тип формирования УИП продукта во внешний сервис.
+
+    Внешний сервис находит продукт по артикулу (`code`) и сохраняет
+    `type_formation_uip`. Возвращает True при успехе.
+    """
+    return _push_uuid(url, PRODUCT_SET_UIP_TYPE_PATH, {
+        'code': article,
+        'type_formation_uip': int(type_formation_uip),
+    })
 
 
 def _sync_products(url: str, factory: Factory, dry_run: bool) -> dict:
