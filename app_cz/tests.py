@@ -555,6 +555,25 @@ class GenerateUipTypeSyncTests(TestCase):
         self.assertEqual(response.status_code, 200)
         mock_push.assert_not_called()
 
+    def test_natura_valid_party_ok(self):
+        """НатураПРО: 7 цифр партии → УИП 32 символа."""
+        self.sku.type_formation_uip = TypeFormationUIP.natura.value
+        self.sku.save(update_fields=['type_formation_uip'])
+
+        response = self._post(int(self.sku.type_formation_uip), party='2635798')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['number'].endswith('-2635798'))
+
+    def test_natura_short_party_rejected(self):
+        """НатураПРО: партия не 7 цифр → УИП не 32 символа → 400."""
+        self.sku.type_formation_uip = TypeFormationUIP.natura.value
+        self.sku.save(update_fields=['type_formation_uip'])
+
+        response = self._post(int(self.sku.type_formation_uip), party='123')
+
+        self.assertEqual(response.status_code, 400)
+
 
 class CheckUipNumberEndpointTests(TestCase):
     """GET /cz/uip/check-number/ — проверка номера в СУП и ЧЗ."""
