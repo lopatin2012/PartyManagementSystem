@@ -33,37 +33,10 @@ class SchedulerStatusView(View):
     def get(self, request):
         from django_tasks_db.models import DBTaskResult
         from django_tasks.base import TaskResultStatus
-        from app_scheduler.tasks import (
-            refresh_suz_token_task,
-            cleanup_expired_reserved_uips_task,
-            close_unused_registered_uips_task,
-            archive_stale_closed_uips_task,
-            cleanup_old_logs_task,
-            cleanup_old_task_results_task,
-            sync_external_parties_codes_task,
-            sync_molvest_reference_task,
-            check_uip_reserve_task,
-            check_uip_burn_task,
-            register_reserved_uips_task,
-            archive_old_codes_task,
-            sync_national_catalog_task,
-        )
 
-        task_map = {
-            'refresh_suz_token': refresh_suz_token_task,
-            'cleanup_expired_reserved': cleanup_expired_reserved_uips_task,
-            'close_unused_registered': close_unused_registered_uips_task,
-            'archive_stale_closed': archive_stale_closed_uips_task,
-            'cleanup_old_logs': cleanup_old_logs_task,
-            'cleanup_old_task_results': cleanup_old_task_results_task,
-            'sync_external_parties_codes': sync_external_parties_codes_task,
-            'sync_molvest_reference': sync_molvest_reference_task,
-            'check_uip_reserve': check_uip_reserve_task,
-            'check_uip_burn': check_uip_burn_task,
-            'register_reserved_uips': register_reserved_uips_task,
-            'archive_old_codes': archive_old_codes_task,
-            'sync_national_catalog': sync_national_catalog_task,
-        }
+        from app_scheduler.registry import get_scheduled_tasks
+
+        task_map = get_scheduled_tasks()
 
         now = timezone.now()
         schedule_data = []
@@ -160,3 +133,51 @@ class SchedulerStatusView(View):
             return f'{seconds // 3600} ч'
         days = seconds // 86400
         return f'{days} дн'
+
+
+@method_decorator(admin_required_json, name='dispatch')
+class SchedulerRunView(View):
+    """
+    Ручной запуск периодической задачи (только администратор).
+    POST /scheduler/run/<name>/ — ставит задачу в очередь воркера.
+    """
+
+    def post(self, request, name):
+        from django_tasks.base import TaskResultStatus
+        from django_tasks_db.models import DBTaskResult
+
+        from app_scheduler.registry import get_scheduled_tasks
+
+        task_func = get_scheduled_tasks().get(name)
+        if task_func is None:
+            return JsonResponse(
+                {'is_error': True, 'message': f'Задача «{name}» не найдена.'},
+                status=404,
+            )
+
+        # Не дублируем задачу, если она уже в очереди или выполняется.
+        original = task_func.func
+        task_path = f'{original.__module__}.{original.__name__}'
+        pending = DBTaskResult.objects.filter(
+            task_path=task_path,
+            status__in=[TaskResultStatus.READY, TaskResultStatus.RUNNING],
+        ).exists()
+        if pending:
+            return JsonResponse(
+                {'is_error': True, 'message': 'Задача уже в очереди или выполняется.'},
+                status=409,
+            )
+
+        try:
+            result = task_func.enqueue()
+        except Exception as exc:  # noqa: BLE001 — сообщаем причину пользователю
+            return JsonResponse(
+                {'is_error': True, 'message': f'Не удалось запустить задачу: {exc}'},
+                status=500,
+            )
+
+        return JsonResponse({
+            'is_error': False,
+            'message': 'Задача поставлена в очередь.',
+            'task_id': str(getattr(result, 'id', '') or ''),
+        })

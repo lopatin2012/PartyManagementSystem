@@ -27,7 +27,7 @@ python manage.py test app_uip.tests.ReserveUipsServiceTests.test_generate_count_
 pip install -e .
 ```
 
-**`run_all.py`** binds uvicorn to the machine's LAN IP (`--host <local_ip>`, not `0.0.0.0`) and only adds `--reload` when `DEBUG=1`. The periodic-task schedule (which task runs at what interval) lives in the `SCHEDULE` list in `app_scheduler/management/commands/run_scheduler.py`, not in `tasks.py` (the README task table can lag behind it — trust `SCHEDULE`).
+**`run_all.py`** binds uvicorn to the machine's LAN IP (`--host <local_ip>`, not `0.0.0.0`) and only adds `--reload` when `DEBUG=1`. The periodic-task schedule (which task runs at what interval) lives in the `SCHEDULE` list in `app_scheduler/management/commands/run_scheduler.py`, not in `tasks.py` (the README task table can lag behind it — trust `SCHEDULE`). The name→task-function mapping is centralized in `app_scheduler/registry.py::get_scheduled_tasks()` — `run_scheduler`, `/scheduler/status/` and `/scheduler/run/<name>/` all use it, so a new scheduled task needs entries in **both** `SCHEDULE` and the registry (`SchedulerRegistryTests` asserts they match).
 
 **Note:** dependencies live in `.venv` (gitignored). The system `python` on PATH has no Django — activate the venv (`.venv\Scripts\Activate.ps1` on Windows) or use `.venv\Scripts\python.exe` directly, otherwise `manage.py` fails with `ModuleNotFoundError: No module named 'django'`.
 
@@ -97,6 +97,7 @@ pip install -e .
 - **Versioning is tag-driven** (setuptools-scm). Commit subjects use `Feat:`/`Fix:`/`Docs:` prefixes; README maps `fix`→patch, `feat`→minor. Tag for a release: `git tag -a v2.0.0 -m "..."`.
 - **`helper_info/`** (untracked) holds the authoritative Chestny Znak API specs: `True_API_GIS_MT.txt` (True API + National Catalog methods, rate limits — source for `app_cz/services/rate_limit.py`) and `API_СУЗ_3.0.txt` (СУЗ-Облако). Both are UTF-8 but with Cyrillic text; the .md files are readable summaries. Consult these before changing CZ integration behavior instead of guessing from the official site.
 - **Background tasks** use `django-tasks-db` with queues: `default`, `emails`, `high-priority`. Task functions are in `app_scheduler/tasks.py`.
+- **Manual task run.** The «Фоновые задачи» modal (admin-only widget in `base.html`, JS in `static/js/main.js`) renders a «Запуск» button per task that POSTs to `/scheduler/run/<name>/` (`SchedulerRunView`, guarded by `admin_required_json`); it enqueues the task (worker executes it) and returns 409 if a READY/RUNNING run for the same task already exists. `<name>` is the `SCHEDULE` key; the CSRF token comes from `#schedulerCsrfToken`.
 - **External system URLs** (marking servers) are per-factory, stored in `Factory.ip_address` and `Factory.port_address`. Not in `.env`.
 - **UIP number format:** 14 GTIN digits + 6 date digits + 1-12 serial chars (regex-validated in model).
 - **Status transitions** are audited in `UIPStatusLog` with source tracking (`admin`/`sync`/`api`/`service`).
