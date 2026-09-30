@@ -685,6 +685,7 @@ def api_generate_uip(request):
         product_sku=product_sku,
         production_date=data['production_date'],
         mode=data['mode'],
+        party=data.get('party') or '000',
         is_external_service=True,
         skip_cz=data.get('skip_cz'),
     )
