@@ -31,6 +31,7 @@ from app_uip.models import (
     PartyStatusChoices,
     ProductionParty,
     ProductionPartyStatusChoices,
+    ProductionPartySyncStatusChoices,
     UIP,
 )
 from app_cz.models import CISCode
@@ -771,3 +772,50 @@ class BuildLocalPartyNumberNaturaTests(TestCase):
         number = self._build('04601751024831', date(2026, 9, 29), '2635798g')
 
         self.assertEqual(number, '046017510248312609290000-2635798')
+
+
+class DeletedTaskSyncStatusTests(TestCase):
+    """Удалённое задание считается синхронизированным («Ожидают» не висит)."""
+
+    def test_receive_deleted_marks_synced(self):
+        result = code_sync.receive_external_task({
+            'uuid_str': 'task-deleted-1',
+            'status': 'Удалено',
+        })
+
+        self.assertFalse(result['has_error'])
+        party = ProductionParty.objects.get(external_number_task='task-deleted-1')
+        self.assertEqual(party.status, ProductionPartyStatusChoices.DELETED)
+        self.assertEqual(
+            party.sync_status, ProductionPartySyncStatusChoices.SYNCED,
+        )
+
+    def test_receive_work_still_pending(self):
+        code_sync.receive_external_task({
+            'uuid_str': 'task-work-1',
+            'status': 'В работе',
+        })
+
+        party = ProductionParty.objects.get(external_number_task='task-work-1')
+        self.assertEqual(party.status, ProductionPartyStatusChoices.WORK)
+        self.assertEqual(
+            party.sync_status, ProductionPartySyncStatusChoices.PENDING,
+        )
+
+    def test_sync_all_marks_existing_deleted_synced(self):
+        party = ProductionParty.objects.create(
+            production_party='1',
+            external_number_task='task-deleted-2',
+            is_external=True,
+            status=ProductionPartyStatusChoices.DELETED,
+            sync_status=ProductionPartySyncStatusChoices.PENDING,
+        )
+
+        with patch.object(code_sync, 'sync_codes_for_party') as mock_sync:
+            code_sync.sync_all_external_tasks()
+
+        party.refresh_from_db()
+        self.assertEqual(
+            party.sync_status, ProductionPartySyncStatusChoices.SYNCED,
+        )
+        mock_sync.assert_not_called()

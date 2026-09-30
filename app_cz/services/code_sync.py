@@ -361,8 +361,12 @@ def receive_external_task(data: dict) -> dict:
                 uip.production_date = date_work
                 uip.save(update_fields=['production_date', 'updated_at'])
 
-            # Статус синхронизации: активное/финальное задание снова ожидает синхронизации.
-            if status in ACTIVE_SYNC_STATUSES or status == FINAL_SYNC_STATUS:
+            # Статус синхронизации: активное/финальное задание снова ожидает
+            # синхронизации, а удалённое синхронизировать не нужно — считаем
+            # его синхронизированным, чтобы не висело в «Ожидают».
+            if status == ProductionPartyStatusChoices.DELETED:
+                party.sync_status = ProductionPartySyncStatusChoices.SYNCED
+            elif status in ACTIVE_SYNC_STATUSES or status == FINAL_SYNC_STATUS:
                 party.sync_status = ProductionPartySyncStatusChoices.PENDING
 
             party.save()
@@ -875,6 +879,16 @@ def sync_all_external_tasks() -> dict:
         'error_details': [],
         'message': '',
     }
+
+    # Удалённые задания синхронизировать не нужно — помечаем их
+    # «Синхронизировано», чтобы не висели в «Ожидают синхронизации»
+    # (в т.ч. задания, удалённые до этого изменения).
+    ProductionParty.objects.filter(
+        is_external=True,
+        status=ProductionPartyStatusChoices.DELETED,
+    ).exclude(
+        sync_status=ProductionPartySyncStatusChoices.SYNCED,
+    ).update(sync_status=ProductionPartySyncStatusChoices.SYNCED)
 
     # Синхронизация кодов для всех внешних заданий.
     parties = ProductionParty.objects.filter(
