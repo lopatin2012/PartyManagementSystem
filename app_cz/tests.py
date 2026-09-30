@@ -819,3 +819,51 @@ class DeletedTaskSyncStatusTests(TestCase):
             party.sync_status, ProductionPartySyncStatusChoices.SYNCED,
         )
         mock_sync.assert_not_called()
+
+
+class SyncProgressReportingTests(TestCase):
+    """Синхронизация пишет прогресс для окна «Фоновые задачи»."""
+
+    def setUp(self):
+        self.factory = Factory.objects.create(
+            name='Завод прогресса', ip_address='127.0.0.1', port_address=8020,
+        )
+        ProductionParty.objects.create(
+            production_party='1',
+            external_number_task='task-progress-1',
+            is_external=True,
+            status=ProductionPartyStatusChoices.WORK,
+        )
+
+    def test_sync_all_reports_codes_phase(self):
+        with patch(
+            'app_scheduler.progress.set_task_progress',
+        ) as mock_progress, patch.object(
+            code_sync, 'sync_codes_for_party',
+            return_value={'has_error': False, 'synced_count': 0, 'updated_count': 0},
+        ):
+            code_sync.sync_all_external_tasks(
+                progress_name='sync_external_parties_codes',
+            )
+
+        mock_progress.assert_called()
+        first = mock_progress.call_args_list[0]
+        self.assertEqual(first[0][0], 'sync_external_parties_codes')
+        self.assertEqual(first[1]['phase'], 'Синхронизация кодов')
+        self.assertEqual(first[1]['total'], 1)
+
+    def test_sync_parties_reports_factory_phase(self):
+        with patch(
+            'app_scheduler.progress.set_task_progress',
+        ) as mock_progress, patch.object(
+            code_sync, '_fetch_external_tasks_changed_since', return_value=[],
+        ), patch.object(
+            code_sync, 'sync_all_external_tasks',
+            return_value={'is_error': False, 'message': ''},
+        ):
+            code_sync.sync_external_parties_and_codes(
+                progress_name='sync_external_parties_codes',
+            )
+
+        phases = [call[1].get('phase') for call in mock_progress.call_args_list]
+        self.assertIn('Выгрузка заданий', phases)

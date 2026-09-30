@@ -857,7 +857,7 @@ def sync_codes_for_party(party: ProductionParty, url: str = None, token: str = N
 # Периодический синхронизатор.
 # ==========================================
 
-def sync_all_external_tasks() -> dict:
+def sync_all_external_tasks(progress_name: str = None) -> dict:
     """
     Периодическая синхронизация данных с внешними сервисами заводов.
 
@@ -868,8 +868,11 @@ def sync_all_external_tasks() -> dict:
 
     Адрес сервера маркировки определяется по заводу партии (Factory.ip_address/port_address).
 
+    :param progress_name: имя задачи, для которой писать прогресс (необязательно).
     :return: Сводка по синхронизации.
     """
+    if progress_name:
+        from app_scheduler.progress import set_task_progress
     summary = {
         'is_error': False,
         'parties_synced': 0,
@@ -897,8 +900,17 @@ def sync_all_external_tasks() -> dict:
         'uip__product_sku__product',
         'line__workshop__factory',
     )
+    total_parties = parties.count()
 
-    for party in parties:
+    for index, party in enumerate(parties, start=1):
+        if progress_name:
+            set_task_progress(
+                progress_name,
+                phase='Синхронизация кодов',
+                current=index,
+                total=total_parties,
+                message=f'Задание {party.external_number_task or party.id}',
+            )
         # Активные статусы — синхронизируем каждый цикл.
         if party.status in ACTIVE_SYNC_STATUSES:
             result = sync_codes_for_party(party)
@@ -1036,7 +1048,9 @@ def _last_external_sync_changed_since(task_path: str = None):
     return timezone.now() - timedelta(hours=24)
 
 
-def sync_external_parties_and_codes(task_path: str = None) -> dict:
+def sync_external_parties_and_codes(
+        task_path: str = None, progress_name: str = None,
+) -> dict:
     """
     Периодическая синхронизация производственных партий и их кодов.
 
@@ -1055,8 +1069,12 @@ def sync_external_parties_and_codes(task_path: str = None) -> dict:
 
     :param task_path: Путь задачи в django-tasks (резервный источник метки
                       при первом запуске).
+    :param progress_name: имя задачи, для которой писать прогресс (необязательно).
     :return: Сводка по синхронизации.
     """
+    if progress_name:
+        from app_scheduler.progress import set_task_progress
+
     summary = {
         'is_error': False,
         'parties_fetched': 0,
@@ -1085,7 +1103,17 @@ def sync_external_parties_and_codes(task_path: str = None) -> dict:
     # Метка changed_since — персональная для каждого завода и двигается только
     # при успешной выгрузке. Сбой одного завода не влияет на остальные.
     skipped_no_uuid = 0
-    for factory in factories:
+    factory_list = list(factories)
+    total_factories = len(factory_list)
+    for factory_index, factory in enumerate(factory_list, start=1):
+        if progress_name:
+            set_task_progress(
+                progress_name,
+                phase='Выгрузка заданий',
+                current=factory_index,
+                total=total_factories,
+                message=f'Завод «{factory.name}»',
+            )
         url = f'http://{factory.ip_address}:{factory.port_address}'
         changed_since = get_factory_changed_since(factory, task_path)
         # Время захвата ДО запроса: задания, отредактированные во время запроса,
@@ -1137,7 +1165,7 @@ def sync_external_parties_and_codes(task_path: str = None) -> dict:
     summary['skipped_no_uuid'] = skipped_no_uuid
 
     # Этап 2: синхронизация кодов маркировки по всем внешним заданиям.
-    codes_summary = sync_all_external_tasks()
+    codes_summary = sync_all_external_tasks(progress_name=progress_name)
     summary['codes'] = codes_summary
     summary['is_error'] = summary['errors'] > 0 or codes_summary.get('is_error')
 

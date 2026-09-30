@@ -539,6 +539,72 @@ footer {
     animation: pulseError 2s ease-in-out infinite;
 }
 
+/* Выполняющаяся задача. */
+.task-status.status-running {
+    background: rgba(88, 166, 255, 0.18);
+    color: #79c0ff;
+    border: 1px solid rgba(88, 166, 255, 0.45);
+    animation: spinRunning 1.4s linear infinite;
+}
+
+@keyframes spinRunning {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.scheduler-task-card.is-running {
+    border-color: rgba(88, 166, 255, 0.5);
+    background: rgba(88, 166, 255, 0.08);
+}
+
+.meta-running,
+.next-running {
+    color: #79c0ff;
+}
+
+/* Прогресс выполняющейся задачи. */
+.task-progress {
+    margin-top: 0.5rem;
+    max-width: 440px;
+}
+
+.task-progress-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.task-progress-count {
+    color: #79c0ff;
+    font-weight: 600;
+}
+
+.task-progress-bar {
+    height: 5px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.12);
+    overflow: hidden;
+}
+
+.task-progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--accent-green);
+    transition: width 0.4s ease;
+}
+
+.task-progress-message {
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.6);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .task-info {
     flex: 1;
     min-width: 0;
