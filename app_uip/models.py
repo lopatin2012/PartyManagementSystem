@@ -384,4 +384,5 @@ class ProductionParty(UUIDModel):
         return self.uip.gtin
 
     def __str__(self) -> str:
-        return f'{self.uip.number} | Партия {self.production_party}'
+        uip_number = self.uip.number if self.uip_id else '—'
+        return f'{uip_number} | Партия {self.production_party}'

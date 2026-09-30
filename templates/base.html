@@ -31,6 +31,11 @@
             <a href="{% url 'uip_list' %}" class="nav-link {% if request.resolver_match.url_name == 'uip_list' %}nav-link-active{% endif %}">
                 УИП
             </a>
+            {% if is_authenticated %}
+                <a href="{% url 'product_control' %}" class="nav-link {% if request.resolver_match.url_name == 'product_control' or request.resolver_match.url_name == 'product_control_detail' %}nav-link-active{% endif %}">
+                    Продукция
+                </a>
+            {% endif %}
             {% if is_admin %}
                 <a href="{% url 'sync_tasks' %}" class="nav-link {% if request.resolver_match.url_name == 'sync_tasks' %}nav-link-active{% endif %}">
                     Синхронизация заданий

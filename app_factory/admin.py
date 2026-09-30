@@ -10,7 +10,8 @@ from app_factory.models import (
     ProductPackaging,
     ProductSKU,
     ProductProductionLocation,
-    NationalCatalogProduct
+    NationalCatalogProduct,
+    UserFactory,
 )
 
 
@@ -173,3 +174,16 @@ class NationalCatalogProductAdmin(admin.ModelAdmin):
     @admin.display(boolean=True, description='Готов к производству')
     def ready_badge(self, obj):
         return obj.is_ready_for_production
+
+
+# ==========================================
+# Админка привязки пользователей к заводам.
+# ==========================================
+@admin.register(UserFactory)
+class UserFactoryAdmin(admin.ModelAdmin):
+    list_display = ('user', 'factory')
+    list_filter = ('factory',)
+    search_fields = ('user__username', 'user__email', 'factory__name')
+    autocomplete_fields = ('user', 'factory')
+    ordering = ('-id',)
+    list_per_page = 25

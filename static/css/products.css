@@ -1,0 +1,403 @@
+/* static/css/products.css — страница контроля продукции.
+   Оформление в стиле сайта: полупрозрачные панели поверх градиента,
+   акценты var(--accent-green) / var(--accent-yellow), белый текст. */
+
+.products-page {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1.5rem 2rem 4rem;
+    text-align: left;
+}
+
+/* --- Заголовок страницы --- */
+.products-page .products-header {
+    margin-bottom: 1.25rem;
+}
+
+.products-page .products-header h1 {
+    font-size: 1.8rem;
+    font-weight: 400;
+    letter-spacing: 0.5px;
+    margin: 0 0 0.35rem;
+}
+
+.products-page .subtitle {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 1rem;
+    margin: 0;
+}
+
+.products-page .highlight {
+    color: var(--accent-yellow);
+    font-weight: 600;
+}
+
+.products-page .back-link {
+    display: inline-block;
+    margin-bottom: 0.75rem;
+    color: rgba(255, 255, 255, 0.6);
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: color 0.2s ease;
+}
+
+.products-page .back-link:hover {
+    color: var(--accent-green);
+}
+
+/* --- Панель фильтров --- */
+.products-page .products-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+    margin-bottom: 1.25rem;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--input-border);
+    border-radius: 12px;
+    backdrop-filter: blur(5px);
+}
+
+.products-page .form-input {
+    padding: 0.6rem 0.85rem;
+    min-width: 160px;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    color: var(--text-main);
+    font-size: 0.95rem;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.products-page .form-input::placeholder {
+    color: rgba(255, 255, 255, 0.45);
+}
+
+.products-page .form-input:focus {
+    border-color: var(--accent-green);
+    box-shadow: 0 0 0 3px rgba(187, 207, 50, 0.15);
+}
+
+.products-page select option {
+    background-color: var(--bg-dark);
+    color: var(--text-main);
+}
+
+.products-page input[type="checkbox"] {
+    accent-color: var(--accent-green);
+    width: 16px;
+    height: 16px;
+}
+
+/* --- Кнопки --- */
+.products-page .btn-primary {
+    padding: 0.6rem 1.4rem;
+    background: var(--accent-green);
+    color: var(--bg-dark);
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+
+.products-page .btn-primary:hover {
+    background: #d4e84b;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(187, 207, 50, 0.3);
+}
+
+.products-page .btn-secondary {
+    padding: 0.6rem 1.2rem;
+    font-size: 0.9rem;
+}
+
+.products-page .btn-mini {
+    padding: 0.3rem 0.7rem;
+    background: transparent;
+    color: var(--accent-green);
+    border: 1px solid rgba(187, 207, 50, 0.4);
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.products-page .btn-mini:hover {
+    background: rgba(187, 207, 50, 0.15);
+    border-color: var(--accent-green);
+}
+
+/* --- Список продуктов --- */
+.products-page .products-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.products-page .product-card {
+    padding: 1rem 1.25rem;
+    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--input-border);
+    border-radius: 12px;
+    backdrop-filter: blur(5px);
+    transition: all 0.2s ease;
+}
+
+.products-page .product-card:hover {
+    background: rgba(0, 0, 0, 0.25);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.products-page .product-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.products-page .product-card-title {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.products-page .product-name {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--accent-green);
+    text-decoration: none;
+}
+
+.products-page .product-name:hover {
+    color: #d4e84b;
+    text-decoration: underline;
+}
+
+.products-page .product-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin-top: 0.7rem;
+    font-size: 0.92rem;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.products-page .product-card-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem 0.5rem;
+}
+
+.products-page .product-card-label {
+    color: rgba(255, 255, 255, 0.55);
+    margin-right: 0.4rem;
+}
+
+/* --- Бейджи --- */
+.products-page .badge {
+    display: inline-block;
+    padding: 0.15rem 0.6rem;
+    border-radius: 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.products-page .badge-on {
+    background: rgba(187, 207, 50, 0.18);
+    color: var(--accent-green);
+    border-color: rgba(187, 207, 50, 0.4);
+}
+
+.products-page .badge-off {
+    background: rgba(220, 53, 69, 0.18);
+    color: #ff8a94;
+    border-color: rgba(220, 53, 69, 0.4);
+}
+
+.products-page .empty,
+.products-page .muted {
+    color: rgba(255, 255, 255, 0.55);
+}
+
+/* --- Секции (Продукт / SKU / Упаковки) --- */
+.products-page .card {
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
+    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--input-border);
+    border-radius: 12px;
+    backdrop-filter: blur(5px);
+}
+
+.products-page .card h2 {
+    margin: 0 0 1rem;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.products-page .subcard {
+    padding-top: 1rem;
+    margin-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* --- Формы редактирования --- */
+.products-page .edit-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: flex-end;
+}
+
+.products-page .edit-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.82rem;
+    color: rgba(255, 255, 255, 0.65);
+}
+
+.products-page .edit-form label.check {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--text-main);
+}
+
+.products-page .edit-form select,
+.products-page .edit-form input[type="text"],
+.products-page .edit-form input[type="number"] {
+    padding: 0.55rem 0.75rem;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    color: var(--text-main);
+    font-size: 0.92rem;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.products-page .edit-form select:focus,
+.products-page .edit-form input[type="text"]:focus,
+.products-page .edit-form input[type="number"]:focus {
+    border-color: var(--accent-green);
+    box-shadow: 0 0 0 3px rgba(187, 207, 50, 0.15);
+}
+
+.products-page .edit-form-title {
+    flex-basis: 100%;
+    margin-bottom: 0.2rem;
+    font-size: 0.95rem;
+    color: var(--text-main);
+}
+
+/* Только для чтения (состояния товара/карточки задаёт синхронизация). */
+.products-page .readonly-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.82rem;
+}
+
+.products-page .readonly-label {
+    color: rgba(255, 255, 255, 0.65);
+}
+
+.products-page .readonly-value {
+    font-size: 0.92rem;
+    color: rgba(255, 255, 255, 0.95);
+}
+
+/* --- Связи и таблицы --- */
+.products-page .links-block {
+    margin-top: 1rem;
+}
+
+.products-page .links-title {
+    margin-bottom: 0.5rem;
+    font-size: 0.82rem;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.products-page .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.products-page .data-table th,
+.products-page .data-table td {
+    text-align: left;
+    padding: 0.5rem 0.65rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.products-page .data-table th {
+    color: rgba(255, 255, 255, 0.6);
+    font-weight: 500;
+}
+
+.products-page .data-table tbody tr:hover td {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.products-page .inline-form {
+    display: inline;
+}
+
+/* --- Сообщения --- */
+.products-page .flash {
+    padding: 0.7rem 1rem;
+    margin-bottom: 1rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+}
+
+.products-page .flash-success {
+    background: rgba(187, 207, 50, 0.15);
+    border: 1px solid rgba(187, 207, 50, 0.4);
+    color: #d4e84b;
+}
+
+.products-page .flash-error {
+    background: rgba(220, 53, 69, 0.18);
+    border: 1px solid rgba(220, 53, 69, 0.4);
+    color: #ff8a94;
+}
+
+/* --- Пагинация --- */
+.products-page .pagination {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    margin-top: 1.25rem;
+}
+
+.products-page .pagination-info {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.9rem;
+}
+
+@media (max-width: 768px) {
+    .products-page {
+        padding: 1rem 1rem 3rem;
+    }
+
+    .products-page .edit-form {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}

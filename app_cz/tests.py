@@ -500,6 +500,55 @@ class GenerateUipManualEndpointTests(TestCase):
         self.assertEqual(response.status_code, 400)
 
 
+class GenerateUipTypeSyncTests(TestCase):
+    """Внешний generate-uip: расхождение типа УИП синхронизирует продукт в Молвест."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.sku.type_formation_uip = TypeFormationUIP.party_end.value
+        self.sku.save(update_fields=['type_formation_uip'])
+        # Завод с IP тестового клиента — для поиска при синхронизации.
+        Factory.objects.create(
+            name='Тест-завод', ip_address='127.0.0.1', port_address=8000, is_active=True,
+        )
+        self.url = '/cz/api/v1/generate-uip/'
+
+    def _post(self, type_value):
+        return self.client.post(
+            self.url,
+            {
+                'gtin': self.sku.product.consumer_gtin,
+                'production_date': '2026-01-15',
+                'mode': 'local',
+                'skip_cz': True,
+                'type_formation_uip': type_value,
+            },
+            content_type='application/json',
+        )
+
+    def test_mismatch_pushes_sup_type(self):
+        with patch(
+            'app_factory.services.product_activity_sync.push_product_uip_type',
+            return_value=True,
+        ) as mock_push:
+            response = self._post(TypeFormationUIP.general.value)
+
+        self.assertEqual(response.status_code, 200)
+        mock_push.assert_called_once()
+        args = mock_push.call_args.args
+        self.assertEqual(args[1], self.sku.article)
+        self.assertEqual(int(args[2]), int(self.sku.type_formation_uip))
+
+    def test_match_does_not_push(self):
+        with patch(
+            'app_factory.services.product_activity_sync.push_product_uip_type',
+        ) as mock_push:
+            response = self._post(int(self.sku.type_formation_uip))
+
+        self.assertEqual(response.status_code, 200)
+        mock_push.assert_not_called()
+
+
 class CheckUipNumberEndpointTests(TestCase):
     """GET /cz/uip/check-number/ — проверка номера в СУП и ЧЗ."""
 

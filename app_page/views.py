@@ -1,17 +1,31 @@
 # app_page/views.py
 
+from django.contrib import messages
+from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.paginator import Paginator
-from django.db.models import Exists, OuterRef
-from django.shortcuts import render
+from django.db.models import Exists, OuterRef, Q
+from django.http import Http404
+from django.shortcuts import get_object_or_404, redirect, render
 from django.views import View
 from django.views.generic import TemplateView
 
 from app_cz.models import CISCode, CISCodeArchive
 from app_cz.services.party_service import get_available_products
 
+from app_factory.models import (
+    Factory,
+    PackagingLevelChoices,
+    Product,
+    ProductGroupChoices,
+    ProductPackaging,
+    ProductProductionLocation,
+    ProductSKU,
+    TypeFormationUIP,
+)
+
 from app_uip.models import UIP, ProductionParty, PartyStatusChoices
 
-from app_helper.access import UipPageAccessMixin
+from app_helper.access import UipPageAccessMixin, get_user_factory
 from app_helper.search_helper import (
     detect_search_type,
     filter_codes_by_query,
@@ -232,3 +246,187 @@ class UIPListView(UipPageAccessMixin, TemplateView):
         })
 
         return context
+
+
+# ==========================================
+# Контроль продукции.
+# ==========================================
+
+def _products_for_user(user):
+    """
+    Продукты, доступные пользователю для контроля.
+
+    Если у учётной записи есть привязка к заводу — только продукция этого
+    завода (по местам производства SKU → линия → цех → завод), иначе — все
+    продукты всех заводов.
+    """
+    qs = Product.objects.all()
+    factory = get_user_factory(user)
+    if factory:
+        qs = qs.filter(
+            skus__product_production_locations__line__workshop__factory=factory
+        ).distinct()
+    return qs
+
+
+def _to_bool(value) -> bool:
+    """HTML-чекбокс/строка → bool."""
+    return str(value).lower() in ('1', 'true', 'on', 'yes')
+
+
+class ProductControlView(LoginRequiredMixin, TemplateView):
+    """Страница контроля продукции: поиск продукта и его связей."""
+    template_name = 'products/main.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        get = self.request.GET
+
+        query = get.get('q', '').strip()
+        group = get.get('group', '')
+        active = get.get('active', '')
+        factory_id = get.get('factory', '')
+        scoped_factory = get_user_factory(self.request.user)
+
+        queryset = _products_for_user(self.request.user)
+
+        if query:
+            queryset = queryset.filter(
+                Q(name__icontains=query)
+                | Q(skus__article__icontains=query)
+                | Q(packagings__gtin__icontains=query)
+            ).distinct()
+        if group:
+            queryset = queryset.filter(group=group)
+        if active in ('1', '0'):
+            queryset = queryset.filter(is_active=(active == '1'))
+        if factory_id:
+            queryset = queryset.filter(
+                skus__product_production_locations__line__workshop__factory_id=factory_id
+            ).distinct()
+
+        queryset = queryset.prefetch_related('skus', 'packagings').order_by('name')
+
+        paginator = Paginator(queryset, 50)
+        page_obj = paginator.get_page(get.get('page', 1))
+
+        params = get.copy()
+        params.pop('page', None)
+
+        context.update({
+            'title_name': 'Контроль продукции',
+            'page_name': 'Контроль продукции',
+            'page_obj': page_obj,
+            'total_count': paginator.count,
+            'query_string': params.urlencode(),
+            'query': query,
+            'current_group': group,
+            'current_active': active,
+            'current_factory': factory_id,
+            'group_choices': ProductGroupChoices.choices,
+            'scoped_factory': scoped_factory,
+            'factories': (
+                [] if scoped_factory
+                else Factory.objects.order_by('name')
+            ),
+        })
+        return context
+
+
+class ProductControlDetailView(LoginRequiredMixin, View):
+    """Карточка продукта: все связанные данные и их корректировка."""
+    template_name = 'products/detail.html'
+
+    def _get_product(self, request, pk):
+        return get_object_or_404(_products_for_user(request.user), pk=pk)
+
+    def get(self, request, pk):
+        product = self._get_product(request, pk)
+        return render(request, self.template_name, self._context(product))
+
+    def post(self, request, pk):
+        product = self._get_product(request, pk)
+        try:
+            self._apply(request, product)
+            messages.success(request, 'Изменения сохранены.')
+        except Http404:
+            # Объект вне продукта/вне зоны видимости — отдаём 404 как есть.
+            raise
+        except Exception as exc:  # noqa: BLE001 — показываем причину пользователю
+            messages.error(request, f'Не удалось сохранить: {exc}')
+        return redirect('product_control_detail', pk=product.pk)
+
+    def _apply(self, request, product):
+        target = request.POST.get('target')
+        target_id = request.POST.get('target_id')
+
+        if target == 'product':
+            # Состояние товара/карточки задаётся синхронизацией с НК/ЧЗ —
+            # вручную не редактируется, меняем только активность.
+            product.is_active = _to_bool(request.POST.get('is_active'))
+            product.save()
+
+        elif target == 'sku':
+            sku = get_object_or_404(ProductSKU, pk=target_id, product=product)
+            sku.is_active = _to_bool(request.POST.get('is_active'))
+            type_formation = request.POST.get('type_formation_uip')
+            if type_formation:
+                sku.type_formation_uip = int(type_formation)
+            reserve_days = request.POST.get('reserve_days')
+            if reserve_days not in (None, ''):
+                sku.reserve_days = max(0, int(reserve_days))
+            sku.save()
+
+        elif target == 'packaging':
+            packaging = get_object_or_404(
+                ProductPackaging, pk=target_id, product=product,
+            )
+            packaging.is_active = _to_bool(request.POST.get('is_active'))
+            for field in ('quantity_inside', 'code_storage_period_in_days'):
+                value = request.POST.get(field)
+                if value not in (None, ''):
+                    setattr(packaging, field, int(value))
+            if 'code_tnved' in request.POST:
+                packaging.code_tnved = (
+                    request.POST.get('code_tnved') or ''
+                ).strip() or None
+            packaging.save()
+
+        elif target == 'location':
+            location = get_object_or_404(
+                ProductProductionLocation,
+                pk=target_id,
+                product_sku__product=product,
+            )
+            location.is_active = _to_bool(request.POST.get('is_active'))
+            location.save()
+
+        else:
+            raise ValueError('Неизвестный объект редактирования.')
+
+    def _context(self, product):
+        skus = list(product.skus.all())
+        locations = (
+            ProductProductionLocation.objects
+            .filter(product_sku__in=skus)
+            .select_related('line__workshop__factory')
+            .order_by('line__name')
+        )
+        locations_by_sku = {}
+        for location in locations:
+            locations_by_sku.setdefault(location.product_sku_id, []).append(location)
+
+        sku_rows = [
+            {'sku': sku, 'locations': locations_by_sku.get(sku.id, [])}
+            for sku in skus
+        ]
+
+        return {
+            'title_name': product.name,
+            'page_name': 'Контроль продукции',
+            'product': product,
+            'sku_rows': sku_rows,
+            'packagings': list(product.packagings.all()),
+            'type_choices': TypeFormationUIP.choices,
+            'level_choices': PackagingLevelChoices.choices,
+        }

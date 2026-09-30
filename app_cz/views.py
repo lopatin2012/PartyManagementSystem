@@ -662,6 +662,23 @@ def api_generate_uip(request):
             status=status.HTTP_404_NOT_FOUND
         )
 
+    # Сверка типа формирования УИП: СУП — источник истины. Если внешняя
+    # система прислала другой тип, записываем тип СУП обратно в неё.
+    received_type = data.get('type_formation_uip')
+    if received_type is not None:
+        from app_factory.services.product_activity_sync import sync_uip_type_on_request
+
+        forwarded = request.META.get('HTTP_X_FORWARDED_FOR', '')
+        remote_ip = (
+            forwarded.split(',')[0].strip()
+            if forwarded
+            else request.META.get('REMOTE_ADDR', '')
+        )
+        if remote_ip.startswith('::ffff:'):
+            remote_ip = remote_ip[len('::ffff:'):]
+
+        sync_uip_type_on_request(remote_ip, product_sku, received_type)
+
     # Используем единый генератор УИП. Единичное количество, без множества.
     # skip_cz: явный параметр запроса, иначе — из настройки UIP_DRAFT_MODE.
     result = generate_uip(
