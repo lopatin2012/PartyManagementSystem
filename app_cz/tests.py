@@ -513,18 +513,25 @@ class GenerateUipTypeSyncTests(TestCase):
         )
         self.url = '/cz/api/v1/generate-uip/'
 
-    def _post(self, type_value):
-        return self.client.post(
-            self.url,
-            {
-                'gtin': self.sku.product.consumer_gtin,
-                'production_date': '2026-01-15',
-                'mode': 'local',
-                'skip_cz': True,
-                'type_formation_uip': type_value,
-            },
-            content_type='application/json',
-        )
+    def _post(self, type_value, party=''):
+        body = {
+            'gtin': self.sku.product.consumer_gtin,
+            'production_date': '2026-01-15',
+            'mode': 'local',
+            'skip_cz': True,
+            'type_formation_uip': type_value,
+        }
+        if party:
+            body['party'] = party
+        return self.client.post(self.url, body, content_type='application/json')
+
+    def test_party_used_in_number(self):
+        """Переданная партия попадает в номер для типов «с партией»."""
+        response = self._post(int(self.sku.type_formation_uip), party='7')
+
+        self.assertEqual(response.status_code, 200)
+        # party_end: партия '7' добивается до 3 и идёт в конце.
+        self.assertTrue(response.json()['number'].endswith('007'))
 
     def test_mismatch_pushes_sup_type(self):
         with patch(

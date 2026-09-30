@@ -634,6 +634,10 @@ class GenerateUIPSerializer(serializers.Serializer):
             'только для сверки: СУП при расхождении синхронизирует продукт.'
         ),
     )
+    party = serializers.CharField(
+        max_length=30, required=False, allow_blank=True, default='',
+        help_text='Номер партии задания (для типов УИП «партия в начале/конце», НатураПРО)',
+    )
 
     def validate(self, attrs):
         if not attrs.get('article') and not attrs.get('gtin'):
