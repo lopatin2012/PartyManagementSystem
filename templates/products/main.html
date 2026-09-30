@@ -1,0 +1,99 @@
+<!-- templates/products/main.html -->
+
+{% extends 'base.html' %}
+{% load static %}
+
+{% block head %}
+<link rel="stylesheet" href="{% static 'css/products.css' %}" type="text/css">
+{% endblock %}
+
+{% block content %}
+<div class="products-page">
+    <div class="products-header">
+        <h1>{{ page_name }}</h1>
+        <p class="subtitle">
+            Найдено: <span class="highlight">{{ total_count }}</span>
+            {% if scoped_factory %}
+                · завод: <b>{{ scoped_factory.name }}</b>
+            {% endif %}
+        </p>
+    </div>
+
+    <form method="get" class="products-filters">
+        <input type="text" name="q" value="{{ query }}" class="form-input"
+               placeholder="Название, артикул или GTIN">
+
+        <select name="group" class="form-input">
+            <option value="">Все товарные группы</option>
+            {% for value, label in group_choices %}
+                <option value="{{ value }}" {% if current_group == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+
+        <select name="active" class="form-input">
+            <option value="">Активность: все</option>
+            <option value="1" {% if current_active == '1' %}selected{% endif %}>Активные</option>
+            <option value="0" {% if current_active == '0' %}selected{% endif %}>Неактивные</option>
+        </select>
+
+        {% if factories %}
+            <select name="factory" class="form-input">
+                <option value="">Все заводы</option>
+                {% for factory in factories %}
+                    <option value="{{ factory.id }}" {% if current_factory == factory.id|stringformat:'s' %}selected{% endif %}>
+                        {{ factory.name }}
+                    </option>
+                {% endfor %}
+            </select>
+        {% endif %}
+
+        <button type="submit" class="btn-primary">Найти</button>
+        {% if query or current_group or current_active or current_factory %}
+            <a href="{% url 'product_control' %}" class="btn-secondary">Сбросить</a>
+        {% endif %}
+    </form>
+
+    <div class="products-list">
+        {% for product in page_obj %}
+            <div class="product-card">
+                <div class="product-card-head">
+                    <div class="product-card-title">
+                        <a class="product-name" href="{% url 'product_control_detail' product.id %}">{{ product.name }}</a>
+                        <span class="badge">{{ product.get_group_display }}</span>
+                        {% if product.is_active %}
+                            <span class="badge badge-on">Активен</span>
+                        {% else %}
+                            <span class="badge badge-off">Неактивен</span>
+                        {% endif %}
+                    </div>
+                    <a class="btn-secondary" href="{% url 'product_control_detail' product.id %}">Подробнее</a>
+                </div>
+                <div class="product-card-body">
+                    <div class="product-card-row">
+                        <span class="product-card-label">Артикулы:</span>
+                        {% for sku in product.skus.all %}{{ sku.article }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}
+                    </div>
+                    <div class="product-card-row">
+                        <span class="product-card-label">GTIN:</span>
+                        {% for packaging in product.packagings.all %}{{ packaging.gtin }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}
+                    </div>
+                </div>
+            </div>
+        {% empty %}
+            <p class="empty">Продукция не найдена.</p>
+        {% endfor %}
+    </div>
+
+    {% if page_obj.has_other_pages %}
+        <div class="pagination">
+            {% if page_obj.has_previous %}
+                <a class="btn-secondary" href="?{{ query_string }}{% if query_string %}&{% endif %}page={{ page_obj.previous_page_number }}">← Назад</a>
+            {% endif %}
+            <span class="pagination-info">Страница {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}</span>
+            {% if page_obj.has_next %}
+                <a class="btn-secondary" href="?{{ query_string }}{% if query_string %}&{% endif %}page={{ page_obj.next_page_number }}">Вперёд →</a>
+            {% endif %}
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

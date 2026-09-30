@@ -72,6 +72,27 @@ def can_generate_uip(user) -> bool:
     return any(user.has_perm(perm) for perm in UIP_WRITE_PERMS)
 
 
+def get_user_factory(user):
+    """
+    Завод, привязанный к учётной записи (для контроля продукции).
+
+    None — привязки нет (или завод не указан): пользователь видит продукцию
+    всех заводов. Импорт ленивый — чтобы не тянуть app_factory из хелперов
+    до готовности приложений.
+    """
+    if not user or not user.is_authenticated:
+        return None
+    from app_factory.models import UserFactory
+
+    binding = (
+        UserFactory.objects
+        .select_related('factory')
+        .filter(user=user)
+        .first()
+    )
+    return binding.factory if binding else None
+
+
 # ==========================================
 # Декораторы и миксины для представлений.
 # ==========================================

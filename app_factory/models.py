@@ -1,5 +1,6 @@
 # app_factory\models.py
 
+from django.conf import settings
 from django.db import models
 from django.core.validators import RegexValidator
 
@@ -445,3 +446,39 @@ class NationalCatalogProduct(UUIDModel):
 
     def __str__(self):
         return f'{self.name or f"Товар #{self.good_id}"} ({self.gtin or "—"})'
+
+
+# ==========================================
+# Доступ к контролю продукции: привязка к заводу.
+# ==========================================
+class UserFactory(UUIDModel):
+    """
+    Привязка учётной записи к заводу.
+
+    Используется для ограничения видимости продукции на странице контроля:
+    если привязка есть — пользователь видит только продукцию этого завода,
+    если привязки нет — продукцию всех заводов.
+    Завод может быть не указан (тогда ограничения тоже нет).
+    """
+
+    user = models.OneToOneField(
+        to=settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='factory_binding',
+        verbose_name='Пользователь',
+    )
+    factory = models.ForeignKey(
+        to=Factory,
+        on_delete=models.CASCADE,
+        null=True, blank=True,
+        related_name='user_bindings',
+        verbose_name='Завод',
+        help_text='Если не указан — пользователь видит продукцию всех заводов',
+    )
+
+    class Meta:
+        verbose_name = 'Привязка пользователя к заводу'
+        verbose_name_plural = '9. Привязки пользователей к заводам'
+
+    def __str__(self):
+        return f'{self.user} → {self.factory or "все заводы"}'

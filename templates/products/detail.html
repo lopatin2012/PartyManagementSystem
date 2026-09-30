@@ -1,0 +1,189 @@
+<!-- templates/products/detail.html -->
+
+{% extends 'base.html' %}
+{% load static %}
+
+{% block head %}
+<link rel="stylesheet" href="{% static 'css/products.css' %}" type="text/css">
+{% endblock %}
+
+{% block content %}
+<div class="products-page">
+    <div class="products-header">
+        <a href="{% url 'product_control' %}" class="back-link">← К списку продукции</a>
+        <h1>{{ product.name }}</h1>
+        <p class="subtitle">
+            {{ product.get_group_display }}
+            · срок годности {{ product.shelf_life_in_days }} дн.
+            · {{ product.get_item_condition_display }}
+            · {{ product.get_card_status_display }}
+        </p>
+    </div>
+
+    {% if messages %}
+        {% for message in messages %}
+            <div class="flash flash-{{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+    {% endif %}
+
+    <!-- ПРОДУКТ -->
+    <section class="card">
+        <h2>Продукт</h2>
+        <form method="post" class="edit-form">
+            {% csrf_token %}
+            <input type="hidden" name="target" value="product">
+
+            <label class="check">
+                <input type="checkbox" name="is_active" {% if product.is_active %}checked{% endif %}>
+                Активен
+            </label>
+
+            <div class="readonly-field">
+                <span class="readonly-label">Состояние товара:</span>
+                <span class="readonly-value">{{ product.get_item_condition_display }}</span>
+            </div>
+
+            <div class="readonly-field">
+                <span class="readonly-label">Состояние карточки:</span>
+                <span class="readonly-value">{{ product.get_card_status_display }}</span>
+            </div>
+
+            <button type="submit" class="btn-primary">Сохранить</button>
+        </form>
+    </section>
+
+    <!-- НОМЕНКЛАТУРА -->
+    <section class="card">
+        <h2>Номенклатура (SKU)</h2>
+        {% for row in sku_rows %}
+            <div class="subcard">
+                <form method="post" class="edit-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="target" value="sku">
+                    <input type="hidden" name="target_id" value="{{ row.sku.id }}">
+
+                    <div class="edit-form-title">
+                        Артикул: <b>{{ row.sku.article }}</b>
+                        {% if row.sku.other_codes %}
+                            <span class="muted">({{ row.sku.other_codes|join:", " }})</span>
+                        {% endif %}
+                    </div>
+
+                    <label>Тип формирования УИП:
+                        <select name="type_formation_uip">
+                            {% for value, label in type_choices %}
+                                <option value="{{ value }}" {% if row.sku.type_formation_uip == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+
+                    <label>Резерв УИП, дней:
+                        <input type="number" name="reserve_days" min="0" value="{{ row.sku.reserve_days }}">
+                    </label>
+
+                    <label class="check">
+                        <input type="checkbox" name="is_active" {% if row.sku.is_active %}checked{% endif %}>
+                        Используется
+                    </label>
+
+                    <button type="submit" class="btn-primary">Сохранить</button>
+                </form>
+
+                {% if row.sku.sku_links %}
+                    <div class="links-block">
+                        <div class="links-title">Связи с заводами (Молвест.Маркировка)</div>
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>Завод</th><th>Артикул</th><th>GTIN</th><th>Активен</th></tr>
+                            </thead>
+                            <tbody>
+                                {% for link in row.sku.sku_links %}
+                                    <tr>
+                                        <td>{{ link.factory_name|default:link.factory }}</td>
+                                        <td>{{ link.article|default:"—" }}</td>
+                                        <td>{{ link.gtin|default:"—" }}</td>
+                                        <td>{% if link.active %}да{% else %}нет{% endif %}</td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% endif %}
+
+                <div class="links-block">
+                    <div class="links-title">Места производства</div>
+                    {% if row.locations %}
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>Завод</th><th>Цех</th><th>Линия</th><th>Активно</th><th></th></tr>
+                            </thead>
+                            <tbody>
+                                {% for location in row.locations %}
+                                    <tr>
+                                        <td>{{ location.line.workshop.factory.name }}</td>
+                                        <td>{{ location.line.workshop.name }}</td>
+                                        <td>{{ location.line.name }}</td>
+                                        <td>{% if location.is_active %}да{% else %}нет{% endif %}</td>
+                                        <td>
+                                            <form method="post" class="inline-form">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="target" value="location">
+                                                <input type="hidden" name="target_id" value="{{ location.id }}">
+                                                <input type="hidden" name="is_active" value="{% if location.is_active %}0{% else %}1{% endif %}">
+                                                <button type="submit" class="btn-mini">
+                                                    {% if location.is_active %}Отключить{% else %}Включить{% endif %}
+                                                </button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    {% else %}
+                        <p class="muted">Нет привязки к линиям.</p>
+                    {% endif %}
+                </div>
+            </div>
+        {% empty %}
+            <p class="muted">У продукта нет номенклатуры.</p>
+        {% endfor %}
+    </section>
+
+    <!-- УПАКОВКИ -->
+    <section class="card">
+        <h2>Упаковки (GTIN)</h2>
+        {% for packaging in packagings %}
+            <form method="post" class="edit-form subcard">
+                {% csrf_token %}
+                <input type="hidden" name="target" value="packaging">
+                <input type="hidden" name="target_id" value="{{ packaging.id }}">
+
+                <div class="edit-form-title">
+                    {{ packaging.get_level_display }} · GTIN <b>{{ packaging.gtin }}</b>
+                </div>
+
+                <label>Количество в упаковке:
+                    <input type="number" name="quantity_inside" min="0" value="{{ packaging.quantity_inside }}">
+                </label>
+
+                <label>Срок хранения кодов, дней:
+                    <input type="number" name="code_storage_period_in_days" value="{{ packaging.code_storage_period_in_days }}">
+                </label>
+
+                <label>Код ТНВЭД:
+                    <input type="text" name="code_tnved" value="{{ packaging.code_tnved|default:'' }}">
+                </label>
+
+                <label class="check">
+                    <input type="checkbox" name="is_active" {% if packaging.is_active %}checked{% endif %}>
+                    Активна
+                </label>
+
+                <button type="submit" class="btn-primary">Сохранить</button>
+            </form>
+        {% empty %}
+            <p class="muted">У продукта нет упаковок.</p>
+        {% endfor %}
+    </section>
+</div>
+{% endblock %}
