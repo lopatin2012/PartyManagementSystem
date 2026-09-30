@@ -2,12 +2,15 @@
 
 """Тесты логики планировщика периодических задач."""
 
-from django.test import SimpleTestCase
+from django.contrib.auth.models import User
+from django.test import SimpleTestCase, TestCase
+from django.urls import reverse
 from django_tasks.base import TaskResultStatus
 
 from app_scheduler.management.commands.run_scheduler import (
     FAST_RETRY_INTERVAL,
     HOUR,
+    SCHEDULE,
     _effective_interval,
 )
 
@@ -81,3 +84,87 @@ class ScheduleRegistrationTests(SimpleTestCase):
         self.assertIn('check_system_health', entries)
         self.assertEqual(entries['check_system_health'], timedelta(minutes=5))
         self.assertTrue(hasattr(check_system_health_task, 'enqueue'))
+
+
+class SchedulerRegistryTests(SimpleTestCase):
+    """Единый реестр задач покрывает всё расписание SCHEDULE."""
+
+    def test_registry_covers_schedule(self):
+        from app_scheduler.registry import get_scheduled_tasks
+
+        schedule_names = {name for name, _, _ in SCHEDULE}
+        registry_names = set(get_scheduled_tasks().keys())
+        self.assertEqual(registry_names, schedule_names)
+
+
+class SchedulerStatusViewTests(TestCase):
+    """API расписания отдаёт все задачи из SCHEDULE (только админ)."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            username='root', password='pass', email='root@example.com',
+        )
+
+    def test_requires_admin(self):
+        user = User.objects.create_user(username='user', password='pass')
+        self.client.force_login(user)
+
+        response = self.client.get(reverse('status'))
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_returns_all_scheduled_tasks(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.get(reverse('status'))
+
+        self.assertEqual(response.status_code, 200)
+        names = {task['name'] for task in response.json()['schedule']}
+        self.assertEqual(names, {name for name, _, _ in SCHEDULE})
+
+
+class SchedulerRunViewTests(TestCase):
+    """Ручной запуск задачи: только админ, ставит задачу в очередь."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            username='root', password='pass', email='root@example.com',
+        )
+
+    def test_requires_admin(self):
+        user = User.objects.create_user(username='user', password='pass')
+        self.client.force_login(user)
+
+        response = self.client.post(reverse('run', args=['refresh_suz_token']))
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(response.json()['is_error'])
+
+    def test_unknown_task_returns_404(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.post(reverse('run', args=['does-not-exist']))
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_admin_enqueues_task(self):
+        from django_tasks_db.models import DBTaskResult
+
+        self.client.force_login(self.admin)
+        before = DBTaskResult.objects.count()
+
+        response = self.client.post(reverse('run', args=['refresh_suz_token']))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()['is_error'])
+        self.assertEqual(DBTaskResult.objects.count(), before + 1)
+
+    def test_duplicate_pending_returns_409(self):
+        self.client.force_login(self.admin)
+
+        first = self.client.post(reverse('run', args=['refresh_suz_token']))
+        second = self.client.post(reverse('run', args=['refresh_suz_token']))
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 409)
+        self.assertTrue(second.json()['is_error'])

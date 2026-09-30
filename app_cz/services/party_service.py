@@ -114,10 +114,14 @@ def build_local_party_number(
             # Номер вводится вручную в графе «Партия» и может содержать
             # символ-маркер линии в конце (например, «2635798g») — в УИП он
             # не передаётся, берём только цифровую часть.
+            # Внутренний номер обязан быть ровно 7 цифр, иначе УИП не равен
+            # 32 символам — такой УИП формировать нельзя.
             # Пример: 046017510248312609290000-2635798.
             base = f'{gtin}{date_str}'.ljust(24, '0')  # GTIN + дата + «0000».
             match = re.match(r'\d+', party.strip())
-            party_part = match.group(0) if match else party.strip()
+            party_part = match.group(0) if match else ''
+            if len(party_part) != 7:
+                return ''
             return f'{base}-{party_part}'
 
 

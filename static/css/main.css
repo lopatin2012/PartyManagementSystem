@@ -581,6 +581,33 @@ footer {
     font-family: 'Consolas', 'Monaco', monospace;
 }
 
+/* Кнопка ручного запуска задачи. */
+.task-run {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-top: 0.45rem;
+    padding: 0.3rem 0.7rem;
+    background: transparent;
+    color: var(--accent-green);
+    border: 1px solid rgba(187, 207, 50, 0.4);
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.task-run:hover {
+    background: rgba(187, 207, 50, 0.15);
+    border-color: var(--accent-green);
+}
+
+.task-run:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
 .scheduler-empty {
     padding: 2rem;
     text-align: center;

@@ -155,6 +155,7 @@
 
     <!-- ВИДЖЕТ ФОНОВЫХ ЗАДАЧ -->
     {% if is_admin %}
+    <input type="hidden" id="schedulerCsrfToken" value="{{ csrf_token }}">
     <div class="scheduler-widget" id="schedulerWidget">
         <div class="scheduler-header">
             <div class="scheduler-title">

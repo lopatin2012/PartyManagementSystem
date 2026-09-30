@@ -223,9 +223,45 @@ function renderTaskCard(task) {
             <div class="task-next">
                 <div class="next-label">Следующий:</div>
                 <div class="next-value">${task.next_run}</div>
+                <button type="button" class="task-run" title="Запустить сейчас"
+                        onclick="runScheduledTask('${task.name}', this)">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <polygon points="6 3 20 12 6 21"></polygon>
+                    </svg>
+                    <span>Запуск</span>
+                </button>
             </div>
         </div>
     `;
+}
+
+async function runScheduledTask(name, btn) {
+    if (!confirm('Запустить задачу вручную сейчас?')) return;
+
+    const tokenEl = document.getElementById('schedulerCsrfToken');
+    const token = tokenEl ? tokenEl.value : '';
+
+    btn.disabled = true;
+    try {
+        const response = await fetch(`/scheduler/run/${encodeURIComponent(name)}/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': token,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.is_error) {
+            alert(data.message || 'Не удалось запустить задачу.');
+        } else {
+            await loadSchedulerStatus();
+        }
+    } catch (error) {
+        console.error('Ошибка запуска задачи:', error);
+        alert('Ошибка запуска задачи.');
+    } finally {
+        btn.disabled = false;
+    }
 }
 
 // Закрытие модалки по клику вне контента
