@@ -121,6 +121,48 @@ class SchedulerStatusViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         names = {task['name'] for task in response.json()['schedule']}
         self.assertEqual(names, {name for name, _, _ in SCHEDULE})
+        # В каждой задаче есть признаки выполнения и прогресс.
+        for task in response.json()['schedule']:
+            self.assertIn('is_running', task)
+            self.assertIn('is_queued', task)
+            self.assertIn('progress', task)
+
+
+class TaskProgressTests(TestCase):
+    """Запись/чтение/очистка прогресса выполнения задачи."""
+
+    def test_set_get_clear(self):
+        from app_scheduler.progress import (
+            clear_task_progress,
+            get_task_progress,
+            set_task_progress,
+        )
+
+        set_task_progress(
+            'demo', phase='Этап 1', current=2, total=5, message='обработка',
+        )
+
+        progress = get_task_progress('demo')
+        self.assertEqual(progress['phase'], 'Этап 1')
+        self.assertEqual(progress['current'], 2)
+        self.assertEqual(progress['total'], 5)
+        self.assertEqual(progress['percent'], 40)
+        self.assertEqual(progress['message'], 'обработка')
+
+        clear_task_progress('demo')
+        self.assertIsNone(get_task_progress('demo'))
+
+    def test_missing_progress_returns_none(self):
+        from app_scheduler.progress import get_task_progress
+
+        self.assertIsNone(get_task_progress('нет-такой'))
+
+    def test_percent_none_without_total(self):
+        from app_scheduler.progress import set_task_progress, get_task_progress
+
+        set_task_progress('demo2', phase='Без счётчика', current=3)
+
+        self.assertIsNone(get_task_progress('demo2')['percent'])
 
 
 class SchedulerRunViewTests(TestCase):

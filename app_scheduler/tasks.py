@@ -315,10 +315,16 @@ def sync_external_parties_codes_task() -> dict:
     (см. FAST_RETRY_TASKS в run_scheduler).
     """
     from app_cz.services.code_sync import sync_external_parties_and_codes
+    from app_scheduler.progress import clear_task_progress
 
-    result = sync_external_parties_and_codes(
-        task_path=f'{__name__}.sync_external_parties_codes_task'
-    )
+    progress_name = 'sync_external_parties_codes'
+    try:
+        result = sync_external_parties_and_codes(
+            task_path=f'{__name__}.sync_external_parties_codes_task',
+            progress_name=progress_name,
+        )
+    finally:
+        clear_task_progress(progress_name)
 
     if result.get('is_error'):
         raise RuntimeError(

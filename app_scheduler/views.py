@@ -10,6 +10,7 @@ from django.views import View
 from app_helper.access import admin_required_json
 
 from app_scheduler.management.commands.run_scheduler import SCHEDULE
+from app_scheduler.progress import get_task_progress
 
 MINUTE = timedelta(minutes=1)
 HOUR = timedelta(hours=1)
@@ -66,6 +67,17 @@ class SchedulerStatusView(View):
                 .first()
             )
 
+            # Текущее выполнение (RUNNING) и очередь (READY).
+            running = (
+                DBTaskResult.objects
+                .filter(task_path=task_path, status=TaskResultStatus.RUNNING)
+                .order_by('-started_at')
+                .first()
+            )
+            is_queued = DBTaskResult.objects.filter(
+                task_path=task_path, status=TaskResultStatus.READY,
+            ).exists()
+
             if last_run and last_run.finished_at:
                 next_run = last_run.finished_at + interval
                 if next_run <= now:
@@ -92,6 +104,13 @@ class SchedulerStatusView(View):
                     last_error.finished_at and
                     (now - last_error.finished_at) < interval
                 ),
+                'is_running': bool(running),
+                'is_queued': is_queued,
+                'started_at': (
+                    running.started_at.strftime('%d.%m.%Y %H:%M:%S')
+                    if running and running.started_at else None
+                ),
+                'progress': get_task_progress(name) if running else None,
             })
 
         return JsonResponse({

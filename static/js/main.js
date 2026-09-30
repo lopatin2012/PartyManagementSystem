@@ -87,13 +87,23 @@ function formatTimeLeft(ms) {
     return `${days} д ${hours % 24} ч`;
 }
 
+let schedulerPollTimer = null;
+
 function openSchedulerModal() {
     document.getElementById('schedulerModal').classList.remove('hidden');
-    renderSchedulerModal();
+    loadSchedulerStatus();
+    // Пока окно открыто — обновляем чаще, чтобы видеть прогресс задач.
+    if (!schedulerPollTimer) {
+        schedulerPollTimer = setInterval(loadSchedulerStatus, 5000);
+    }
 }
 
 function closeSchedulerModal() {
     document.getElementById('schedulerModal').classList.add('hidden');
+    if (schedulerPollTimer) {
+        clearInterval(schedulerPollTimer);
+        schedulerPollTimer = null;
+    }
 }
 
 function setSchedulerFilter(filter) {
@@ -204,12 +214,31 @@ function categorizeTasks(tasks) {
 }
 
 function renderTaskCard(task) {
-    const statusClass = task.has_recent_error ? 'status-error' : 'status-ok';
-    const statusIcon = task.has_recent_error ? '⚠' : '✓';
-    const statusText = task.has_recent_error ? 'Ошибка' : 'OK';
+    const running = !!task.is_running;
+
+    let statusClass, statusIcon, statusText;
+    if (running) {
+        statusClass = 'status-running';
+        statusIcon = '⟳';
+        statusText = 'Выполняется';
+    } else if (task.has_recent_error) {
+        statusClass = 'status-error';
+        statusIcon = '⚠';
+        statusText = 'Ошибка';
+    } else {
+        statusClass = 'status-ok';
+        statusIcon = '✓';
+        statusText = 'OK';
+    }
+
+    const nextBlock = running
+        ? `<div class="next-label">Выполняется с:</div>
+           <div class="next-value next-running">${task.started_at || 'сейчас'}</div>`
+        : `<div class="next-label">Следующий:</div>
+           <div class="next-value">${task.next_run}</div>`;
 
     return `
-        <div class="scheduler-task-card ${task.has_recent_error ? 'has-error' : ''}">
+        <div class="scheduler-task-card ${task.has_recent_error ? 'has-error' : ''} ${running ? 'is-running' : ''}">
             <div class="task-main">
                 <span class="task-status ${statusClass}" title="${statusText}">${statusIcon}</span>
                 <div class="task-info">
@@ -217,12 +246,13 @@ function renderTaskCard(task) {
                     <div class="task-meta">
                         <span class="meta-interval">⏱ ${task.interval_display}</span>
                         <span class="meta-last">Прошлый: ${task.last_run || '—'}</span>
+                        ${running ? '<span class="meta-running">⏳ выполняется</span>' : ''}
                     </div>
+                    ${running ? renderTaskProgress(task) : ''}
                 </div>
             </div>
             <div class="task-next">
-                <div class="next-label">Следующий:</div>
-                <div class="next-value">${task.next_run}</div>
+                ${nextBlock}
                 <button type="button" class="task-run" title="Запустить сейчас"
                         onclick="runScheduledTask('${task.name}', this)">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -231,6 +261,30 @@ function renderTaskCard(task) {
                     <span>Запуск</span>
                 </button>
             </div>
+        </div>
+    `;
+}
+
+function renderTaskProgress(task) {
+    const progress = task.progress;
+    if (!progress) {
+        return '<div class="task-progress"><div class="task-progress-message">Выполняется…</div></div>';
+    }
+
+    const hasCount = progress.total != null && progress.current != null
+        && progress.total > 0;
+    const percent = progress.percent != null
+        ? progress.percent
+        : (hasCount ? Math.min(100, Math.round(progress.current / progress.total * 100)) : 0);
+
+    return `
+        <div class="task-progress">
+            <div class="task-progress-head">
+                <span class="task-progress-phase">${progress.phase || 'Выполняется'}</span>
+                ${hasCount ? `<span class="task-progress-count">${progress.current}/${progress.total}</span>` : ''}
+            </div>
+            ${hasCount ? `<div class="task-progress-bar"><div class="task-progress-fill" style="width:${percent}%"></div></div>` : ''}
+            ${progress.message ? `<div class="task-progress-message">${progress.message}</div>` : ''}
         </div>
     `;
 }
