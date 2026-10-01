@@ -773,6 +773,14 @@ class BuildLocalPartyNumberNaturaTests(TestCase):
 
         self.assertEqual(number, '046017510248312609290000-2635798')
 
+    def test_natura_full_number_from_report(self):
+        # Полный номер из обращения: внутренний номер партии идёт в УИП
+        # как есть (7 цифр), без авто-добавления год/неделя/день.
+        number = self._build('04601751024930', date(2026, 10, 1), '2640501')
+
+        self.assertEqual(number, '046017510249302610010000-2640501')
+        self.assertEqual(len(number), 32)
+
 
 class DeletedTaskSyncStatusTests(TestCase):
     """Удалённое задание считается синхронизированным («Ожидают» не висит)."""
