@@ -123,6 +123,17 @@ function updatePartyVisibility() {
     const type = product ? Number(product.type_formation_uip) : 0;
     // «Обычный» (тип 1) и ручной режим не используют номер партии — скрываем поле.
     group.style.display = (mode !== 'manual' && product && type !== 1) ? '' : 'none';
+
+    // НатураПРО (тип 4) требует внутренний номер партии ровно из 7 цифр,
+    // остальные типы «с партией» — до 3 цифр.
+    const input = document.getElementById('party');
+    if (input) {
+        const isNatura = type === 4;
+        input.maxLength = isNatura ? 7 : 3;
+        input.placeholder = isNatura
+            ? '7 цифр (например, 2640501)'
+            : '0-999 (необязательно)';
+    }
 }
 
 function initGenerateModal() {
@@ -273,11 +284,12 @@ function buildLocalNumber(gtin, dateStr, article, type, party) {
         return base.padEnd(29, '0').slice(0, 29) + partyPart;
     }
     if (type === 4) {
+        // НатураПРО: GTIN(14) + дата(6) + нули до 24 + «-» + внутренний номер
+        // партии (ровно 7 цифр), который вводится в графе «Производственная
+        // партия». Зеркально build_local_party_number() (серверная сторона).
         const base = (gtin + datePart).padEnd(24, '0').slice(0, 24);
-        const now = new Date();
-        const iso = getISOWeekAndDay(now);
-        const year = String(now.getFullYear()).slice(2);
-        return base + '-' + year + iso.week + iso.day + partyPart;
+        const digits = (party || '').match(/\d+/);
+        return base + '-' + (digits ? digits[0] : '');
     }
     // Тип 1 «Обычный» (по умолчанию): партия в номере не участвует.
     const base = gtin + datePart + article;
@@ -312,16 +324,16 @@ function buildPreviewHint(gtin, dateStr, article, type, party, number) {
             '<small>GTIN(14) + дата ГГММДД(6) + артикул(' + article.length + ') + нули до 29 + партия(3)</small>';
     }
     if (type === 4) {
-        const now = new Date();
-        const iso = getISOWeekAndDay(now);
-        const year = String(now.getFullYear()).slice(2);
         const zeros = number.slice(gtin.length + datePart.length, 24);
-        const suffix = '-' + year + iso.week + iso.day + partyPart;
+        const digits = (party || '').match(/\d+/);
+        const partyPart4 = digits ? digits[0] : '';
+        const len = partyPart4.length;
         return '<span class="part-gtin">' + gtin + '</span>' +
             '<span class="part-date">' + datePart + '</span>' +
             '<span class="part-zeros">' + zeros + '</span>' +
-            '<span class="part-party">' + suffix + '</span><br>' +
-            '<small>GTIN(14) + дата ГГММДД(6) + нули до 24 + — + год(2) + неделя(2) + день(1) + партия(3)</small>';
+            '<span class="part-party">-' + escapeHtml(partyPart4) + '</span><br>' +
+            '<small>GTIN(14) + дата ГГММДД(6) + нули до 24 + «-» + внутренний номер партии. ' +
+            'Номер партии: <b class="' + (len === 7 ? 'len-ok' : 'len-bad') + '">' + len + '/7</b></small>';
     }
     // Тип 1 «Обычный».
     const zeros = number.slice(gtin.length + datePart.length + article.length);
@@ -486,7 +498,10 @@ function updateGenerateButtonState() {
 }
 
 function validatePartyInput(input) {
-    input.value = input.value.replace(/\D/g, '').slice(0, 3);
+    const product = getSelectedProduct();
+    const type = product ? Number(product.type_formation_uip) : 0;
+    const max = type === 4 ? 7 : 3;
+    input.value = input.value.replace(/\D/g, '').slice(0, max);
 }
 
 async function submitGenerate() {
@@ -526,8 +541,19 @@ async function submitGenerate() {
             return;
         }
     } else {
+        const product = getSelectedProduct();
+        const type = product ? Number(product.type_formation_uip) : 0;
         const partyRaw = partyInput ? partyInput.value.trim() : '';
-        if (partyRaw !== '') {
+        if (type === 4) {
+            // НатураПРО: внутренний номер партии вводится вручную и должен
+            // состоять ровно из 7 цифр (иначе номер не равен 32 символам).
+            if (!/^\d{7}$/.test(partyRaw)) {
+                showGenerateStatus('Для «НатураПРО» номер партии должен состоять ровно из 7 цифр', true);
+                if (partyInput) partyInput.focus();
+                return;
+            }
+            partyValue = partyRaw;
+        } else if (partyRaw !== '') {
             const partyNum = parseInt(partyRaw, 10);
             if (isNaN(partyNum) || partyNum < 0 || partyNum > 999) {
                 showGenerateStatus('Партия должна быть числом от 0 до 999', true);
