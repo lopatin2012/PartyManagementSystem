@@ -1525,7 +1525,7 @@ def generate_uip(
                 'is_error': True,
                 'message': 'Черновая генерация (skip_cz) доступна только в режиме local.'
             }
-        return _generate_cz_uip(article, gtin, production_date)
+        return _generate_cz_uip(product_sku, gtin, production_date)
 
     return {
         'is_error': True,
