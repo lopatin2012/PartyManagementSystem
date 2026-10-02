@@ -22,7 +22,6 @@ from django.core.exceptions import ObjectDoesNotExist
 
 from app_cz.models import CISCodesStatusChoices, SUZAccount
 from app_cz.suz_config import SUZ
-from app_cz.services.suz_client import get_true_api_session_token
 
 logger = logging.getLogger(__name__)
 

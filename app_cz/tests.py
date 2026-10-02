@@ -875,3 +875,117 @@ class SyncProgressReportingTests(TestCase):
 
         phases = [call[1].get('phase') for call in mock_progress.call_args_list]
         self.assertIn('Выгрузка заданий', phases)
+
+
+
+class TrueApiSessionTokenTests(TestCase):
+    """Получение токена TrueAPI: безопасный контракт (без исключений)."""
+
+    def setUp(self):
+        from app_cz.models import SUZAccount
+        self.account = SUZAccount.objects.create(
+            is_active=True,
+            certificate_name='Тестовый сертификат',
+            serial_number='0123456789ABCDEF',
+            inn='7701234567',
+            oms_id='oms-1',
+            device_name='Устройство',
+            connection_identifier='conn-1',
+        )
+
+    def _ok_response(self, payload):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = payload
+        response.text = str(payload)
+        return response
+
+    @patch('app_cz.services.suz_client.attached_signed_data',
+           return_value=('data', 'SIGNED'))
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           return_value={'uuid': 'u-1', 'data': 'data'})
+    @patch('app_cz.services.suz_client.requests.post')
+    def test_returns_uuid_token_when_united_token(self, mock_post, *_):
+        """При unitedToken читаем uuidToken (как в «Молвест.Маркировка»)."""
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        mock_post.return_value = self._ok_response({'uuidToken': 'TOKEN-UUID'})
+
+        result = get_true_api_session_token()
+
+        self.assertEqual(result['token'], 'TOKEN-UUID')
+        self.assertTrue(result['uuid'])
+
+    @patch('app_cz.services.suz_client.attached_signed_data',
+           return_value=('data', 'SIGNED'))
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           return_value={'uuid': 'u-1', 'data': 'data'})
+    @patch('app_cz.services.suz_client.requests.post')
+    def test_falls_back_to_token_field(self, mock_post, *_):
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        mock_post.return_value = self._ok_response({'token': 'TOKEN-PLAIN'})
+
+        result = get_true_api_session_token()
+        self.assertEqual(result['token'], 'TOKEN-PLAIN')
+
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           side_effect=Exception('Сервис Честного Знака не отвечает'))
+    def test_auth_key_error_returns_no_token_not_raise(self, *_):
+        """Сбой /auth/key не бросает — возвращает token=None и message."""
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        result = get_true_api_session_token()
+
+        self.assertIsNone(result['token'])
+        self.assertIn('не отвечает', result['message'])
+
+    @patch('app_cz.services.suz_client.attached_signed_data',
+           side_effect=RuntimeError('Сервис подписей недоступен'))
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           return_value={'uuid': 'u-1', 'data': 'data'})
+    def test_sign_error_returns_no_token_not_raise(self, *_):
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        result = get_true_api_session_token()
+
+        self.assertIsNone(result['token'])
+        self.assertIn('подпис', result['message'].lower())
+
+    @patch('app_cz.services.suz_client.attached_signed_data',
+           return_value=('data', 'SIGNED'))
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           return_value={'uuid': 'u-1', 'data': 'data'})
+    @patch('app_cz.services.suz_client.requests.post')
+    def test_http_error_returns_message(self, mock_post, *_):
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        response = Mock()
+        response.status_code = 401
+        response.json.return_value = {'error_message': 'Неверная подпись'}
+        response.text = '{"error_message": "Неверная подпись"}'
+        mock_post.return_value = response
+
+        result = get_true_api_session_token()
+
+        self.assertIsNone(result['token'])
+        self.assertIn('Неверная подпись', result['message'])
+
+
+class ReservePartiesTokenFailureTests(TestCase):
+    """Резерв партий не падает 500 при сбое получения токена TrueAPI."""
+
+    def test_reserve_returns_error_dict_on_token_failure(self):
+        with patch.object(
+            party_service,
+            'get_true_api_session_token',
+            return_value={'uuid': None, 'token': None,
+                          'message': 'Сервис ЧЗ не отвечает'},
+        ):
+            result = party_service.reserve_parties_honest_sign(
+                product_group='milk',
+                party_numbers=['046017510249302610010000-2640501'],
+            )
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('Сервис ЧЗ не отвечает', result['message_error'])

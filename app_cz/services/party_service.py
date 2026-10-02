@@ -194,18 +194,14 @@ def generate_party_numbers(
 
     # token для работы с TrueAPI.
     result_true_api_session_token = get_true_api_session_token()
-
-    try:
-        token = result_true_api_session_token.get('token')
-        if not token:
-            return {
-                'is_error': True,
-                'message_error': 'Не удалось получить токен сессии TrueAPI. Проверьте настройки СУЗ.'
-            }
-    except ValueError as e:
+    token = result_true_api_session_token.get('token')
+    if not token:
         return {
             'is_error': True,
-            'message_error': str(e)
+            'message_error': (
+                result_true_api_session_token.get('message')
+                or 'Не удалось получить токен сессии TrueAPI. Проверьте настройки СУЗ.'
+            ),
         }
 
     headers = {
@@ -314,18 +310,14 @@ def reserve_parties_honest_sign(
 
     # token для работы с TrueAPI.
     result_true_api_session_token = get_true_api_session_token()
-
-    try:
-        token = result_true_api_session_token.get('token')
-        if not token:
-            return {
-                'is_error': True,
-                'message_error': 'Не удалось получить токен сессии TrueAPI. Проверьте настройки СУЗ.'
-            }
-    except ValueError as e:
+    token = result_true_api_session_token.get('token')
+    if not token:
         return {
             'is_error': True,
-            'message_error': str(e)
+            'message_error': (
+                result_true_api_session_token.get('message')
+                or 'Не удалось получить токен сессии TrueAPI. Проверьте настройки СУЗ.'
+            ),
         }
 
     headers = {
@@ -387,18 +379,14 @@ def get_all_reserved_parties() -> dict:
     """
     # token для работы с TrueAPI.
     result_true_api_session_token = get_true_api_session_token()
-
-    try:
-        token = result_true_api_session_token.get('token')
-        if not token:
-            return {
-                'is_error': True,
-                'message_error': 'Не удалось получить токен сессии TrueAPI. Проверьте настройки СУЗ.'
-            }
-    except ValueError as e:
+    token = result_true_api_session_token.get('token')
+    if not token:
         return {
             'is_error': True,
-            'message_error': str(e)
+            'message_error': (
+                result_true_api_session_token.get('message')
+                or 'Не удалось получить токен сессии TrueAPI. Проверьте настройки СУЗ.'
+            ),
         }
 
     headers = {

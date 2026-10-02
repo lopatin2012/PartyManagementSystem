@@ -47,52 +47,120 @@ def get_true_api_auth_key() -> dict:
 
 def get_true_api_session_token() -> dict:
     """
-    Получает базовый токен сессии TrueAPI.
-    Может потребоваться для некоторых специфичных методов API.
+    Получает базовый токен сессии TrueAPI (unitedToken).
+
+    Контракт (как в «Молвест.Маркировка»): функция НИКОГДА не бросает
+    исключение — при любой ошибке возвращает
+    ``{'token': None, 'message': <причина>}``, чтобы вызывающий код
+    показывал понятную ошибку, а не падал с 500.
+
+    :return: {'uuid': str|None, 'token': str|None, 'message': str}
     """
+    # 1. Ключ для подписи (GET /auth/key).
     try:
-        # 1. Получаем ключи для подписи.
         auth_data = get_true_api_auth_key()
         row_uuid = auth_data['uuid']
         row_data = auth_data['data']
+    except Exception as e:
+        logger.error(f"Не удалось получить auth_key TrueAPI: {e}")
+        return {'uuid': None, 'token': None, 'message': str(e)}
 
-        # 2. Подписываем данные.
+    # 2. Подпись данных (прикреплённая).
+    try:
         _, signed_data = attached_signed_data(row_data)
+    except Exception as e:
+        logger.error(f"Не удалось подписать данные для TrueAPI: {e}")
+        return {'uuid': row_uuid, 'token': None, 'message': str(e)}
 
-        # 3. Берём активный аккаунт для получения ИНН.
-        account = SUZAccount.objects.filter(is_active=True).first()
-        if not account:
-            raise ValueError("Активная учётная запись СУЗ не найдена")
-
-        # 4. Формируем запрос.
-        url = SUZ.simple_sign_in
-        payload = {
+    if not signed_data:
+        return {
             'uuid': row_uuid,
-            'data': signed_data,
-            'inn': account.inn,
-            'unitedToken': True
+            'token': None,
+            'message': 'Сервис подписей не вернул подпись. Проверьте сертификат.',
         }
 
-        response = requests.post(
-            url,
-            json=payload,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            timeout=15
+    # 3. Активная учётная запись (ИНН).
+    account = SUZAccount.objects.filter(is_active=True).first()
+    if not account:
+        return {
+            'uuid': row_uuid,
+            'token': None,
+            'message': 'Активная учётная запись СУЗ не найдена.',
+        }
+
+    # 4. simpleSignIn → токен. При unitedToken ЧЗ возвращает `uuidToken`
+    #    (как в «Молвест.Маркировка»), поэтому читаем его ПЕРВЫМ.
+    url = SUZ.simple_sign_in
+    payload = {
+        'uuid': row_uuid,
+        'data': signed_data,
+        'inn': account.inn,
+        'unitedToken': True,
+    }
+    headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Сетевая ошибка при получении токена TrueAPI: {e}")
+        return {
+            'uuid': row_uuid,
+            'token': None,
+            'message': f'Ошибка соединения с TrueAPI: {e}',
+        }
+
+    if response.status_code != 200:
+        detail = _extract_true_api_error(response)
+        logger.error(
+            f"TrueAPI simpleSignIn вернул {response.status_code}: {detail}"
         )
-        response.raise_for_status()
+        return {'uuid': row_uuid, 'token': None, 'message': detail}
 
+    try:
         result = response.json()
-        token = result.get('token') or result.get('uuidToken')
+    except ValueError:
+        return {
+            'uuid': row_uuid,
+            'token': None,
+            'message': f'TrueAPI вернул некорректный ответ: {response.text[:200]}',
+        }
 
-        if not token:
-            raise ValueError("Токен отсутствует в ответе сервера Честного Знака")
+    # При unitedToken=True ЧЗ отдаёт uuidToken.
+    token = result.get('uuidToken') or result.get('token')
+    if not token:
+        return {
+            'uuid': row_uuid,
+            'token': None,
+            'message': (
+                'TrueAPI не вернул токен (uuidToken/token). '
+                f'Ответ: {str(result)[:200]}'
+            ),
+        }
 
-        logger.info("Базовый токен сессии TrueAPI успешно получен")
-        return {'uuid': row_uuid, 'token': token}
+    logger.info("Базовый токен сессии TrueAPI успешно получен")
+    return {'uuid': row_uuid, 'token': token, 'message': 'Токен успешно получен.'}
 
-    except Exception as e:
-        logger.error(f"Ошибка получения базового токена TrueAPI: {e}")
-        raise
+
+def _extract_true_api_error(response) -> str:
+    """Человекочитаемое сообщение об ошибке из ответа TrueAPI."""
+    text = (response.text or '').strip()
+    if text:
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        if isinstance(data, dict):
+            for key in ('error_message', 'errorMessage', 'message', 'error', 'description'):
+                value = data.get(key)
+                if value:
+                    text = str(value)
+                    break
+    if len(text) > 300:
+        text = text[:300]
+    return f'HTTP {response.status_code}: {text}' if text else f'HTTP {response.status_code}'
 
 
 def get_true_api_dynamic_token(row_uuid: str, signed_data: str) -> str:
