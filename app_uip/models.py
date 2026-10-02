@@ -344,6 +344,13 @@ class ProductionParty(UUIDModel):
         blank=True,
         verbose_name='Срок годности'
     )
+    external_created_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name='Дата создания задания (внешний сервис)',
+        help_text='Поле «Создано» задания из Молвест.Маркировка (datetime_create)'
+    )
 
     # Количества.
     planned_quantity = models.PositiveIntegerField(

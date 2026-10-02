@@ -212,7 +212,8 @@ class SyncCodesErrorDetailsTests(TestCase):
             production_party='1',
             external_number_task='task-1',
             is_external=True,
-            status=ProductionPartyStatusChoices.CREATED,
+            status=ProductionPartyStatusChoices.WORK,
+            external_created_at=timezone.now(),
         )
 
     def test_error_details_collected(self):
@@ -841,6 +842,7 @@ class SyncProgressReportingTests(TestCase):
             external_number_task='task-progress-1',
             is_external=True,
             status=ProductionPartyStatusChoices.WORK,
+            external_created_at=timezone.now(),
         )
 
     def test_sync_all_reports_codes_phase(self):
@@ -989,3 +991,78 @@ class ReservePartiesTokenFailureTests(TestCase):
 
         self.assertTrue(result['is_error'])
         self.assertIn('Сервис ЧЗ не отвечает', result['message_error'])
+
+
+
+class CodeSyncFilterTests(TestCase):
+    """Синхронизация кодов: только «В работе»/«Закрыто» и за последние 3 дня."""
+
+    def setUp(self):
+        from app_factory.models import Line, Workshop
+
+        self.factory = Factory.objects.create(
+            name='Завод фильтра', ip_address='127.0.0.1', port_address=8030,
+        )
+        workshop = Workshop.objects.create(factory=self.factory, name='Цех')
+        self.line = Line.objects.create(workshop=workshop, name='Линия')
+
+    def _party(self, number, status, created):
+        return ProductionParty.objects.create(
+            line=self.line,
+            production_party=number,
+            external_number_task=number,
+            is_external=True,
+            status=status,
+            external_created_at=created,
+        )
+
+    def _synced_numbers(self):
+        synced = []
+
+        def _fake(party):
+            synced.append(party.external_number_task)
+            return {'has_error': False, 'synced_count': 0, 'updated_count': 0}
+
+        with patch.object(code_sync, 'sync_codes_for_party', side_effect=_fake):
+            code_sync.sync_all_external_tasks()
+        return synced
+
+    def test_only_work_and_closed_recent(self):
+        now = timezone.now()
+        self._party('work', ProductionPartyStatusChoices.WORK, now)
+        self._party('closed', ProductionPartyStatusChoices.CLOSED, now)
+        self._party('created', ProductionPartyStatusChoices.CREATED, now)
+        self._party('completed', ProductionPartyStatusChoices.COMPLETED, now)
+
+        synced = self._synced_numbers()
+
+        self.assertIn('work', synced)
+        self.assertIn('closed', synced)
+        self.assertNotIn('created', synced)
+        self.assertNotIn('completed', synced)
+
+    def test_old_tasks_excluded(self):
+        from datetime import timedelta as _td
+        now = timezone.now()
+        self._party('today', ProductionPartyStatusChoices.WORK, now)
+        self._party('d3', ProductionPartyStatusChoices.WORK, now - _td(days=3))
+        self._party('d4', ProductionPartyStatusChoices.WORK, now - _td(days=4))
+
+        synced = self._synced_numbers()
+
+        self.assertIn('today', synced)
+        self.assertIn('d3', synced)
+        self.assertNotIn('d4', synced)
+
+    def test_receive_maps_datetime_create(self):
+        code_sync.receive_external_task({
+            'uuid_str': 'task-dt-1',
+            'status': 'В работе',
+            'datetime_create': '2026-10-01T12:30:00.000Z',
+        })
+
+        party = ProductionParty.objects.get(external_number_task='task-dt-1')
+        self.assertIsNotNone(party.external_created_at)
+        self.assertEqual(party.external_created_at.year, 2026)
+        self.assertEqual(party.external_created_at.month, 10)
+        self.assertEqual(party.external_created_at.day, 1)
