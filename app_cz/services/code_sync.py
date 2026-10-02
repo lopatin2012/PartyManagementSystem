@@ -67,6 +67,18 @@ ACTIVE_SYNC_STATUSES = [
     ProductionPartyStatusChoices.CLOSED,
 ]
 
+# Статусы задания, по которым синхронизируем КОДЫ маркировки.
+# Только «В работе» и «Закрыто» — по «Создано», «Завершено» и остальным
+# коды не тянем.
+CODE_SYNC_STATUSES = [
+    ProductionPartyStatusChoices.WORK,
+    ProductionPartyStatusChoices.CLOSED,
+]
+
+# Глубина окна синхронизации кодов по дате создания задания: сегодня и
+# предыдущие 3 дня. Более старые задания коды не тянут (иначе объём огромный).
+CODE_SYNC_WINDOW_DAYS = 3
+
 # Финальный статус задания — последняя синхронизация данных из него.
 FINAL_SYNC_STATUS = ProductionPartyStatusChoices.COMPLETED
 
@@ -334,6 +346,7 @@ def receive_external_task(data: dict) -> dict:
             end_work = _parse_dt(data.get('end_work'))
             date_marking = _parse_date_as_dt(data.get('date_marking'))
             date_expiration = _parse_date_as_dt(data.get('date_expiration'))
+            external_created = _parse_dt(data.get('datetime_create'))
             if start_work:
                 party.production_datetime_start = start_work
             if end_work:
@@ -342,6 +355,8 @@ def receive_external_task(data: dict) -> dict:
                 party.marking_datetime = date_marking
             if date_expiration:
                 party.expiration_datetime = date_expiration
+            if external_created:
+                party.external_created_at = external_created
 
             # Количества.
             # Поле может приходить с нулевым значением (0) — это валидное
@@ -862,9 +877,10 @@ def sync_all_external_tasks(progress_name: str = None) -> dict:
     Периодическая синхронизация данных с внешними сервисами заводов.
 
     Задания приходят во внешний сервис через приёмник (api/tasks/receive/).
-    Здесь выполняется синхронизация кодов маркировки:
-    - для заданий в активных статусах («Создано», «В работе», «Закрыто»);
-    - для заданий в финальном статусе («Завершено») — последняя синхронизация.
+    Здесь выполняется синхронизация кодов маркировки только по заданиям:
+    - в статусе «В работе» или «Закрыто» (CODE_SYNC_STATUSES);
+    - созданным не раньше, чем CODE_SYNC_WINDOW_DAYS дней назад
+      (по дате создания задания external_created_at), включая сегодняшние.
 
     Адрес сервера маркировки определяется по заводу партии (Factory.ip_address/port_address).
 
@@ -893,9 +909,14 @@ def sync_all_external_tasks(progress_name: str = None) -> dict:
         sync_status=ProductionPartySyncStatusChoices.SYNCED,
     ).update(sync_status=ProductionPartySyncStatusChoices.SYNCED)
 
-    # Синхронизация кодов для всех внешних заданий.
+    # Синхронизация кодов только по заданиям «В работе»/«Закрыто»,
+    # созданным за последние CODE_SYNC_WINDOW_DAYS дней (включая сегодня).
+    today = timezone.now().date()
+    since = today - timedelta(days=CODE_SYNC_WINDOW_DAYS)
     parties = ProductionParty.objects.filter(
         is_external=True,
+        status__in=CODE_SYNC_STATUSES,
+        external_created_at__date__gte=since,
     ).select_related(
         'uip__product_sku__product',
         'line__workshop__factory',
@@ -911,17 +932,7 @@ def sync_all_external_tasks(progress_name: str = None) -> dict:
                 total=total_parties,
                 message=f'Задание {party.external_number_task or party.id}',
             )
-        # Активные статусы — синхронизируем каждый цикл.
-        if party.status in ACTIVE_SYNC_STATUSES:
-            result = sync_codes_for_party(party)
-        # Финальный статус — последняя синхронизация (до первого успеха).
-        elif (
-                party.status == FINAL_SYNC_STATUS
-                and party.sync_status != ProductionPartySyncStatusChoices.SYNCED
-        ):
-            result = sync_codes_for_party(party)
-        else:
-            continue
+        result = sync_codes_for_party(party)
 
         summary['parties_synced'] += 1
         if result.get('has_error'):

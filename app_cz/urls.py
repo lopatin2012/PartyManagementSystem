@@ -41,6 +41,12 @@ urlpatterns = [
         views.api_report_uip,
         name='api-report-uip'
     ),
+    # Проверка УИП в рассинхроне: попытка резервирования номера в ЧЗ.
+    path(
+        'api/check-uip-cz/',
+        views.api_check_uip_cz,
+        name='api-check-uip-cz'
+    ),
     # Снятие с резерва партии.
     path(
         'api/close-party-reservation/',

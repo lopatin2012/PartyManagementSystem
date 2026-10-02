@@ -213,6 +213,11 @@
     background: rgba(220, 53, 69, 0.15);
 }
 
+.row-status.warning {
+    color: #FABB1C;
+    background: rgba(250, 187, 28, 0.15);
+}
+
 /* Номер УИП */
 .uip-number {
     font-family: 'Consolas', 'Monaco', monospace;
@@ -829,6 +834,42 @@
 
 .btn-reset:hover {
     background: rgba(220, 53, 69, 0.15);
+}
+
+/* Кнопка-фильтр «В рассинхроне» */
+.btn-desync {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem;
+    background: transparent;
+    color: #FABB1C;
+    border: 1px solid rgba(250, 187, 28, 0.5);
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-desync:hover {
+    background: rgba(250, 187, 28, 0.15);
+}
+
+.btn-desync.active {
+    background: rgba(250, 187, 28, 0.25);
+    border-color: #FABB1C;
+    color: #fff;
+}
+
+/* Кнопка «Проверить в ЧЗ» */
+.btn-check-cz {
+    color: #7fc8ff;
+}
+
+.btn-check-cz:hover:not(:disabled) {
+    background: rgba(127, 200, 255, 0.15);
 }
 
 /* === ФИЛЬТРЫ В ЗАГОЛОВКАХ ТАБЛИЦЫ === */

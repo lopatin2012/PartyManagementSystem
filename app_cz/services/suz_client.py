@@ -47,52 +47,120 @@ def get_true_api_auth_key() -> dict:
 
 def get_true_api_session_token() -> dict:
     """
-    Получает базовый токен сессии TrueAPI.
-    Может потребоваться для некоторых специфичных методов API.
+    Получает базовый токен сессии TrueAPI (unitedToken).
+
+    Контракт (как в «Молвест.Маркировка»): функция НИКОГДА не бросает
+    исключение — при любой ошибке возвращает
+    ``{'token': None, 'message': <причина>}``, чтобы вызывающий код
+    показывал понятную ошибку, а не падал с 500.
+
+    :return: {'uuid': str|None, 'token': str|None, 'message': str}
     """
+    # 1. Ключ для подписи (GET /auth/key).
     try:
-        # 1. Получаем ключи для подписи.
         auth_data = get_true_api_auth_key()
         row_uuid = auth_data['uuid']
         row_data = auth_data['data']
+    except Exception as e:
+        logger.error(f"Не удалось получить auth_key TrueAPI: {e}")
+        return {'uuid': None, 'token': None, 'message': str(e)}
 
-        # 2. Подписываем данные.
+    # 2. Подпись данных (прикреплённая).
+    try:
         _, signed_data = attached_signed_data(row_data)
+    except Exception as e:
+        logger.error(f"Не удалось подписать данные для TrueAPI: {e}")
+        return {'uuid': row_uuid, 'token': None, 'message': str(e)}
 
-        # 3. Берём активный аккаунт для получения ИНН.
-        account = SUZAccount.objects.filter(is_active=True).first()
-        if not account:
-            raise ValueError("Активная учётная запись СУЗ не найдена")
-
-        # 4. Формируем запрос.
-        url = SUZ.simple_sign_in
-        payload = {
+    if not signed_data:
+        return {
             'uuid': row_uuid,
-            'data': signed_data,
-            'inn': account.inn,
-            'unitedToken': True
+            'token': None,
+            'message': 'Сервис подписей не вернул подпись. Проверьте сертификат.',
         }
 
-        response = requests.post(
-            url,
-            json=payload,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            timeout=15
+    # 3. Активная учётная запись (ИНН).
+    account = SUZAccount.objects.filter(is_active=True).first()
+    if not account:
+        return {
+            'uuid': row_uuid,
+            'token': None,
+            'message': 'Активная учётная запись СУЗ не найдена.',
+        }
+
+    # 4. simpleSignIn → токен. При unitedToken ЧЗ возвращает `uuidToken`
+    #    (как в «Молвест.Маркировка»), поэтому читаем его ПЕРВЫМ.
+    url = SUZ.simple_sign_in
+    payload = {
+        'uuid': row_uuid,
+        'data': signed_data,
+        'inn': account.inn,
+        'unitedToken': True,
+    }
+    headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Сетевая ошибка при получении токена TrueAPI: {e}")
+        return {
+            'uuid': row_uuid,
+            'token': None,
+            'message': f'Ошибка соединения с TrueAPI: {e}',
+        }
+
+    if response.status_code != 200:
+        detail = _extract_true_api_error(response)
+        logger.error(
+            f"TrueAPI simpleSignIn вернул {response.status_code}: {detail}"
         )
-        response.raise_for_status()
+        return {'uuid': row_uuid, 'token': None, 'message': detail}
 
+    try:
         result = response.json()
-        token = result.get('token') or result.get('uuidToken')
+    except ValueError:
+        return {
+            'uuid': row_uuid,
+            'token': None,
+            'message': f'TrueAPI вернул некорректный ответ: {response.text[:200]}',
+        }
 
-        if not token:
-            raise ValueError("Токен отсутствует в ответе сервера Честного Знака")
+    # При unitedToken=True ЧЗ отдаёт uuidToken.
+    token = result.get('uuidToken') or result.get('token')
+    if not token:
+        return {
+            'uuid': row_uuid,
+            'token': None,
+            'message': (
+                'TrueAPI не вернул токен (uuidToken/token). '
+                f'Ответ: {str(result)[:200]}'
+            ),
+        }
 
-        logger.info("Базовый токен сессии TrueAPI успешно получен")
-        return {'uuid': row_uuid, 'token': token}
+    logger.info("Базовый токен сессии TrueAPI успешно получен")
+    return {'uuid': row_uuid, 'token': token, 'message': 'Токен успешно получен.'}
 
-    except Exception as e:
-        logger.error(f"Ошибка получения базового токена TrueAPI: {e}")
-        raise
+
+def _extract_true_api_error(response) -> str:
+    """Человекочитаемое сообщение об ошибке из ответа TrueAPI."""
+    text = (response.text or '').strip()
+    if text:
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        if isinstance(data, dict):
+            for key in ('error_message', 'errorMessage', 'message', 'error', 'description'):
+                value = data.get(key)
+                if value:
+                    text = str(value)
+                    break
+    if len(text) > 300:
+        text = text[:300]
+    return f'HTTP {response.status_code}: {text}' if text else f'HTTP {response.status_code}'
 
 
 def get_true_api_dynamic_token(row_uuid: str, signed_data: str) -> str:
@@ -143,10 +211,19 @@ def get_true_api_dynamic_token(row_uuid: str, signed_data: str) -> str:
         raise
 
 
-def refresh_suz_dynamic_token() -> bool:
+# Сколько попыток обновления динамического токена делаем за один вызов.
+SUZ_TOKEN_REFRESH_ATTEMPTS = 3
+
+# Порог «пора обновить»: если до истечения токена осталось меньше этого
+# времени — обновляем заранее.
+SUZ_TOKEN_REFRESH_THRESHOLD = timedelta(hours=1)
+
+
+def _refresh_suz_dynamic_token_once() -> bool:
     """
-    Полный цикл обновления динамического токена СУЗ.
-    Возвращает True при успехе, False при неудаче.
+    Одна попытка полного цикла обновления динамического токена СУЗ.
+
+    :return: True при успехе, False при неудаче (исключения не пробрасывает).
     """
     try:
         # 1. Получаем ключи для подписи.
@@ -157,6 +234,10 @@ def refresh_suz_dynamic_token() -> bool:
         # 2. Подписываем данные (прикреплённая подпись).
         _, signed_data = attached_signed_data(row_data)
 
+        if not signed_data:
+            logger.error("Сервис подписей не вернул подпись для токена СУЗ")
+            return False
+
         # 3. Получаем динамический токен.
         dynamic_token = get_true_api_dynamic_token(row_uuid, signed_data)
 
@@ -164,25 +245,102 @@ def refresh_suz_dynamic_token() -> bool:
         try:
             uuid.UUID(dynamic_token)
         except ValueError:
-            logger.error(
-                f"Получен некорректный UUID: {dynamic_token}")
+            logger.error(f"Получен некорректный UUID: {dynamic_token}")
             return False
 
-        # 5. Сохраняем в БД.
+        # 4. Сохраняем в БД.
         account = SUZAccount.objects.filter(is_active=True).first()
         if not account:
             logger.error("Активная учётная запись СУЗ не найдена перед сохранением")
             return False
 
         account.dynamic_token = dynamic_token
-        # ЧЗ обычно выдаёт токен на 10 часов. Сохраняем с небольшим запасом на 8 часов.
+        # ЧЗ обычно выдаёт токен на 10 часов. Сохраняем с запасом на 8 часов.
         account.token_expires_at = timezone.now() + timedelta(hours=8)
-
         account.save(update_fields=['dynamic_token', 'token_expires_at', 'updated_at'])
 
-        logger.info(f"Динамический токен успешно обновлён и сохранён для {account.certificate_name}")
+        logger.info(
+            f"Динамический токен успешно обновлён и сохранён "
+            f"для {account.certificate_name}"
+        )
         return True
 
     except Exception as e:
-        logger.error(f"Критическая ошибка при обновлении токена СУЗ: {e}")
+        logger.error(f"Ошибка попытки обновления токена СУЗ: {e}")
         return False
+
+
+def refresh_suz_dynamic_token(max_attempts: int = None) -> bool:
+    """
+    Полный цикл обновления динамического токена СУЗ с повторами.
+
+    При неудаче повторяем до `max_attempts` раз (по умолчанию
+    SUZ_TOKEN_REFRESH_ATTEMPTS = 3). После исчерпания попыток больше не
+    пробуем и возвращаем False.
+
+    :return: True при успехе, False при неудаче.
+    """
+    if max_attempts is None:
+        max_attempts = SUZ_TOKEN_REFRESH_ATTEMPTS
+    max_attempts = max(1, int(max_attempts))
+
+    for attempt in range(1, max_attempts + 1):
+        if _refresh_suz_dynamic_token_once():
+            return True
+        logger.warning(
+            f"Обновление токена СУЗ: попытка {attempt}/{max_attempts} "
+            f"не удалась"
+        )
+
+    logger.error(
+        f"Не удалось обновить динамический токен СУЗ за {max_attempts} попыток"
+    )
+    return False
+
+
+def ensure_suz_token_valid(
+        min_remaining: timedelta = None,
+        max_attempts: int = None,
+) -> dict:
+    """
+    Гарантирует, что динамический токен СУЗ не истечёт в ближайшее время.
+
+    Если до истечения осталось меньше `min_remaining` (по умолчанию
+    SUZ_TOKEN_REFRESH_THRESHOLD = 1 час) — обновляем заранее, с повторами.
+
+    :return: {'refreshed': bool, 'skipped': bool, 'message': str}
+    """
+    if min_remaining is None:
+        min_remaining = SUZ_TOKEN_REFRESH_THRESHOLD
+
+    account = SUZAccount.objects.filter(is_active=True).first()
+    if not account:
+        return {
+            'refreshed': False,
+            'skipped': True,
+            'message': 'Активная учётная запись СУЗ не найдена.',
+        }
+
+    now = timezone.now()
+    if account.dynamic_token and account.token_expires_at:
+        if account.token_expires_at > now + min_remaining:
+            return {
+                'refreshed': False,
+                'skipped': True,
+                'message': (
+                    f'Токен действителен до '
+                    f'{account.token_expires_at:%Y-%m-%d %H:%M}. '
+                    f'Обновление не требуется.'
+                ),
+            }
+
+    ok = refresh_suz_dynamic_token(max_attempts=max_attempts)
+    return {
+        'refreshed': ok,
+        'skipped': False,
+        'message': (
+            'Динамический токен СУЗ обновлён заранее.'
+            if ok
+            else 'Не удалось обновить динамический токен СУЗ.'
+        ),
+    }

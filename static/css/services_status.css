@@ -6,6 +6,7 @@
 .services-status-panel {
     display: flex;
     flex-wrap: wrap;
+    align-items: flex-start;
     gap: 1rem;
     margin: 0.5rem 2rem;
     padding: 1rem;
@@ -26,6 +27,7 @@
     display: flex;
     flex-direction: column;
     min-height: 120px;
+    align-self: flex-start;
 }
 
 /* Цветовые индикаторы статуса */
@@ -77,6 +79,55 @@
     font-size: 1.1rem;
     font-weight: 700;
     color: var(--accent-green);
+}
+
+/* ==========================================
+   Список заводов (компактные чипы).
+   ========================================== */
+.factories-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem 0.6rem;
+    align-content: start;
+}
+
+.factory-chip {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+    padding: 0.25rem 0.5rem;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 0.78rem;
+    line-height: 1.2;
+}
+
+.factory-chip .factory-dot {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #dc3545;
+    box-shadow: 0 0 0 2px rgba(220, 53, 69, 0.18);
+}
+
+.factory-chip.chip-ok .factory-dot {
+    background: var(--accent-green);
+    box-shadow: 0 0 0 2px rgba(187, 207, 50, 0.18);
+}
+
+.factory-chip .factory-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.factory-chip.chip-fail .factory-name {
+    color: #f2a9af;
 }
 
 /* ==========================================

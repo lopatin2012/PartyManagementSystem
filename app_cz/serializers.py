@@ -656,3 +656,10 @@ class ReportUIPSerializer(serializers.Serializer):
     uip_id = serializers.UUIDField(
         help_text='UUID УИП, по которому нужно отправить отчёт о нанесении'
     )
+
+
+class CheckUipCzSerializer(serializers.Serializer):
+    """Запрос проверки УИП в ЧЗ: попытка резервирования номера."""
+    uip_id = serializers.UUIDField(
+        help_text='UUID УИП (в рассинхроне), который нужно проверить в ЧЗ'
+    )

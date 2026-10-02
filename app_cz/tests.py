@@ -212,7 +212,8 @@ class SyncCodesErrorDetailsTests(TestCase):
             production_party='1',
             external_number_task='task-1',
             is_external=True,
-            status=ProductionPartyStatusChoices.CREATED,
+            status=ProductionPartyStatusChoices.WORK,
+            external_created_at=timezone.now(),
         )
 
     def test_error_details_collected(self):
@@ -841,6 +842,7 @@ class SyncProgressReportingTests(TestCase):
             external_number_task='task-progress-1',
             is_external=True,
             status=ProductionPartyStatusChoices.WORK,
+            external_created_at=timezone.now(),
         )
 
     def test_sync_all_reports_codes_phase(self):
@@ -875,3 +877,418 @@ class SyncProgressReportingTests(TestCase):
 
         phases = [call[1].get('phase') for call in mock_progress.call_args_list]
         self.assertIn('Выгрузка заданий', phases)
+
+
+
+class TrueApiSessionTokenTests(TestCase):
+    """Получение токена TrueAPI: безопасный контракт (без исключений)."""
+
+    def setUp(self):
+        from app_cz.models import SUZAccount
+        self.account = SUZAccount.objects.create(
+            is_active=True,
+            certificate_name='Тестовый сертификат',
+            serial_number='0123456789ABCDEF',
+            inn='7701234567',
+            oms_id='oms-1',
+            device_name='Устройство',
+            connection_identifier='conn-1',
+        )
+
+    def _ok_response(self, payload):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = payload
+        response.text = str(payload)
+        return response
+
+    @patch('app_cz.services.suz_client.attached_signed_data',
+           return_value=('data', 'SIGNED'))
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           return_value={'uuid': 'u-1', 'data': 'data'})
+    @patch('app_cz.services.suz_client.requests.post')
+    def test_returns_uuid_token_when_united_token(self, mock_post, *_):
+        """При unitedToken читаем uuidToken (как в «Молвест.Маркировка»)."""
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        mock_post.return_value = self._ok_response({'uuidToken': 'TOKEN-UUID'})
+
+        result = get_true_api_session_token()
+
+        self.assertEqual(result['token'], 'TOKEN-UUID')
+        self.assertTrue(result['uuid'])
+
+    @patch('app_cz.services.suz_client.attached_signed_data',
+           return_value=('data', 'SIGNED'))
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           return_value={'uuid': 'u-1', 'data': 'data'})
+    @patch('app_cz.services.suz_client.requests.post')
+    def test_falls_back_to_token_field(self, mock_post, *_):
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        mock_post.return_value = self._ok_response({'token': 'TOKEN-PLAIN'})
+
+        result = get_true_api_session_token()
+        self.assertEqual(result['token'], 'TOKEN-PLAIN')
+
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           side_effect=Exception('Сервис Честного Знака не отвечает'))
+    def test_auth_key_error_returns_no_token_not_raise(self, *_):
+        """Сбой /auth/key не бросает — возвращает token=None и message."""
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        result = get_true_api_session_token()
+
+        self.assertIsNone(result['token'])
+        self.assertIn('не отвечает', result['message'])
+
+    @patch('app_cz.services.suz_client.attached_signed_data',
+           side_effect=RuntimeError('Сервис подписей недоступен'))
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           return_value={'uuid': 'u-1', 'data': 'data'})
+    def test_sign_error_returns_no_token_not_raise(self, *_):
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        result = get_true_api_session_token()
+
+        self.assertIsNone(result['token'])
+        self.assertIn('подпис', result['message'].lower())
+
+    @patch('app_cz.services.suz_client.attached_signed_data',
+           return_value=('data', 'SIGNED'))
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           return_value={'uuid': 'u-1', 'data': 'data'})
+    @patch('app_cz.services.suz_client.requests.post')
+    def test_http_error_returns_message(self, mock_post, *_):
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        response = Mock()
+        response.status_code = 401
+        response.json.return_value = {'error_message': 'Неверная подпись'}
+        response.text = '{"error_message": "Неверная подпись"}'
+        mock_post.return_value = response
+
+        result = get_true_api_session_token()
+
+        self.assertIsNone(result['token'])
+        self.assertIn('Неверная подпись', result['message'])
+
+
+class ReservePartiesTokenFailureTests(TestCase):
+    """Резерв партий не падает 500 при сбое получения токена TrueAPI."""
+
+    def test_reserve_returns_error_dict_on_token_failure(self):
+        with patch.object(
+            party_service,
+            'get_true_api_session_token',
+            return_value={'uuid': None, 'token': None,
+                          'message': 'Сервис ЧЗ не отвечает'},
+        ):
+            result = party_service.reserve_parties_honest_sign(
+                product_group='milk',
+                party_numbers=['046017510249302610010000-2640501'],
+            )
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('Сервис ЧЗ не отвечает', result['message_error'])
+
+
+
+class CodeSyncFilterTests(TestCase):
+    """Синхронизация кодов: только «В работе»/«Закрыто» и за последние 3 дня."""
+
+    def setUp(self):
+        from app_factory.models import Line, Workshop
+
+        self.factory = Factory.objects.create(
+            name='Завод фильтра', ip_address='127.0.0.1', port_address=8030,
+        )
+        workshop = Workshop.objects.create(factory=self.factory, name='Цех')
+        self.line = Line.objects.create(workshop=workshop, name='Линия')
+
+    def _party(self, number, status, created):
+        return ProductionParty.objects.create(
+            line=self.line,
+            production_party=number,
+            external_number_task=number,
+            is_external=True,
+            status=status,
+            external_created_at=created,
+        )
+
+    def _synced_numbers(self):
+        synced = []
+
+        def _fake(party):
+            synced.append(party.external_number_task)
+            return {'has_error': False, 'synced_count': 0, 'updated_count': 0}
+
+        with patch.object(code_sync, 'sync_codes_for_party', side_effect=_fake):
+            code_sync.sync_all_external_tasks()
+        return synced
+
+    def test_only_work_and_closed_recent(self):
+        now = timezone.now()
+        self._party('work', ProductionPartyStatusChoices.WORK, now)
+        self._party('closed', ProductionPartyStatusChoices.CLOSED, now)
+        self._party('created', ProductionPartyStatusChoices.CREATED, now)
+        self._party('completed', ProductionPartyStatusChoices.COMPLETED, now)
+
+        synced = self._synced_numbers()
+
+        self.assertIn('work', synced)
+        self.assertIn('closed', synced)
+        self.assertNotIn('created', synced)
+        self.assertNotIn('completed', synced)
+
+    def test_old_tasks_excluded(self):
+        from datetime import timedelta as _td
+        now = timezone.now()
+        self._party('today', ProductionPartyStatusChoices.WORK, now)
+        self._party('d3', ProductionPartyStatusChoices.WORK, now - _td(days=3))
+        self._party('d4', ProductionPartyStatusChoices.WORK, now - _td(days=4))
+
+        synced = self._synced_numbers()
+
+        self.assertIn('today', synced)
+        self.assertIn('d3', synced)
+        self.assertNotIn('d4', synced)
+
+    def test_receive_maps_datetime_create(self):
+        code_sync.receive_external_task({
+            'uuid_str': 'task-dt-1',
+            'status': 'В работе',
+            'datetime_create': '2026-10-01T12:30:00.000Z',
+        })
+
+        party = ProductionParty.objects.get(external_number_task='task-dt-1')
+        self.assertIsNotNone(party.external_created_at)
+        self.assertEqual(party.external_created_at.year, 2026)
+        self.assertEqual(party.external_created_at.month, 10)
+        self.assertEqual(party.external_created_at.day, 1)
+
+
+
+class GenerateCzUipFormatTests(TestCase):
+    """Генерация через ЧЗ отправляет productionDate полным ISO 8601 (…Z)."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+
+    def test_generate_party_numbers_sends_iso_datetime(self):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {
+            'inn': '7701234567',
+            'partyNumberInfo': [{
+                'partyNumber': '04601751026019261002000000000000',
+                'gtin': '04601751026019',
+                'productionDate': '2026-10-02T00:00:00.000Z',
+            }],
+        }
+        response.text = ''
+
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={'uuid': 'u', 'token': 'T', 'message': 'ok'},
+        ), patch(
+            'app_cz.services.party_service.requests.post', return_value=response,
+        ) as mock_post:
+            result = party_service.generate_party_numbers(
+                party_info_list=[{
+                    'gtin': '04601751026019',
+                    'productionDate': '2026-10-02T00:00:00.000Z',
+                    'count': 1,
+                }],
+                product_group='milk',
+            )
+
+        self.assertFalse(result['is_error'])
+        sent = mock_post.call_args.kwargs['data']
+        self.assertIn('T00:00:00.000Z', sent)
+
+    def test_cz_uip_uses_iso_production_date(self):
+        from datetime import date as _date
+
+        captured = {}
+
+        def _fake_generate(party_info_list, product_group):
+            captured['info'] = party_info_list
+            return {
+                'is_error': False,
+                'lst_party_number_info': [{
+                    'partyNumber': '04601751026019261002000000000000',
+                }],
+            }
+
+        with patch.object(
+            party_service, 'generate_party_numbers', side_effect=_fake_generate,
+        ):
+            result = party_service._generate_cz_uip(
+                self.sku, self.sku.product.consumer_gtin, _date(2026, 10, 2),
+            )
+
+        self.assertFalse(result.get('is_error'))
+        info = captured['info'][0]
+        self.assertEqual(info['productionDate'], '2026-10-02T00:00:00.000Z')
+
+
+
+class CheckUipCzEndpointTests(TestCase):
+    """POST /cz/api/check-uip-cz/ — проверка УИП в рассинхроне."""
+
+    def setUp(self):
+        from app_cz import views as views_module
+        self.views_module = views_module
+        self.sku = _create_sku()
+        self.uip = UIP.objects.create(
+            product_sku=self.sku,
+            number='04601751026019260101500320000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+            is_desync=True,
+        )
+        self.url = '/cz/api/check-uip-cz/'
+
+    def _login(self):
+        user = User.objects.create_superuser(
+            username='admin', password='pass', email='a@a.a'
+        )
+        self.client.force_login(user)
+        return user
+
+    def test_requires_admin(self):
+        response = self.client.post(
+            self.url, data={'uip_id': str(self.uip.id)},
+            content_type='application/json',
+        )
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_successful_reserve_restores_local_status(self):
+        self._login()
+        with patch.object(
+            self.views_module, 'reserve_party_numbers_cz',
+            return_value={
+                'is_error': False, 'message_error': 'ОК',
+                'lst_party_number_info': [{'partyNumber': self.uip.number}],
+            },
+        ):
+            response = self.client.post(
+                self.url, data={'uip_id': str(self.uip.id)},
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body['is_error'])
+        self.assertEqual(body['result'], 'reserved')
+        self.uip.refresh_from_db()
+        self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertFalse(self.uip.is_desync)
+
+    def test_failed_reserve_reports_registered(self):
+        self._login()
+        with patch.object(
+            self.views_module, 'reserve_party_numbers_cz',
+            return_value={'is_error': True, 'message_error': 'Номер уже занят'},
+        ):
+            response = self.client.post(
+                self.url, data={'uip_id': str(self.uip.id)},
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 400)
+        body = response.json()
+        self.assertEqual(body['result'], 'registered')
+        self.uip.refresh_from_db()
+        # Статус не меняется при отказе ЧЗ.
+        self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertTrue(self.uip.is_desync)
+
+    def test_unknown_uip_returns_404(self):
+        self._login()
+        response = self.client.post(
+            self.url,
+            data={'uip_id': '00000000-0000-0000-0000-000000000000'},
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 404)
+
+
+
+class RefreshSuzTokenRetryTests(TestCase):
+    """Обновление динамического токена СУЗ: повторы и проактивность."""
+
+    def setUp(self):
+        from app_cz.models import SUZAccount
+        self.account = SUZAccount.objects.create(
+            is_active=True,
+            certificate_name='Сертификат',
+            serial_number='0123456789ABCDEF',
+            inn='7701234567',
+            oms_id='oms-1',
+            device_name='Устройство',
+            connection_identifier='conn-1',
+        )
+
+    def test_refresh_retries_three_times_then_stops(self):
+        from app_cz.services import suz_client
+
+        with patch.object(
+            suz_client, '_refresh_suz_dynamic_token_once', return_value=False,
+        ) as mock_once:
+            result = suz_client.refresh_suz_dynamic_token()
+
+        self.assertFalse(result)
+        self.assertEqual(mock_once.call_count, 3)
+
+    def test_refresh_stops_after_first_success(self):
+        from app_cz.services import suz_client
+
+        with patch.object(
+            suz_client, '_refresh_suz_dynamic_token_once', return_value=True,
+        ) as mock_once:
+            result = suz_client.refresh_suz_dynamic_token()
+
+        self.assertTrue(result)
+        self.assertEqual(mock_once.call_count, 1)
+
+    def test_ensure_refreshes_within_one_hour(self):
+        from app_cz.services import suz_client
+
+        self.account.dynamic_token = 'TOKEN'
+        self.account.token_expires_at = timezone.now() + timedelta(minutes=30)
+        self.account.save(update_fields=['dynamic_token', 'token_expires_at'])
+
+        with patch.object(
+            suz_client, 'refresh_suz_dynamic_token', return_value=True,
+        ) as mock_refresh:
+            result = suz_client.ensure_suz_token_valid()
+
+        self.assertTrue(mock_refresh.called)
+        self.assertTrue(result['refreshed'])
+
+    def test_ensure_skips_when_token_fresh(self):
+        from app_cz.services import suz_client
+
+        self.account.dynamic_token = 'TOKEN'
+        self.account.token_expires_at = timezone.now() + timedelta(hours=5)
+        self.account.save(update_fields=['dynamic_token', 'token_expires_at'])
+
+        with patch.object(
+            suz_client, 'refresh_suz_dynamic_token', return_value=True,
+        ) as mock_refresh:
+            result = suz_client.ensure_suz_token_valid()
+
+        self.assertFalse(mock_refresh.called)
+        self.assertTrue(result['skipped'])
+
+    def test_ensure_refreshes_when_no_token(self):
+        from app_cz.services import suz_client
+
+        with patch.object(
+            suz_client, 'refresh_suz_dynamic_token', return_value=True,
+        ) as mock_refresh:
+            result = suz_client.ensure_suz_token_valid()
+
+        self.assertTrue(mock_refresh.called)
+        self.assertTrue(result['refreshed'])
