@@ -1200,7 +1200,9 @@ def _generate_cz_uip(
     """Генерирует УИП через Честный Знак (статус RESERVED_CZ)."""
     party_info = [{
         'gtin': gtin,
-        'productionDate': production_date.strftime('%Y-%m-%d'),
+        # TrueAPI ожидает полный ISO 8601 datetime (а не только дату):
+        # «2026-10-02T00:00:00.000Z». Формат как в «Молвест.Маркировка».
+        'productionDate': production_date.strftime('%Y-%m-%dT%H:%M:%S.000Z'),
         'count': 1,
     }]
 

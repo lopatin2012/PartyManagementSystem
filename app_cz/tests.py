@@ -1066,3 +1066,68 @@ class CodeSyncFilterTests(TestCase):
         self.assertEqual(party.external_created_at.year, 2026)
         self.assertEqual(party.external_created_at.month, 10)
         self.assertEqual(party.external_created_at.day, 1)
+
+
+
+class GenerateCzUipFormatTests(TestCase):
+    """Генерация через ЧЗ отправляет productionDate полным ISO 8601 (…Z)."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+
+    def test_generate_party_numbers_sends_iso_datetime(self):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {
+            'inn': '7701234567',
+            'partyNumberInfo': [{
+                'partyNumber': '04601751026019261002000000000000',
+                'gtin': '04601751026019',
+                'productionDate': '2026-10-02T00:00:00.000Z',
+            }],
+        }
+        response.text = ''
+
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={'uuid': 'u', 'token': 'T', 'message': 'ok'},
+        ), patch(
+            'app_cz.services.party_service.requests.post', return_value=response,
+        ) as mock_post:
+            result = party_service.generate_party_numbers(
+                party_info_list=[{
+                    'gtin': '04601751026019',
+                    'productionDate': '2026-10-02T00:00:00.000Z',
+                    'count': 1,
+                }],
+                product_group='milk',
+            )
+
+        self.assertFalse(result['is_error'])
+        sent = mock_post.call_args.kwargs['data']
+        self.assertIn('T00:00:00.000Z', sent)
+
+    def test_cz_uip_uses_iso_production_date(self):
+        from datetime import date as _date
+
+        captured = {}
+
+        def _fake_generate(party_info_list, product_group):
+            captured['info'] = party_info_list
+            return {
+                'is_error': False,
+                'lst_party_number_info': [{
+                    'partyNumber': '04601751026019261002000000000000',
+                }],
+            }
+
+        with patch.object(
+            party_service, 'generate_party_numbers', side_effect=_fake_generate,
+        ):
+            result = party_service._generate_cz_uip(
+                self.sku, self.sku.product.consumer_gtin, _date(2026, 10, 2),
+            )
+
+        self.assertFalse(result.get('is_error'))
+        info = captured['info'][0]
+        self.assertEqual(info['productionDate'], '2026-10-02T00:00:00.000Z')
