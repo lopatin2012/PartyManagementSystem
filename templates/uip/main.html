@@ -168,6 +168,11 @@
             (зарезервировано: <span class="highlight">{{ reserved_count }}</span>)
         </div>
         <div class="toolbar-actions">
+            <a class="btn-desync {% if desync_only %}active{% endif %}"
+               href="{% if desync_only %}{% if query_string %}?{{ query_string }}{% else %}?{% endif %}{% else %}{% if query_string %}?{{ query_string }}&{% else %}?{% endif %}desync=1{% endif %}"
+               title="Показать только УИП в рассинхроне (is_desync)">
+                ⚠ В рассинхроне
+            </a>
             <button type="submit" form="uipFilterForm" class="btn-apply">Применить фильтры</button>
             {% if has_active_filters %}
                 <button type="button" class="btn-reset" onclick="resetFilters()">
@@ -333,6 +338,23 @@
                             <td class="date-cell">{{ uip.created_at|date:"d.m.Y H:i" }}</td>
                             <td class="actions-cell">
                                 {% if is_admin %}
+                                    <!-- Проверка УИП в ЧЗ (для рассинхрона). -->
+                                    {% if uip.is_desync %}
+                                        <button
+                                            class="btn-row-action btn-check-cz btn-icon"
+                                            data-uip-id="{{ uip.id }}"
+                                            data-uip-number="{{ uip.number }}"
+                                            data-url="{% url 'api-check-uip-cz' %}"
+                                            data-csrf="{{ csrf_token }}"
+                                            title="Проверить в ЧЗ: попытаться зарезервировать номер"
+                                            onclick="checkUipInCz(this)">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                <circle cx="11" cy="11" r="7"></circle>
+                                                <path d="M21 21l-4.35-4.35"></path>
+                                                <path d="M8.5 11l1.8 1.8L14 9"></path>
+                                            </svg>
+                                        </button>
+                                    {% endif %}
                                     <!-- Кнопки для взаимодействуя с УИП -->
                                     {% if uip.status == 'draft' %}
                                         <button

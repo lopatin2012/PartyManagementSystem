@@ -228,3 +228,73 @@ class ProductControlViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 404)
+
+
+
+@STATIC_OVERRIDE
+class UipListViewDesyncFilterTests(TestCase):
+    """Фильтр «В рассинхроне» на странице /uip/."""
+
+    def setUp(self):
+        for patcher in (
+            patch(
+                'config.context_processors.check_factories',
+                return_value={'is_ok': True, 'factories': []},
+            ),
+            patch(
+                'app_helper.service_helper.diagnose_service',
+                return_value={'is_available': True, 'checks': {'summary': {'ok': True}}},
+            ),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+        self.admin = User.objects.create_superuser(
+            username='admin-uip', password='pass', email='a@a.a',
+        )
+        self.client.force_login(self.admin)
+
+    def _uip(self, number, is_desync):
+        from app_factory.models import ProductSKU
+        from app_uip.models import UIP, PartyStatusChoices
+
+        product = Product.objects.create(
+            group=ProductGroupChoices.MILK,
+            name=f'P {number}',
+            shelf_life_in_days=14,
+            item_condition=StateConditionChoices.READY_ORDER_KM,
+            card_status=CardStateChoices.PUBLISHED,
+        )
+        ProductPackaging.objects.create(
+            product=product,
+            level=PackagingLevelChoices.UNIT,
+            gtin=f'0460175102{number}',
+            quantity_inside=1,
+        )
+        sku = ProductSKU.objects.create(product=product, article=number)
+        return UIP.objects.create(
+            product_sku=sku,
+            number=f'0460175102{number}00101500320000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+            is_desync=is_desync,
+        )
+
+    def test_desync_filter_shows_only_desync(self):
+        self._uip('11', True)
+        self._uip('12', False)
+
+        response = self.client.get(reverse('uip_list') + '?desync=1')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['total_count'], 1)
+        self.assertTrue(response.context['desync_only'])
+
+    def test_without_filter_shows_all(self):
+        self._uip('13', True)
+        self._uip('14', False)
+
+        response = self.client.get(reverse('uip_list'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['total_count'], 2)
+        self.assertFalse(response.context['desync_only'])

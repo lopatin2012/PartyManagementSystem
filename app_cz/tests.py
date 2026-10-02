@@ -1,4 +1,4 @@
-# app_cz/tests.py
+﻿# app_cz/tests.py
 
 """
 Тесты устойчивости синхронизации с внешним сервисом «Молвест.Маркировка».
@@ -1131,3 +1131,84 @@ class GenerateCzUipFormatTests(TestCase):
         self.assertFalse(result.get('is_error'))
         info = captured['info'][0]
         self.assertEqual(info['productionDate'], '2026-10-02T00:00:00.000Z')
+
+
+
+class CheckUipCzEndpointTests(TestCase):
+    """POST /cz/api/check-uip-cz/ — проверка УИП в рассинхроне."""
+
+    def setUp(self):
+        from app_cz import views as views_module
+        self.views_module = views_module
+        self.sku = _create_sku()
+        self.uip = UIP.objects.create(
+            product_sku=self.sku,
+            number='04601751026019260101500320000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+            is_desync=True,
+        )
+        self.url = '/cz/api/check-uip-cz/'
+
+    def _login(self):
+        user = User.objects.create_superuser(
+            username='admin', password='pass', email='a@a.a'
+        )
+        self.client.force_login(user)
+        return user
+
+    def test_requires_admin(self):
+        response = self.client.post(
+            self.url, data={'uip_id': str(self.uip.id)},
+            content_type='application/json',
+        )
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_successful_reserve_restores_local_status(self):
+        self._login()
+        with patch.object(
+            self.views_module, 'reserve_party_numbers_cz',
+            return_value={
+                'is_error': False, 'message_error': 'ОК',
+                'lst_party_number_info': [{'partyNumber': self.uip.number}],
+            },
+        ):
+            response = self.client.post(
+                self.url, data={'uip_id': str(self.uip.id)},
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body['is_error'])
+        self.assertEqual(body['result'], 'reserved')
+        self.uip.refresh_from_db()
+        self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertFalse(self.uip.is_desync)
+
+    def test_failed_reserve_reports_registered(self):
+        self._login()
+        with patch.object(
+            self.views_module, 'reserve_party_numbers_cz',
+            return_value={'is_error': True, 'message_error': 'Номер уже занят'},
+        ):
+            response = self.client.post(
+                self.url, data={'uip_id': str(self.uip.id)},
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 400)
+        body = response.json()
+        self.assertEqual(body['result'], 'registered')
+        self.uip.refresh_from_db()
+        # Статус не меняется при отказе ЧЗ.
+        self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertTrue(self.uip.is_desync)
+
+    def test_unknown_uip_returns_404(self):
+        self._login()
+        response = self.client.post(
+            self.url,
+            data={'uip_id': '00000000-0000-0000-0000-000000000000'},
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 404)

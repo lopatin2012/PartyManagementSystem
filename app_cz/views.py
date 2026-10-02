@@ -35,6 +35,7 @@ from app_cz.services.suz_client import get_true_api_auth_key, refresh_suz_dynami
 from app_cz.services.party_service import (
     generate_party_numbers,
     reserve_parties_honest_sign,
+    reserve_party_numbers_cz,
     get_all_reserved_parties,
     close_party_reservation, generate_uip, find_sku_by_gtin,
     sync_parties_from_cz, reserve_manual_uip,
@@ -68,6 +69,8 @@ from app_cz.serializers import (
     ReserveDraftUIPSerializer,
     # Отправка отчёта о нанесении по УИП.
     ReportUIPSerializer,
+    # Проверка УИП в ЧЗ (попытка резервирования).
+    CheckUipCzSerializer,
 )
 from app_factory.models import Product, ProductSKU, NationalCatalogProduct, CardStateChoices, StateConditionChoices
 
@@ -902,10 +905,114 @@ def api_report_uip(request):
     )
 
 
+@extend_schema(
+    tags=['Честный Знак'],
+    summary="Проверка УИП в ЧЗ (попытка резервирования)",
+    request=CheckUipCzSerializer,
+    responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+)
+@api_view(['POST'])
+@permission_classes([IsAppAdmin])
+def api_check_uip_cz(request):
+    """
+    Проверка УИП в рассинхроне: пробуем зарезервировать номер в ЧЗ.
+
+    - Успех резервирования → номер был свободен (резерв снят) → переводим
+      локальный статус в RESERVED_LOCAL, снимаем is_desync.
+    - Отказ ЧЗ → номер уже зарегистрирован/занят в ЧЗ → статус не меняем,
+      возвращаем понятное сообщение.
+
+    Доступно только администраторам.
+    """
+    serializer = CheckUipCzSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(
+            {
+                'is_error': True,
+                'message': 'Некорректные данные запроса',
+                'errors': serializer.errors,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    uip_id = serializer.validated_data['uip_id']
+
+    try:
+        uip = UIP.objects.select_related('product_sku__product').get(id=uip_id)
+    except UIP.DoesNotExist:
+        return Response(
+            {'is_error': True, 'message': 'УИП не найден.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not uip.number:
+        return Response(
+            {'is_error': True, 'message': 'У УИП отсутствует номер.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    product_group = uip.product_sku.product.group
+    if not product_group:
+        return Response(
+            {'is_error': True, 'message': 'У продукта не указана товарная группа.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Прямое резервирование в ЧЗ (без проверки локальных дубликатов).
+    result = reserve_party_numbers_cz(
+        product_group=product_group,
+        party_numbers=[uip.number],
+    )
+
+    if result.get('is_error'):
+        # ЧЗ не дал зарезервировать — считаем номер зарегистрированным/занятым.
+        return Response(
+            {
+                'is_error': True,
+                'message': (
+                    f'ЧЗ не дал зарезервировать номер — вероятно, УИП уже '
+                    f'зарегистрирован. Ответ ЧЗ: {result.get("message_error", "—")}'
+                ),
+                'result': 'registered',
+                'number': uip.number,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Успех: номер был свободен → возвращаем в резерв.
+    uip.reservation_date = timezone.now().date()
+    uip.is_desync = False
+    uip.description = 'Проверка в ЧЗ: номер зарезервирован повторно (резерв снят)'
+    uip.save(update_fields=[
+        'reservation_date', 'is_desync', 'description', 'updated_at',
+    ])
+
+    uip.change_status(
+        PartyStatusChoices.RESERVED_LOCAL,
+        source='api',
+        note='Проверка в ЧЗ: номер зарезервирован повторно',
+        changed_by=(
+            request.user if request.user.is_authenticated else None
+        ),
+    )
+
+    return Response(
+        {
+            'is_error': False,
+            'message': (
+                f'УИП {uip.number} зарезервирован повторно — резерв был снят.'
+            ),
+            'result': 'reserved',
+            'number': uip.number,
+            'new_status': PartyStatusChoices.RESERVED_LOCAL,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
 # ==========================================
 # Синхронизация с внешним сервисом (Молвест.Маркировка).
 # ==========================================
-
 @extend_schema(
     tags=['Честный Знак'],
     summary="Приёмник задания из внешнего сервиса",

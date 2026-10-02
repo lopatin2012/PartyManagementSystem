@@ -373,6 +373,87 @@ def reserve_parties_honest_sign(
         }
 
 
+def reserve_party_numbers_cz(
+        product_group: str,
+        party_numbers: list[str],
+) -> dict:
+    """
+    Резервирует номера партий в ЧЗ БЕЗ проверки локальных дубликатов.
+
+    Нужно для проверки УИП в рассинхроне: пробуем зарезервировать номер в ЧЗ
+    напрямую. Успех — номер был свободен (резерв снят/не было), ошибка ЧЗ —
+    номер уже зарегистрирован/занят.
+
+    :return: {'is_error': bool, 'message_error': str,
+              'lst_party_number_info': list}
+    """
+    if not party_numbers:
+        return {'is_error': True, 'message_error': 'Список партий пуст.'}
+
+    invalid = [p for p in party_numbers if not validate_party_number(p)]
+    if invalid:
+        return {
+            'is_error': True,
+            'message_error': (
+                f'Некорректный формат номеров партий: {", ".join(invalid[:3])}...'
+            ),
+        }
+
+    token_result = get_true_api_session_token()
+    token = token_result.get('token')
+    if not token:
+        return {
+            'is_error': True,
+            'message_error': (
+                token_result.get('message')
+                or 'Не удалось получить токен сессии TrueAPI. Проверьте настройки СУЗ.'
+            ),
+        }
+
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+    }
+    data = {'pg': product_group, 'partyNumber': party_numbers}
+    json_dumps_data = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
+
+    try:
+        response = requests.post(
+            SUZ.reservation_party,
+            headers=headers,
+            data=json_dumps_data,
+            timeout=15,
+        )
+        if response.status_code != 200:
+            logger.info(
+                f'Проверка в ЧЗ: резерв отклонён {response.status_code}: '
+                f'{response.text[:300]}'
+            )
+            try:
+                body = response.json()
+            except ValueError:
+                body = {}
+            error_msg = (
+                body.get('errorMessage')
+                or body.get('error_message')
+                or f'ЧЗ вернул {response.status_code}'
+            )
+            return {'is_error': True, 'message_error': error_msg}
+
+        return {
+            'is_error': False,
+            'message_error': 'Ошибки отсутствуют',
+            'lst_party_number_info': response.json().get('partyNumberInfo', []),
+        }
+    except requests.exceptions.RequestException as e:
+        logger.error(f'Сетевая ошибка при проверке номера в ЧЗ: {e}')
+        return {
+            'is_error': True,
+            'message_error': f'Ошибка соединения с ЧЗ: {str(e)}',
+        }
+
+
 def get_all_reserved_parties() -> dict:
     """
     Получает список всех зарезервированных партий со стороны ЧЗ.

@@ -145,6 +145,8 @@ class UIPListView(UipPageAccessMixin, TemplateView):
         prod_to = get.get('prod_to', '')
         res_from = get.get('res_from', '')
         res_to = get.get('res_to', '')
+        # Показать только УИП в рассинхроне (is_desync=True).
+        desync_only = get.get('desync') == '1'
 
         # === Базовый queryset ===
         # has_task — есть ли у УИП привязанное задание (для кнопки отчёта).
@@ -157,6 +159,8 @@ class UIPListView(UipPageAccessMixin, TemplateView):
         ).order_by('-created_at')
 
         # === Применяем фильтры ===
+        if desync_only:
+            queryset = queryset.filter(is_desync=True)
         if status_filter and status_filter != 'all':
             queryset = queryset.filter(status=status_filter)
         if number_filter:
@@ -213,7 +217,8 @@ class UIPListView(UipPageAccessMixin, TemplateView):
 
         # Есть ли активные фильтры (для кнопки сброса и подсветки заголовков).
         has_active_filters = bool(
-            (status_filter and status_filter != 'all')
+            desync_only
+            or (status_filter and status_filter != 'all')
             or number_filter or article_filter
             or prod_from or prod_to or res_from or res_to
         )
@@ -239,6 +244,7 @@ class UIPListView(UipPageAccessMixin, TemplateView):
             'current_prod_to': prod_to,
             'current_res_from': res_from,
             'current_res_to': res_to,
+            'desync_only': desync_only,
             'has_active_filters': has_active_filters,
 
             # Список статусов для выпадающего списка.
