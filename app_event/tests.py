@@ -10,7 +10,7 @@ from django.contrib.auth.models import Group
 from django.test import TestCase
 from django.utils import timezone
 
-from app_event.models import EventLog, HealthCheck, NotificationRecipient
+from app_event.models import HealthCheck, NotificationRecipient
 from app_event.services import health as health_service
 
 User = get_user_model()
@@ -36,7 +36,8 @@ class HealthCheckTests(TestCase):
         )
         self.monitor.groups.add(self.group)
 
-    def test_first_run_records_and_alerts(self):
+    def test_first_run_does_not_alert_until_confirmed(self):
+        """Первый сбой не шлёт письмо — ждём подтверждения (порог)."""
         with patch.object(
             health_service, '_diagnose', return_value=_fake_checks(False)
         ), patch.object(
@@ -45,31 +46,104 @@ class HealthCheckTests(TestCase):
             result = health_service.run_health_checks()
 
         self.assertEqual(HealthCheck.objects.filter(service='signatures').count(), 1)
+        mock_alert.assert_not_called()
+        self.assertEqual(result['failed'], [])
+
+    def test_alert_after_confirmed_attempts(self):
+        """Письмо о сбое — только когда серия неудач достигла порога."""
+        with patch.object(health_service, '_confirm_attempts', return_value=3):
+            with patch.object(
+                health_service, '_diagnose', return_value=_fake_checks(False)
+            ), patch.object(health_service, '_send_alert') as mock_alert:
+                health_service.run_health_checks()  # 1
+                health_service.run_health_checks()  # 2
+                self.assertEqual(mock_alert.call_count, 0)
+
+                result = health_service.run_health_checks()  # 3 — подтверждено
+
+        mock_alert.assert_called_once()
+        self.assertIn('СБОЙ', mock_alert.call_args[0][0])
+        self.assertIn('signatures', result['failed'])
+
+    def test_no_duplicate_alert_while_still_failing(self):
+        """Повторные неудачи после подтверждения письма не шлют."""
+        with patch.object(health_service, '_confirm_attempts', return_value=2):
+            with patch.object(
+                health_service, '_diagnose', return_value=_fake_checks(False)
+            ), patch.object(health_service, '_send_alert') as mock_alert:
+                health_service.run_health_checks()  # 1
+                health_service.run_health_checks()  # 2 — письмо
+                health_service.run_health_checks()  # 3 — без письма
+                health_service.run_health_checks()  # 4 — без письма
+
+        mock_alert.assert_called_once()
+
+    def test_transient_failure_does_not_alert(self):
+        """Одиночное «мигание» (успех после сбоя до порога) не шлёт писем."""
+        with patch.object(health_service, '_confirm_attempts', return_value=3):
+            with patch.object(
+                health_service, '_diagnose', return_value=_fake_checks(False)
+            ), patch.object(health_service, '_send_alert') as mock_alert:
+                health_service.run_health_checks()  # 1 сбой
+
+            with patch.object(
+                health_service, '_diagnose', return_value=_fake_checks(True)
+            ), patch.object(health_service, '_send_alert') as mock_alert:
+                health_service.run_health_checks()  # успех
+
+        mock_alert.assert_not_called()
+
+    def test_recovery_includes_failure_details(self):
+        """В письме о восстановлении — число сбоев и оформленный HTML."""
+        with patch.object(health_service, '_confirm_attempts', return_value=2):
+            with patch.object(
+                health_service, '_diagnose', return_value=_fake_checks(False)
+            ), patch.object(health_service, '_send_alert'):
+                health_service.run_health_checks()
+                health_service.run_health_checks()  # подтверждённый сбой
+
+            with patch.object(
+                health_service, '_diagnose', return_value=_fake_checks(True)
+            ), patch.object(health_service, '_send_alert') as mock_alert:
+                result = health_service.run_health_checks()  # восстановление
+
         self.assertIn('signatures', result['failed'])
         mock_alert.assert_called_once()
-        self.assertTrue(
-            EventLog.objects.filter(level='critical').exists()
-        )
+        subject, body = mock_alert.call_args[0][0], mock_alert.call_args[0][1]
+        self.assertIn('ВОССТАНОВЛЕНО', subject)
+        self.assertIn('Время восстановления', body)
+        self.assertIn('Сбоев подряд перед восстановлением', body)
+        # HTML передан третьим аргументом (html_message).
+        html = mock_alert.call_args.kwargs.get('html_message')
+        self.assertIn('<div', html)
 
-    def test_no_alert_on_unchanged_state(self):
-        with patch.object(
-            health_service, '_diagnose', return_value=_fake_checks(False)
-        ), patch.object(health_service, '_send_alert') as mock_alert:
-            health_service.run_health_checks()  # первая запись
-            result = health_service.run_health_checks()  # состояние не изменилось
+    def test_no_alert_on_recovery_without_confirmed_failure(self):
+        """Если подтверждённого сбоя не было — о восстановлении не пишем."""
+        with patch.object(health_service, '_confirm_attempts', return_value=3):
+            with patch.object(
+                health_service, '_diagnose', return_value=_fake_checks(False)
+            ), patch.object(health_service, '_send_alert'):
+                health_service.run_health_checks()  # 1 сбой (не подтверждён)
 
-        mock_alert.assert_called_once()  # только за первый прогон
+            with patch.object(
+                health_service, '_diagnose', return_value=_fake_checks(True)
+            ), patch.object(health_service, '_send_alert') as mock_alert:
+                result = health_service.run_health_checks()  # успех
+
+        mock_alert.assert_not_called()
         self.assertEqual(result['failed'], [])
 
     def test_alert_on_recovery(self):
-        with patch.object(
-            health_service, '_diagnose', return_value=_fake_checks(False)
-        ), patch.object(health_service, '_send_alert') as mock_alert:
-            health_service.run_health_checks()
-        with patch.object(
-            health_service, '_diagnose', return_value=_fake_checks(True)
-        ), patch.object(health_service, '_send_alert') as mock_alert:
-            result = health_service.run_health_checks()
+        with patch.object(health_service, '_confirm_attempts', return_value=2):
+            with patch.object(
+                health_service, '_diagnose', return_value=_fake_checks(False)
+            ), patch.object(health_service, '_send_alert'):
+                health_service.run_health_checks()
+                health_service.run_health_checks()
+            with patch.object(
+                health_service, '_diagnose', return_value=_fake_checks(True)
+            ), patch.object(health_service, '_send_alert') as mock_alert:
+                result = health_service.run_health_checks()
 
         self.assertIn('signatures', result['failed'])
         mock_alert.assert_called_once()

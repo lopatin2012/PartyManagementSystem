@@ -332,6 +332,9 @@ ONEC_URL = os.getenv('ONEC_URL', '')
 HEALTH_CHECK_ENABLED = os.getenv('HEALTH_CHECK_ENABLED', '1') == '1'
 # Включить email-алерты при смене состояния сервисов.
 SYSTEM_ALERTS_ENABLED = os.getenv('SYSTEM_ALERTS_ENABLED', '1') == '1'
+# Сколько подряд неудачных проверок подтверждают сбой, прежде чем слать алерт
+# (защита от одиночных сетевых «миганий»). Проверки идут каждые 5 минут.
+HEALTH_CONFIRM_ATTEMPTS = int(os.getenv('HEALTH_CONFIRM_ATTEMPTS', '3'))
 # Сколько дней хранить историю HealthCheck.
 HEALTH_RETENTION_DAYS = int(os.getenv('HEALTH_RETENTION_DAYS', '28'))
 
