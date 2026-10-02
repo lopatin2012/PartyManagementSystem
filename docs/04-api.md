@@ -148,8 +148,14 @@
 | `POST /cz/uip/generate/` | Генерация УИП из веба (`mode`: local/cz/manual; при `manual` — `party_number`) |
 | `GET /cz/uip/check-number/` | Проверка номера УИП в СУП и резерве ЧЗ (`?number=...`) |
 | `POST /cz/api/reserve-draft-uip/` | Резервирование черновой УИП |
+| `POST /cz/api/check-uip-cz/` | Проверка УИП в рассинхроне: попытка резерва в ЧЗ (`{uip_id}`) |
 
 **Генерация номеров:** тело `{product_group, party_info_list: [{gtin, productionDate, count}]}`.
+`productionDate` — полный ISO 8601 datetime (например, `2026-10-02T00:00:00.000Z`).
+
+**Проверка в ЧЗ (`/cz/api/check-uip-cz/`):** пробует зарезервировать номер напрямую в ЧЗ.
+Успех → `{result: "reserved"}`, УИП переводится в `reserved_local`, снимается `is_desync`.
+Отказ ЧЗ → `{result: "registered"}` (HTTP 400), статус не меняется.
 
 ## Синхронизация с «Молвест.Маркировка»
 
