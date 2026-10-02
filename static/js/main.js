@@ -8,6 +8,12 @@ let nkSyncState = null;
 async function loadSchedulerStatus() {
     try {
         const response = await fetch('/scheduler/status/');
+        if (response.status === 403) {
+            // Не администратор или истекла сессия — прекращаем опрос,
+            // чтобы не засорять лог повторяющимися 403.
+            stopSchedulerPolling();
+            return;
+        }
         if (!response.ok) return;
 
         const data = await response.json();
@@ -88,9 +94,21 @@ function formatTimeLeft(ms) {
 }
 
 let schedulerPollTimer = null;
+let schedulerStatusTimer = null;
+
+function stopSchedulerPolling() {
+    if (schedulerStatusTimer) {
+        clearInterval(schedulerStatusTimer);
+        schedulerStatusTimer = null;
+    }
+    if (schedulerPollTimer) {
+        clearInterval(schedulerPollTimer);
+        schedulerPollTimer = null;
+    }
+}
 
 function openSchedulerModal() {
-    document.getElementById('schedulerModal').classList.remove('hidden');
+    document.getElementById('schedulerModal')?.classList.remove('hidden');
     loadSchedulerStatus();
     // Пока окно открыто — обновляем чаще, чтобы видеть прогресс задач.
     if (!schedulerPollTimer) {
@@ -99,7 +117,7 @@ function openSchedulerModal() {
 }
 
 function closeSchedulerModal() {
-    document.getElementById('schedulerModal').classList.add('hidden');
+    document.getElementById('schedulerModal')?.classList.add('hidden');
     if (schedulerPollTimer) {
         clearInterval(schedulerPollTimer);
         schedulerPollTimer = null;
@@ -329,5 +347,9 @@ document.addEventListener('keydown', function (e) {
 });
 
 // Запуск
-loadSchedulerStatus();
-setInterval(loadSchedulerStatus, 60000);
+// Виджет фоновых задач рендерится только администраторам (base.html: {% if is_admin %}).
+// Для остальных пользователей /scheduler/status/ отвечает 403, поэтому не опрашиваем его.
+if (document.getElementById('schedulerWidget')) {
+    loadSchedulerStatus();
+    schedulerStatusTimer = setInterval(loadSchedulerStatus, 60000);
+}
