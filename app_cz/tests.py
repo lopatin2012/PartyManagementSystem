@@ -502,6 +502,44 @@ class GenerateUipManualEndpointTests(TestCase):
         self.assertEqual(response.status_code, 400)
 
 
+class GenerateUipCzEndpointTests(TestCase):
+    """POST /cz/uip/generate/ в режиме mode=cz (генерация через ЧЗ)."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.url = '/cz/uip/generate/'
+        self.admin = User.objects.create_superuser(
+            username='admin', password='pass', email='a@a.a'
+        )
+
+    def test_cz_generate_creates_reserved_cz_uip(self):
+        """Регресс: mode=cz не должен падать 500 (sku передаётся объектом)."""
+        self.client.force_login(self.admin)
+        number = '04601751026019261002000000000000'
+        with patch(
+            'app_cz.services.party_service.generate_party_numbers',
+            return_value={
+                'is_error': False,
+                'lst_party_number_info': [
+                    {'partyNumber': number, 'gtin': '04601751026019'},
+                ],
+            },
+        ):
+            response = self.client.post(
+                self.url,
+                {
+                    'product_sku_id': str(self.sku.id),
+                    'production_date': '2026-10-02',
+                    'mode': 'cz',
+                },
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200, response.content.decode())
+        uip = UIP.objects.get(number=number)
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_CZ)
+
+
 class GenerateUipTypeSyncTests(TestCase):
     """Внешний generate-uip: расхождение типа УИП синхронизирует продукт в Молвест."""
 
