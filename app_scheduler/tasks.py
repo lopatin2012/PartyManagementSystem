@@ -30,7 +30,7 @@ def refresh_suz_token_task() -> dict:
     """
 
     from app_cz.models import SUZAccount
-    from app_cz.services.suz_client import refresh_suz_dynamic_token
+    from app_cz.services.suz_client import ensure_suz_token_valid
 
     # Проверка в необходимости обновления динамического токена.
     account = SUZAccount.objects.filter(is_active=True).first()
@@ -43,23 +43,20 @@ def refresh_suz_token_task() -> dict:
             'message': message
         }
 
-    if account.dynamic_token and account.token_expires_at:
-        # Обновление, если осталось меньше 2 часов.
-        # Ранее порог был 30 минут — при интервале планировщика 6 часов
-        # это создавало 4-часовой простой (токен живёт 8ч, на 6-м часу
-        # он ещё "валиден" по порогу 30мин, а на 8-м уже истёк).
-        if account.token_expires_at > timezone.now() + timedelta(hours=2):
-            message = f"СУЗ: токен действителен до {account.token_expires_at:%Y-%m-%d %H:%M}. Обновление не требуется"
-            logger.info(message)
-            return {
-                'status': 'skipped',
-                'is_error': False,
-                'message': message
-            }
+    # Обновляем заранее — как только до истечения осталось меньше 1 часа.
+    # При неудаче ensure_suz_token_valid делает до 3 попыток и дальше не пробует.
+    result = ensure_suz_token_valid()
 
-    success = refresh_suz_dynamic_token()
+    if result['skipped']:
+        message = f"СУЗ: {result['message']}"
+        logger.info(message)
+        return {
+            'status': 'skipped',
+            'is_error': False,
+            'message': message
+        }
 
-    if success:
+    if result['refreshed']:
         message = 'СУЗ: динамический токен успешно обновлён'
         logger.info(message)
         return {
@@ -68,7 +65,7 @@ def refresh_suz_token_task() -> dict:
             'message': message
         }
     else:
-        message = f'СУЗ: не удалось обновить динамический токен'
+        message = 'СУЗ: не удалось обновить динамический токен'
         logger.error(message)
         raise RuntimeError(message)
 

@@ -1,4 +1,4 @@
-﻿# app_cz/tests.py
+# app_cz/tests.py
 
 """
 Тесты устойчивости синхронизации с внешним сервисом «Молвест.Маркировка».
@@ -1212,3 +1212,83 @@ class CheckUipCzEndpointTests(TestCase):
             content_type='application/json',
         )
         self.assertEqual(response.status_code, 404)
+
+
+
+class RefreshSuzTokenRetryTests(TestCase):
+    """Обновление динамического токена СУЗ: повторы и проактивность."""
+
+    def setUp(self):
+        from app_cz.models import SUZAccount
+        self.account = SUZAccount.objects.create(
+            is_active=True,
+            certificate_name='Сертификат',
+            serial_number='0123456789ABCDEF',
+            inn='7701234567',
+            oms_id='oms-1',
+            device_name='Устройство',
+            connection_identifier='conn-1',
+        )
+
+    def test_refresh_retries_three_times_then_stops(self):
+        from app_cz.services import suz_client
+
+        with patch.object(
+            suz_client, '_refresh_suz_dynamic_token_once', return_value=False,
+        ) as mock_once:
+            result = suz_client.refresh_suz_dynamic_token()
+
+        self.assertFalse(result)
+        self.assertEqual(mock_once.call_count, 3)
+
+    def test_refresh_stops_after_first_success(self):
+        from app_cz.services import suz_client
+
+        with patch.object(
+            suz_client, '_refresh_suz_dynamic_token_once', return_value=True,
+        ) as mock_once:
+            result = suz_client.refresh_suz_dynamic_token()
+
+        self.assertTrue(result)
+        self.assertEqual(mock_once.call_count, 1)
+
+    def test_ensure_refreshes_within_one_hour(self):
+        from app_cz.services import suz_client
+
+        self.account.dynamic_token = 'TOKEN'
+        self.account.token_expires_at = timezone.now() + timedelta(minutes=30)
+        self.account.save(update_fields=['dynamic_token', 'token_expires_at'])
+
+        with patch.object(
+            suz_client, 'refresh_suz_dynamic_token', return_value=True,
+        ) as mock_refresh:
+            result = suz_client.ensure_suz_token_valid()
+
+        self.assertTrue(mock_refresh.called)
+        self.assertTrue(result['refreshed'])
+
+    def test_ensure_skips_when_token_fresh(self):
+        from app_cz.services import suz_client
+
+        self.account.dynamic_token = 'TOKEN'
+        self.account.token_expires_at = timezone.now() + timedelta(hours=5)
+        self.account.save(update_fields=['dynamic_token', 'token_expires_at'])
+
+        with patch.object(
+            suz_client, 'refresh_suz_dynamic_token', return_value=True,
+        ) as mock_refresh:
+            result = suz_client.ensure_suz_token_valid()
+
+        self.assertFalse(mock_refresh.called)
+        self.assertTrue(result['skipped'])
+
+    def test_ensure_refreshes_when_no_token(self):
+        from app_cz.services import suz_client
+
+        with patch.object(
+            suz_client, 'refresh_suz_dynamic_token', return_value=True,
+        ) as mock_refresh:
+            result = suz_client.ensure_suz_token_valid()
+
+        self.assertTrue(mock_refresh.called)
+        self.assertTrue(result['refreshed'])

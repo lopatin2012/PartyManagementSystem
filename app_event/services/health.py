@@ -297,6 +297,17 @@ def _diagnose() -> dict:
             },
         }
 
+    # Проактивно обновляем токен СУЗ заранее (за ~1 час до истечения),
+    # т.к. проверка идёт каждые 5 минут — это закрывает разрыв между
+    # редкими запусками задачи refresh_suz_token (6 ч при жизни токена 8 ч).
+    try:
+        from app_cz.services.suz_client import ensure_suz_token_valid
+        refresh_result = ensure_suz_token_valid()
+        if not refresh_result.get('skipped') and refresh_result.get('refreshed'):
+            logger.info('Health-check: динамический токен СУЗ обновлён заранее.')
+    except Exception as e:
+        logger.warning(f'Health-check: не удалось проверить/обновить токен СУЗ: {e}')
+
     suz = check_suz_token()
     suz_details = {}
     try:
