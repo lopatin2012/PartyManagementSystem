@@ -115,17 +115,19 @@
                 <span class="status-title">Молвест.Маркировка</span>
             </div>
             <div class="status-body">
-                {% for factory in status_factories.factories %}
-                    <div class="workshop-status">
-                        <span class="workshop-name">{{ factory.name }}</span>
-                        <span class="status-badge-small {% if factory.is_ok %}status-success{% else %}status-danger{% endif %}"
-                              title="{% if factory.is_ok %}Доступен: {{ factory.message }}{% else %}{{ factory.message }}{% endif %}">
-                            {% if factory.is_ok %}Работает{% else %}Недоступно{% endif %}
-                        </span>
+                {% if status_factories.factories %}
+                    <div class="factories-grid">
+                        {% for factory in status_factories.factories %}
+                            <div class="factory-chip {% if factory.is_ok %}chip-ok{% else %}chip-fail{% endif %}"
+                                 title="{{ factory.name }}: {% if factory.is_ok %}доступен{% else %}недоступен — {{ factory.message }}{% endif %}">
+                                <span class="factory-dot"></span>
+                                <span class="factory-name">{{ factory.name }}</span>
+                            </div>
+                        {% endfor %}
                     </div>
-                {% empty %}
+                {% else %}
                     <p class="status-text">Заводы не настроены</p>
-                {% endfor %}
+                {% endif %}
             </div>
         </div>
 
