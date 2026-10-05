@@ -274,6 +274,7 @@ function buildLocalNumber(gtin, dateStr, article, type, party) {
     const [yyyy, mm, dd] = dateStr.split('-');
     const datePart = yyyy.slice(2) + mm + dd;
     const partyPart = (party || '000').padStart(3, '0');
+    article = (article || '').slice(0, 5);
 
     if (type === 2) {
         const base = gtin + datePart + article + partyPart;
@@ -301,6 +302,7 @@ function buildPreviewHint(gtin, dateStr, article, type, party, number) {
     const [yyyy, mm, dd] = dateStr.split('-');
     const datePart = yyyy.slice(2) + mm + dd;
     const partyPart = (party || '000').padStart(3, '0');
+    article = (article || '').slice(0, 5);
 
     if (type === 2) {
         const rest = number.slice(gtin.length + datePart.length + article.length + 3);
