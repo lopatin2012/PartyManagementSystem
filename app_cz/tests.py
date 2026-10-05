@@ -821,6 +821,51 @@ class BuildLocalPartyNumberNaturaTests(TestCase):
         self.assertEqual(len(number), 32)
 
 
+class BuildLocalPartyNumberArticleTruncationTests(TestCase):
+    """Артикул в локальном УИП обрезается до первых 5 символов."""
+
+    GTIN = '04601751026019'
+    PRODUCTION_DATE = date(2026, 1, 15)
+
+    def _build(self, article, type_formation_uip, party='000'):
+        from app_cz.services.party_service import build_local_party_number
+
+        return build_local_party_number(
+            self.GTIN,
+            self.PRODUCTION_DATE,
+            article=article,
+            party=party,
+            type_formation_uip=type_formation_uip,
+        )
+
+    def test_general_article_truncated_to_five(self):
+        number = self._build('12345-1', TypeFormationUIP.general.value)
+
+        self.assertEqual(number, '04601751026019260115123450000000')
+        self.assertNotIn('12345-1', number)
+
+    def test_article_shorter_than_five_kept(self):
+        number = self._build('12345', TypeFormationUIP.general.value)
+
+        self.assertEqual(number, '04601751026019260115123450000000')
+
+    def test_party_beginning_article_truncated(self):
+        number = self._build(
+            '12345-1', TypeFormationUIP.party_beginning.value, party='7',
+        )
+
+        self.assertEqual(number, '04601751026019260115123457000000')
+        self.assertNotIn('12345-1', number)
+
+    def test_party_end_article_truncated(self):
+        number = self._build(
+            '12345-1', TypeFormationUIP.party_end.value, party='7',
+        )
+
+        self.assertEqual(number, '04601751026019260115123450000007')
+        self.assertNotIn('12345-1', number)
+
+
 class DeletedTaskSyncStatusTests(TestCase):
     """Удалённое задание считается синхронизированным («Ожидают» не висит)."""
 

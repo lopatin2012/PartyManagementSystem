@@ -89,7 +89,7 @@ def build_local_party_number(
     """
     uip = '' # Начальный УИП.
     date_str = production_date.strftime('%y%m%d')
-    article_part = article
+    article_part = article[:5]
 
     if party is None:
       return uip
