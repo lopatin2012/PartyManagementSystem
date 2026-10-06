@@ -312,8 +312,9 @@ UIP_RESERVE_NOTIFICATION_EMAILS = [
     for email in os.getenv('UIP_RESERVE_NOTIFICATION_EMAILS', '').split(',')
     if email.strip()
 ]
-# Срок годности продукта (дней), ниже которого накапливается резерв УИП.
-UIP_SHORT_SHELF_LIFE_DAYS = int(os.getenv('UIP_SHORT_SHELF_LIFE_DAYS', '40'))
+# Максимальный срок годности продукта (дней, включительно), при котором
+# накапливается резерв УИП.
+UIP_SHORT_SHELF_LIFE_DAYS = int(os.getenv('UIP_SHORT_SHELF_LIFE_DAYS', '45'))
 # Режим черновиков УИП: 1 — создавать черновики без обращения к ЧЗ (по
 # умолчанию), 0 — сразу резервировать номера в ЧЗ. Явный параметр skip_cz
 # в запросе имеет приоритет над настройкой.

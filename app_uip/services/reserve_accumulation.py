@@ -4,9 +4,9 @@
 Накопление резерва УИП на несколько дней вперёд.
 
 Для активных SKU обычного формата (`TypeFormationUIP.general`), у продукта
-которых короткий срок годности (менее `UIP_SHORT_SHELF_LIFE_DAYS`, по умолчанию
-40 дней), поддерживается резерв зарезервированных УИП на окно дат
-`[сегодня; сегодня + ProductSKU.reserve_days]`.
+которых короткий срок годности (не более `UIP_SHORT_SHELF_LIFE_DAYS`,
+включительно, по умолчанию 45 дней), поддерживается резерв зарезервированных
+УИП на окно дат `[сегодня; сегодня + ProductSKU.reserve_days]`.
 
 Правила:
 * доливается всё окно — пробелов по датам не остаётся;
@@ -50,8 +50,8 @@ RESERVE_TYPE_FORMATION = TypeFormationUIP.general
 
 
 def _short_shelf_life_days() -> int:
-    """Порог срока годности (дней), ниже которого накапливаем резерв."""
-    return int(getattr(settings, 'UIP_SHORT_SHELF_LIFE_DAYS', 40) or 40)
+    """Порог срока годности (дней, включительно), до которого накапливаем резерв."""
+    return int(getattr(settings, 'UIP_SHORT_SHELF_LIFE_DAYS', 45) or 45)
 
 
 def _short_shelf_life_skus():
@@ -62,7 +62,7 @@ def _short_shelf_life_skus():
         ProductSKU.objects.filter(
             is_active=True,
             product__is_active=True,
-            product__shelf_life_in_days__lt=_short_shelf_life_days(),
+            product__shelf_life_in_days__lte=_short_shelf_life_days(),
             type_formation_uip=RESERVE_TYPE_FORMATION,
         )
         .select_related('product')

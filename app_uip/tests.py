@@ -1234,7 +1234,7 @@ class ReserveAccumulationTests(TestCase):
         self.assertEqual(UIP.objects.filter(product_sku=self.sku).count(), 3)
 
     def test_excludes_long_shelf_life_other_type_and_inactive(self):
-        long_sku = self._make_product('LONG', '04601751026020', shelf_life=40)
+        long_sku = self._make_product('LONG', '04601751026020', shelf_life=46)
         other_type = self._make_product(
             'OTHER', '04601751026021', shelf_life=14,
             type_formation=TypeFormationUIP.party_beginning,
@@ -1250,6 +1250,18 @@ class ReserveAccumulationTests(TestCase):
         self.assertEqual(UIP.objects.filter(product_sku=inactive).count(), 0)
         self.assertEqual(result['created'], 3)
         self.assertEqual(UIP.objects.filter(product_sku=self.sku).count(), 3)
+
+    def test_shelf_life_boundary_45_included_46_excluded(self):
+        boundary = self._make_product('B45', '04601751026030', shelf_life=45)
+        boundary.reserve_days = 2
+        boundary.save(update_fields=['reserve_days'])
+        too_long = self._make_product('B46', '04601751026031', shelf_life=46)
+
+        result = accumulate_short_shelf_life_reserve(pause_seconds=0)
+
+        self.assertEqual(UIP.objects.filter(product_sku=boundary).count(), 3)
+        self.assertEqual(UIP.objects.filter(product_sku=too_long).count(), 0)
+        self.assertEqual(result['created'], 6)  # self.sku (3) + boundary (3)
 
     def test_existing_active_skipped_and_deleted_restored(self):
         active_date = self.today + timedelta(days=1)
