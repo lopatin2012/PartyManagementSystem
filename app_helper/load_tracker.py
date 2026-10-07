@@ -56,9 +56,18 @@ def get_load_stats() -> dict:
     is_high = rph >= HIGH_LOAD_THRESHOLD
 
     if is_high:
+        message = (
+            f'Высокая нагрузка: {rph} запросов/час '
+            f'(порог {HIGH_LOAD_THRESHOLD}), за минуту {rpm}'
+        )
         logger.warning(
             f'ВЫСОКАЯ НАГРУЗКА СЕРВИСА: {rph} запросов/час '
             f'(лимит {HIGH_LOAD_THRESHOLD}). Текущая минута: {rpm}.'
+        )
+    else:
+        message = (
+            f'Нагрузка в норме: {rph} запросов/час '
+            f'(порог {HIGH_LOAD_THRESHOLD}), за минуту {rpm}'
         )
 
     return {
@@ -66,4 +75,5 @@ def get_load_stats() -> dict:
         'requests_per_hour': rph,
         'threshold_per_hour': HIGH_LOAD_THRESHOLD,
         'is_high_load': is_high,
+        'message': message,
     }

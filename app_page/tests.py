@@ -524,3 +524,36 @@ class ProductDetailFactoryScopeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'A-2')
         self.assertContains(response, 'Линия B')
+
+
+@STATIC_OVERRIDE
+class StatusPanelLoadMessageTests(TestCase):
+    """Панель «Сервис» показывает читаемую причину высокой нагрузки."""
+
+    def test_load_failure_message_rendered(self):
+        with patch(
+            'config.context_processors.check_factories',
+            return_value={'is_ok': True, 'factories': []},
+        ), patch(
+            'app_helper.service_helper.diagnose_service',
+            return_value={
+                'is_available': False,
+                'checks': {
+                    'load': {
+                        'name': 'Нагрузка',
+                        'ok': False,
+                        'message': (
+                            'Высокая нагрузка: 20000 запросов/час '
+                            '(порог 10000), за минуту 300'
+                        ),
+                    },
+                    'summary': {'name': 'Общая сводка', 'ok': False},
+                },
+            },
+        ):
+            response = self.client.get(reverse('home'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Нагрузка')
+        self.assertContains(response, 'Высокая нагрузка')
+        self.assertContains(response, '20000')

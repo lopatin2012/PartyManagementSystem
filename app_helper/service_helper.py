@@ -163,46 +163,72 @@ def diagnose_service() -> dict:
     # 1. Доступность БД.
     try:
         connection.ensure_connection()
-        checks['database'] = {'ok': True, 'message': 'База данных доступна'}
+        checks['database'] = {
+            'name': 'База данных',
+            'ok': True,
+            'message': 'База данных доступна',
+        }
     except Exception as e:
         logger.error(f'Самодиагностика: БД недоступна: {e}')
-        checks['database'] = {'ok': False, 'message': str(e)}
+        checks['database'] = {
+            'name': 'База данных',
+            'ok': False,
+            'message': str(e),
+        }
 
     # 2. СУЗ (интеграция с Честным Знаком).
     suz = check_suz_token()
-    checks['suz'] = {'ok': suz['is_ok'], 'message': suz['message']}
+    checks['suz'] = {
+        'name': 'СУЗ (Честный Знак)',
+        'ok': suz['is_ok'],
+        'message': suz['message'],
+    }
 
     # 3. Сервис подписей.
     sig = check_signatures()
-    checks['signatures'] = {'ok': sig['is_ok'], 'message': sig['message']}
+    checks['signatures'] = {
+        'name': 'Сервис подписей',
+        'ok': sig['is_ok'],
+        'message': sig['message'],
+    }
 
     # 4. Серверы заводов (Молвест.Маркировка).
     factories = check_factories()
+    items = factories['factories']
+    ok_factories = sum(1 for item in items if item['is_ok'])
     checks['factories'] = {
+        'name': 'Заводы (Молвест.Маркировка)',
         'ok': factories['is_ok'],
         'message': (
-            'Все заводы доступны'
-            if factories['is_ok']
-            else 'Не все заводы доступны'
+            'Заводы не настроены'
+            if not items
+            else (
+                f'Доступны {ok_factories} из {len(items)} заводов'
+                if factories['is_ok']
+                else f'Доступны не все заводы: {ok_factories} из {len(items)}'
+            )
         ),
-        'items': factories['factories'],
+        'items': items,
     }
 
     # 5. Нагрузка.
     load = get_load_stats()
     checks['load'] = {
+        'name': 'Нагрузка',
         'ok': not load['is_high_load'],
         **load,
     }
 
     # 6. Общая сводка по сервису.
     failed = [name for name, c in checks.items() if not c['ok']]
+    failed_names = [checks[name].get('name', name) for name in failed]
     checks['summary'] = {
+        'name': 'Общая сводка',
         'ok': not failed,
         'message': (
             'Все проверки пройдены'
             if not failed
-            else f'Проблемы: {", ".join(failed)}'
+            else f'Проблемы: {", ".join(failed_names)}'
         ),
         'checks_total': len(checks),
         'checks_failed': len(failed),

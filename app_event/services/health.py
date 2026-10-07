@@ -369,12 +369,7 @@ def _diagnose() -> dict:
     checks['load'] = {
         'name': 'Нагрузка',
         'ok': not load['is_high_load'],
-        'message': (
-            f'В норме: {load["requests_per_hour"]} запросов/час'
-            if not load['is_high_load']
-            else f'Высокая: {load["requests_per_hour"]} запросов/час '
-                 f'(порог {load["threshold_per_hour"]})'
-        ),
+        'message': load['message'],
         'details': load,
     }
 

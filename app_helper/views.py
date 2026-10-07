@@ -50,7 +50,11 @@ def api_status_service(request):
     if diagnosis['is_available']:
         message = 'Сервис работает'
     else:
-        failed = [name for name, c in diagnosis['checks'].items() if not c['ok']]
+        failed = [
+            info.get('name', name)
+            for name, info in diagnosis['checks'].items()
+            if not info['ok'] and name != 'summary'
+        ]
         message = f'Сервис частично недоступен: {", ".join(failed)}'
 
     return Response({
