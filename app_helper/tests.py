@@ -9,15 +9,16 @@ class LoadStatsMessageTests(SimpleTestCase):
     """Сводка нагрузки содержит числа и порог (для панели статусов)."""
 
     def test_high_load_message_has_numbers_and_threshold(self):
+        high = load_tracker.HIGH_LOAD_THRESHOLD + 5_000
         with patch.object(
-            load_tracker, 'get_requests_per_hour', return_value=15000,
+            load_tracker, 'get_requests_per_hour', return_value=high,
         ), patch.object(
             load_tracker, 'get_requests_per_minute', return_value=250,
         ):
             stats = load_tracker.get_load_stats()
 
         self.assertTrue(stats['is_high_load'])
-        self.assertIn('15000', stats['message'])
+        self.assertIn(str(high), stats['message'])
         self.assertIn('250', stats['message'])
         self.assertIn(str(load_tracker.HIGH_LOAD_THRESHOLD), stats['message'])
 
