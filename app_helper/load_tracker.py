@@ -8,7 +8,7 @@ from django.core.cache import cache
 logger = logging.getLogger(__name__)
 
 # Лимит запросов в час. При превышении — предупреждение в логах.
-HIGH_LOAD_THRESHOLD = 10_000
+HIGH_LOAD_THRESHOLD = 50_000
 
 BUCKET_SECONDS = 60  # размер бакета — 1 минута.
 HOUR_BUCKETS = 60  # 60 минут.
