@@ -74,13 +74,17 @@ def can_generate_uip(user) -> bool:
 
 def get_user_factory(user):
     """
-    Завод, привязанный к учётной записи (для контроля продукции).
+    Завод, ограничивающий видимость данных пользователя.
 
-    None — привязки нет (или завод не указан): пользователь видит продукцию
-    всех заводов. Импорт ленивый — чтобы не тянуть app_factory из хелперов
-    до готовности приложений.
+    Администраторы (суперпользователь, staff или группа «Админ») не
+    ограничиваются — возвращается None. Для остальных — завод из привязки
+    UserFactory (или None, если привязки нет / завод не указан): пользователь
+    видит данные всех заводов. Импорт ленивый — чтобы не тянуть app_factory
+    из хелперов до готовности приложений.
     """
     if not user or not user.is_authenticated:
+        return None
+    if is_admin(user):
         return None
     from app_factory.models import UserFactory
 
@@ -91,6 +95,50 @@ def get_user_factory(user):
         .first()
     )
     return binding.factory if binding else None
+
+
+def filter_uips_for_user(user, queryset):
+    """
+    Ограничивает набор УИП заводом пользователя.
+
+    УИП считается «своим», если его SKU производится на заводе пользователя
+    (`ProductProductionLocation`) или по УИП есть производственная партия на
+    этом заводе. Админы и пользователи без привязки видят все УИП.
+    """
+    factory = get_user_factory(user)
+    if factory is None:
+        return queryset
+    from django.db.models import Q
+
+    return queryset.filter(
+        Q(product_sku__product_production_locations__line__workshop__factory=factory)
+        | Q(production_parties__line__workshop__factory=factory)
+    ).distinct()
+
+
+def user_can_access_uip(user, uip) -> bool:
+    """Доступен ли УИП пользователю с учётом привязки к заводу."""
+    factory = get_user_factory(user)
+    if factory is None:
+        return True
+    return (
+        uip.product_sku.product_production_locations
+        .filter(line__workshop__factory=factory)
+        .exists()
+        or uip.production_parties
+        .filter(line__workshop__factory=factory)
+        .exists()
+    )
+
+
+def user_can_access_sku(user, sku) -> bool:
+    """Доступен ли SKU пользователю с учётом привязки к заводу."""
+    factory = get_user_factory(user)
+    if factory is None:
+        return True
+    return sku.product_production_locations.filter(
+        line__workshop__factory=factory
+    ).exists()
 
 
 # ==========================================

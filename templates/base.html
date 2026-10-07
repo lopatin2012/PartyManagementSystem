@@ -28,9 +28,11 @@
             <a href="{% url 'home' %}" class="nav-link {% if request.resolver_match.url_name == 'home' %}nav-link-active{% endif %}">
                 Главная
             </a>
-            <a href="{% url 'uip_list' %}" class="nav-link {% if request.resolver_match.url_name == 'uip_list' %}nav-link-active{% endif %}">
-                УИП
-            </a>
+            {% if can_view_uip %}
+                <a href="{% url 'uip_list' %}" class="nav-link {% if request.resolver_match.url_name == 'uip_list' %}nav-link-active{% endif %}">
+                    УИП
+                </a>
+            {% endif %}
             {% if is_authenticated %}
                 <a href="{% url 'product_control' %}" class="nav-link {% if request.resolver_match.url_name == 'product_control' or request.resolver_match.url_name == 'product_control_detail' %}nav-link-active{% endif %}">
                     Продукция

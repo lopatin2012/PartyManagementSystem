@@ -9,6 +9,7 @@ from datetime import datetime
 
 from app_helper.access import (
     admin_required, admin_required_json, generate_uip_required_json, IsAppAdmin,
+    user_can_access_sku, user_can_access_uip,
 )
 from django.core.paginator import Paginator
 from django.db.models import Q
@@ -739,6 +740,12 @@ def api_reserve_draft_uip(request):
             status=status.HTTP_404_NOT_FOUND
         )
 
+    if not user_can_access_uip(request.user, uip):
+        return Response(
+            {'is_error': True, 'message': 'УИП другого завода.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     # 2. Проверяем, что он в черновике.
     if uip.status != PartyStatusChoices.DRAFT:
         return Response(
@@ -852,6 +859,12 @@ def api_report_uip(request):
             status=status.HTTP_404_NOT_FOUND,
         )
 
+    if not user_can_access_uip(request.user, uip):
+        return Response(
+            {'is_error': True, 'message': 'УИП другого завода.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     if uip.status not in (
         PartyStatusChoices.RESERVED_CZ,
         PartyStatusChoices.RESERVED_LOCAL,
@@ -943,6 +956,12 @@ def api_check_uip_cz(request):
         return Response(
             {'is_error': True, 'message': 'УИП не найден.'},
             status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not user_can_access_uip(request.user, uip):
+        return Response(
+            {'is_error': True, 'message': 'УИП другого завода.'},
+            status=status.HTTP_403_FORBIDDEN,
         )
 
     if not uip.number:
@@ -1175,6 +1194,17 @@ class GenerateUIPView(View):
                     'message': 'Не найден указанный продукт по id'
                 },
                 status=400
+            )
+
+        # Привязанный к заводу пользователь генерирует УИП только для SKU,
+        # производимых на его заводе (админы не ограничены).
+        if not user_can_access_sku(request.user, product_sku):
+            return JsonResponse(
+                {
+                    'is_error': True,
+                    'message': 'Продукт другого завода.',
+                },
+                status=403,
             )
 
         # Ручной ввод номера (серийная часть) — отдельный путь.

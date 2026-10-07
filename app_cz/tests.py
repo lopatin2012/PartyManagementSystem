@@ -10,22 +10,27 @@
 - сбой одного завода не влияет на другие.
 """
 
+import json
 from datetime import date, timedelta
 from unittest.mock import Mock, patch
-from django.contrib.auth.models import User
-from django.test import TestCase
+from django.contrib.auth.models import Permission, User
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from app_factory.models import (
     CardStateChoices,
     Factory,
+    Line,
     PackagingLevelChoices,
     Product,
     ProductGroupChoices,
     ProductPackaging,
+    ProductProductionLocation,
     ProductSKU,
     StateConditionChoices,
     TypeFormationUIP,
+    UserFactory,
+    Workshop,
 )
 from app_uip.models import (
     PartyStatusChoices,
@@ -1375,3 +1380,169 @@ class RefreshSuzTokenRetryTests(TestCase):
 
         self.assertTrue(mock_refresh.called)
         self.assertTrue(result['refreshed'])
+
+
+class GenerateUipFactoryScopeTests(TestCase):
+    """Генерация УИП: привязанный к заводу пользователь — только свой завод."""
+
+    def setUp(self):
+        self.factory_a = Factory.objects.create(name='Завод A')
+        self.factory_b = Factory.objects.create(name='Завод B')
+        self.sku_a = self._make_sku(self.factory_a, 'A-1', '04601751026021')
+        self.sku_b = self._make_sku(self.factory_b, 'B-1', '04601751026022')
+
+        self.user = User.objects.create_user(username='gen', password='pass')
+        UserFactory.objects.create(user=self.user, factory=self.factory_a)
+        self.user.user_permissions.add(Permission.objects.get(
+            content_type__app_label='app_uip', codename='add_uip',
+        ))
+        self.client.force_login(self.user)
+
+    @staticmethod
+    def _make_sku(factory, article, gtin):
+        workshop = Workshop.objects.create(factory=factory, name=f'Цех {article}')
+        line = Line.objects.create(workshop=workshop, name=f'Линия {article}')
+        product = Product.objects.create(
+            group=ProductGroupChoices.MILK,
+            name=f'Продукт {article}',
+            shelf_life_in_days=14,
+            item_condition=StateConditionChoices.READY_ORDER_KM,
+            card_status=CardStateChoices.PUBLISHED,
+        )
+        ProductPackaging.objects.create(
+            product=product,
+            level=PackagingLevelChoices.UNIT,
+            gtin=gtin,
+            quantity_inside=1,
+        )
+        sku = ProductSKU.objects.create(product=product, article=article)
+        ProductProductionLocation.objects.create(product_sku=sku, line=line)
+        return sku
+
+    def _generate(self, sku):
+        return self.client.post(
+            '/cz/uip/generate/',
+            data=json.dumps({
+                'product_sku_id': str(sku.id),
+                'production_date': '2026-01-01',
+                'mode': 'local',
+            }),
+            content_type='application/json',
+        )
+
+    @override_settings(UIP_DRAFT_MODE=True)
+    def test_foreign_sku_forbidden(self):
+        response = self._generate(self.sku_b)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(response.json()['is_error'])
+
+    @override_settings(UIP_DRAFT_MODE=True)
+    def test_own_sku_allowed(self):
+        response = self._generate(self.sku_a)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()['is_error'])
+
+
+class AdminBypassesFactoryScopeTests(TestCase):
+    """Админ не ограничивается заводом ни в генерации, ни в действиях."""
+
+    def setUp(self):
+        self.factory_a = Factory.objects.create(name='Завод A')
+        self.factory_b = Factory.objects.create(name='Завод B')
+        self.sku_b = self._make_sku(self.factory_b, 'B-7', '04601751026031')
+
+        self.uip_draft_b = UIP.objects.create(
+            product_sku=self.sku_b,
+            number='04601751026031001015003200000003',
+            status=PartyStatusChoices.DRAFT,
+        )
+        self.uip_res_b = UIP.objects.create(
+            product_sku=self.sku_b,
+            number='04601751026031001015003200000004',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+
+        self.admin = User.objects.create_superuser(
+            username='adm', password='pass', email='a@a.a',
+        )
+        # Привязан к заводу A, но действовать должен по любому заводу.
+        UserFactory.objects.create(user=self.admin, factory=self.factory_a)
+        self.client.force_login(self.admin)
+
+    @staticmethod
+    def _make_sku(factory, article, gtin):
+        workshop = Workshop.objects.create(factory=factory, name=f'Цех {article}')
+        line = Line.objects.create(workshop=workshop, name=f'Линия {article}')
+        product = Product.objects.create(
+            group=ProductGroupChoices.MILK,
+            name=f'Продукт {article}',
+            shelf_life_in_days=14,
+            item_condition=StateConditionChoices.READY_ORDER_KM,
+            card_status=CardStateChoices.PUBLISHED,
+        )
+        ProductPackaging.objects.create(
+            product=product,
+            level=PackagingLevelChoices.UNIT,
+            gtin=gtin,
+            quantity_inside=1,
+        )
+        sku = ProductSKU.objects.create(product=product, article=article)
+        ProductProductionLocation.objects.create(product_sku=sku, line=line)
+        return sku
+
+    @override_settings(UIP_DRAFT_MODE=True)
+    def test_admin_generates_for_foreign_sku(self):
+        response = self.client.post(
+            '/cz/uip/generate/',
+            data=json.dumps({
+                'product_sku_id': str(self.sku_b.id),
+                'production_date': '2026-01-01',
+                'mode': 'local',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()['is_error'])
+
+    def test_admin_reserves_foreign_draft(self):
+        with patch(
+            'app_cz.views.reserve_parties_honest_sign',
+            return_value={
+                'is_error': False,
+                'message_error': 'ОК',
+                'lst_party_number_info': [],
+            },
+        ) as mock_reserve:
+            response = self.client.post(
+                '/cz/api/reserve-draft-uip/',
+                data=json.dumps({'uip_id': str(self.uip_draft_b.id)}),
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        mock_reserve.assert_called()
+        self.uip_draft_b.refresh_from_db()
+        self.assertEqual(
+            self.uip_draft_b.status, PartyStatusChoices.RESERVED_LOCAL,
+        )
+
+    def test_admin_checks_foreign_uip_in_cz(self):
+        with patch(
+            'app_cz.views.reserve_party_numbers_cz',
+            return_value={
+                'is_error': False,
+                'message_error': 'ОК',
+                'lst_party_number_info': [],
+            },
+        ) as mock_reserve:
+            response = self.client.post(
+                '/cz/api/check-uip-cz/',
+                data=json.dumps({'uip_id': str(self.uip_res_b.id)}),
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        mock_reserve.assert_called()

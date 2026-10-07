@@ -143,14 +143,22 @@ def find_sku_by_gtin(gtin: str):
     return product.skus.filter(is_active=True).first()
 
 
-def get_available_products() -> list[dict]:
-    """Список продуктов, доступных для генерации УИП (с GTIN и артикулом)."""
+def get_available_products(factory=None) -> list[dict]:
+    """
+    Список продуктов, доступных для генерации УИП (с GTIN и артикулом).
+
+    :param factory: если задан — только SKU, производимые на этом заводе.
+    """
     products = []
     skus = (
         ProductSKU.objects.filter(is_active=True)
         .select_related('product')
-        .order_by('product__name', 'article')
     )
+    if factory is not None:
+        skus = skus.filter(
+            product_production_locations__line__workshop__factory=factory
+        ).distinct()
+    skus = skus.order_by('product__name', 'article')
     for sku in skus:
         gtin = sku.product.consumer_gtin
         if not gtin:
