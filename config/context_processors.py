@@ -78,7 +78,7 @@ def service_status_info(request):
     diagnosis = diagnose_service()
     failed_checks = [
         {
-            'name': name,
+            'name': info.get('name', name),
             'message': info.get('message', 'недоступно'),
         }
         for name, info in diagnosis['checks'].items()
