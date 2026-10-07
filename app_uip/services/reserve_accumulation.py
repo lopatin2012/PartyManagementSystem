@@ -4,22 +4,22 @@
 Накопление резерва УИП на несколько дней вперёд.
 
 Для активных SKU обычного формата (`TypeFormationUIP.general`), у продукта
-которых короткий срок годности (менее `UIP_SHORT_SHELF_LIFE_DAYS`, по умолчанию
-40 дней), поддерживается резерв зарезервированных УИП на окно дат
-`[сегодня; сегодня + ProductSKU.reserve_days]`.
+которых короткий срок годности (не более `UIP_SHORT_SHELF_LIFE_DAYS`,
+по умолчанию 45 дней, включительно), поддерживается резерв зарезервированных
+УИП на окно дат `[сегодня; сегодня + ProductSKU.reserve_days]`.
 
 Правила:
 * доливается всё окно — пробелов по датам не остаётся;
 * на одну дату создаётся ровно один УИП; если УИП уже есть — пропускаем;
 * «сгоревший» (`deleted`) УИП повторно резервируется тем же номером;
 * номер формируется локально (`build_local_party_number`);
-* режим задаётся настройкой `UIP_DRAFT_MODE` (по умолчанию — черновики без
-  обращения к ЧЗ, чтобы оценить объёмы); при `UIP_DRAFT_MODE=0` номера
-  резервируются в ЧЗ как «свои» пачками не более `CZ_BATCH_SIZE` с паузой
-  `CZ_BATCH_PAUSE_SECONDS` между запросами, в разрезе товарных групп;
-* генерация номеров самим ЧЗ автоматически не используется;
+* срок годности `41..UIP_SHORT_SHELF_LIFE_DAYS` — УИП резервируются в ЧЗ
+  собственным (локальным) номером (`reserved_local`);
+* срок годности не более `UIP_DRAFT_SHELF_LIFE_DAYS` (по умолчанию 40) —
+  создаются черновики без обращения к ЧЗ; при явном `skip_cz=False` такие
+  УИП тоже резервируются в ЧЗ;
 * при резервировании в ЧЗ, если заполнение резерва превышает `RELEASE_PERCENT`
-  (95%) — накопление пропускается, чтобы не ухудшать ситуацию.
+  (95%) — резервирование пропускается, чтобы не ухудшать ситуацию.
 """
 
 import logging
@@ -50,19 +50,40 @@ RESERVE_TYPE_FORMATION = TypeFormationUIP.general
 
 
 def _short_shelf_life_days() -> int:
-    """Порог срока годности (дней), ниже которого накапливаем резерв."""
-    return int(getattr(settings, 'UIP_SHORT_SHELF_LIFE_DAYS', 40) or 40)
+    """Порог срока годности (дней, включительно), до которого накапливаем резерв."""
+    return int(getattr(settings, 'UIP_SHORT_SHELF_LIFE_DAYS', 45) or 45)
+
+
+def _draft_shelf_life_days() -> int:
+    """Порог срока годности (дней, включительно), до которого создаём черновики."""
+    return int(getattr(settings, 'UIP_DRAFT_SHELF_LIFE_DAYS', 40) or 40)
+
+
+def _should_reserve(sku, skip_cz) -> bool:
+    """
+    Резервировать ли УИП этого SKU в ЧЗ (иначе — черновик).
+
+    Продукция со сроком годности больше `UIP_DRAFT_SHELF_LIFE_DAYS` (в пределах
+    `UIP_SHORT_SHELF_LIFE_DAYS`) всегда резервируется в ЧЗ. Для более короткого
+    срока решение определяется явным `skip_cz` (None/True — черновик,
+    False — резерв).
+    """
+    shelf_life = sku.product.shelf_life_in_days
+    if shelf_life > _draft_shelf_life_days():
+        return True
+    return skip_cz is False
 
 
 def _short_shelf_life_skus():
     """
-    Активные SKU обычного формата с коротким сроком годности продукта.
+    Активные SKU обычного формата в пределах срока годности накопления
+    (черновики и резерв в ЧЗ).
     """
     return (
         ProductSKU.objects.filter(
             is_active=True,
             product__is_active=True,
-            product__shelf_life_in_days__lt=_short_shelf_life_days(),
+            product__shelf_life_in_days__lte=_short_shelf_life_days(),
             type_formation_uip=RESERVE_TYPE_FORMATION,
         )
         .select_related('product')
@@ -229,43 +250,22 @@ def accumulate_short_shelf_life_reserve(
         skip_cz: bool = None,
 ) -> dict:
     """
-    Доливает резерв УИП на окно дат для короткоживущей продукции.
+    Доливает резерв УИП на окно дат для короткоживущей/средней продукции.
+
+    Продукция со сроком годности `41..UIP_SHORT_SHELF_LIFE_DAYS` резервируется
+    в ЧЗ собственным (локальным) номером. Для срока годности не более
+    `UIP_DRAFT_SHELF_LIFE_DAYS` создаются черновики; если передан явный
+    `skip_cz=False`, такие УИП тоже резервируются в ЧЗ.
 
     :param pause_seconds: пауза между запросами в ЧЗ (по умолчанию
-                          CZ_BATCH_PAUSE_SECONDS). Используется при skip_cz=False.
-    :param skip_cz: True — создавать только черновики без обращения к ЧЗ
-                    (оценка объёмов); False — резервировать «свои» номера в ЧЗ.
-                    None — берётся из настройки UIP_DRAFT_MODE.
+                          CZ_BATCH_PAUSE_SECONDS).
+    :param skip_cz: явное решение для продукции со сроком годности не более
+                    `UIP_DRAFT_SHELF_LIFE_DAYS`: False — резервировать в ЧЗ,
+                    None/True — черновик. На более длинный срок не влияет.
     :return: сводка выполнения.
     """
     if pause_seconds is None:
         pause_seconds = CZ_BATCH_PAUSE_SECONDS
-    if skip_cz is None:
-        from app_cz.services.party_service import uip_draft_mode
-        skip_cz = uip_draft_mode()
-
-    if not skip_cz:
-        stats = get_reserve_stats()
-        if stats['percent'] > RELEASE_PERCENT:
-            message = (
-                f'Накопление резерва пропущено: заполнение {stats["percent"]}% '
-                f'превышает порог {RELEASE_PERCENT}% '
-                f'({stats["count"]}/{stats["limit"]}).'
-            )
-            logger.warning(message)
-            return {
-                'is_error': False,
-                'skipped': True,
-                'skip_cz': False,
-                'reason': 'reserve_full',
-                'percent': stats['percent'],
-                'created': 0,
-                'restored': 0,
-                'skipped_existing': 0,
-                'failed': 0,
-                'errors': [],
-                'message': message,
-            }
 
     skus = list(_short_shelf_life_skus())
     plan = _plan_reserve(skus)
@@ -280,7 +280,8 @@ def accumulate_short_shelf_life_reserve(
         return {
             'is_error': False,
             'skipped': False,
-            'skip_cz': skip_cz,
+            'reserved': 0,
+            'drafted': 0,
             'created': 0,
             'restored': 0,
             'skipped_existing': skipped_existing,
@@ -289,28 +290,58 @@ def accumulate_short_shelf_life_reserve(
             'message': message,
         }
 
-    if skip_cz:
-        processed = to_process
-        errors = []
+    reserve_entries = [
+        e for e in to_process if _should_reserve(e['sku'], skip_cz)
+    ]
+    draft_entries = [
+        e for e in to_process if not _should_reserve(e['sku'], skip_cz)
+    ]
+
+    # Резервирование в ЧЗ не запускаем, если резерв уже переполнен.
+    errors = []
+    skipped_full = False
+    reserve_total = len(reserve_entries)
+    if reserve_entries:
+        stats = get_reserve_stats()
+        if stats['percent'] > RELEASE_PERCENT:
+            skipped_full = True
+            reserve_entries = []
+            logger.warning(
+                f'Накопление резерва: резервирование в ЧЗ пропущено, '
+                f'заполнение {stats["percent"]}% превышает порог '
+                f'{RELEASE_PERCENT}% ({stats["count"]}/{stats["limit"]}).'
+            )
+
+    if reserve_entries:
+        reserved, reserve_errors = _reserve_numbers(reserve_entries, pause_seconds)
+        errors.extend(reserve_errors)
     else:
-        processed, errors = _reserve_numbers(to_process, pause_seconds)
+        reserved = []
 
-    created, restored = _persist_entries(processed, skip_cz=skip_cz)
-    failed = len(to_process) - len(processed)
+    created, restored = _persist_entries(draft_entries, skip_cz=True)
+    reserved_created, reserved_restored = _persist_entries(reserved, skip_cz=False)
+    created += reserved_created
+    restored += reserved_restored
 
-    mode = 'черновиков' if skip_cz else 'с резервированием в ЧЗ'
+    failed = reserve_total - len(reserved)
+
     message = (
-        f'Накопление резерва УИП ({mode}): создано {created}, '
+        f'Накопление резерва УИП (черновиков {len(draft_entries)}, '
+        f'резерв ЧЗ {len(reserved)}): создано {created}, '
         f'восстановлено {restored}, пропущено (уже есть) {skipped_existing}, '
-        f'ошибок {failed} (из {len(to_process)} к обработке).'
+        f'не зарезервировано {failed} (из {len(to_process)} к обработке).'
     )
+    if skipped_full:
+        message += ' Резерв ЧЗ переполнен — резервирование пропущено.'
     logger.info(message)
     return {
         'is_error': bool(errors),
-        'skipped': False,
-        'skip_cz': skip_cz,
+        'skipped': skipped_full,
+        'reason': 'reserve_full' if skipped_full else None,
         'created': created,
         'restored': restored,
+        'reserved': len(reserved),
+        'drafted': len(draft_entries),
         'skipped_existing': skipped_existing,
         'failed': failed,
         'errors': errors,

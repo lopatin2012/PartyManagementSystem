@@ -25,7 +25,12 @@ from app_factory.models import (
 
 from app_uip.models import UIP, ProductionParty, PartyStatusChoices
 
-from app_helper.access import UipPageAccessMixin, get_user_factory
+from app_helper.access import (
+    UipPageAccessMixin,
+    filter_uips_for_user,
+    get_user_factory,
+    user_can_access_sku,
+)
 from app_helper.search_helper import (
     detect_search_type,
     filter_codes_by_query,
@@ -150,13 +155,17 @@ class UIPListView(UipPageAccessMixin, TemplateView):
 
         # === Базовый queryset ===
         # has_task — есть ли у УИП привязанное задание (для кнопки отчёта).
-        queryset = UIP.objects.select_related(
-            'product_sku__product'
-        ).annotate(
-            has_task=Exists(
-                ProductionParty.objects.filter(uip=OuterRef('pk'))
-            )
-        ).order_by('-created_at')
+        # Привязанный к заводу пользователь видит только свои УИП (админы — все).
+        queryset = filter_uips_for_user(
+            self.request.user,
+            UIP.objects.select_related(
+                'product_sku__product'
+            ).annotate(
+                has_task=Exists(
+                    ProductionParty.objects.filter(uip=OuterRef('pk'))
+                )
+            ).order_by('-created_at'),
+        )
 
         # === Применяем фильтры ===
         if desync_only:
@@ -234,7 +243,9 @@ class UIPListView(UipPageAccessMixin, TemplateView):
             'query_string': query_string,
             'start_item': start_item,
             'end_item': end_item,
-            'available_products': get_available_products(),
+            'available_products': get_available_products(
+                factory=get_user_factory(self.request.user)
+            ),
 
             # Текущие значения фильтров (для сохранения в шаблоне).
             'current_status': status_filter,
@@ -348,7 +359,9 @@ class ProductControlDetailView(LoginRequiredMixin, View):
 
     def get(self, request, pk):
         product = self._get_product(request, pk)
-        return render(request, self.template_name, self._context(product))
+        return render(
+            request, self.template_name, self._context(product, request.user)
+        )
 
     def post(self, request, pk):
         product = self._get_product(request, pk)
@@ -374,6 +387,8 @@ class ProductControlDetailView(LoginRequiredMixin, View):
 
         elif target == 'sku':
             sku = get_object_or_404(ProductSKU, pk=target_id, product=product)
+            if not user_can_access_sku(request.user, sku):
+                raise Http404
             sku.is_active = _to_bool(request.POST.get('is_active'))
             type_formation = request.POST.get('type_formation_uip')
             if type_formation:
@@ -404,17 +419,30 @@ class ProductControlDetailView(LoginRequiredMixin, View):
                 pk=target_id,
                 product_sku__product=product,
             )
+            factory = get_user_factory(request.user)
+            if factory and location.line.workshop.factory_id != factory.id:
+                raise Http404
             location.is_active = _to_bool(request.POST.get('is_active'))
             location.save()
 
         else:
             raise ValueError('Неизвестный объект редактирования.')
 
-    def _context(self, product):
-        skus = list(product.skus.all())
+    def _context(self, product, user):
+        factory = get_user_factory(user)
+        skus_qs = product.skus.all()
+        locations_qs = ProductProductionLocation.objects.filter(
+            product_sku__in=skus_qs
+        )
+        if factory:
+            skus_qs = skus_qs.filter(
+                product_production_locations__line__workshop__factory=factory
+            ).distinct()
+            locations_qs = locations_qs.filter(line__workshop__factory=factory)
+
+        skus = list(skus_qs)
         locations = (
-            ProductProductionLocation.objects
-            .filter(product_sku__in=skus)
+            locations_qs
             .select_related('line__workshop__factory')
             .order_by('line__name')
         )
