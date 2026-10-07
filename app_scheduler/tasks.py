@@ -451,11 +451,12 @@ def accumulate_short_shelf_life_reserve_task() -> dict:
 
     Для активных SKU обычного формата с сроком годности продукта не более
     `UIP_SHORT_SHELF_LIFE_DAYS` (включительно, по умолчанию 45 дней) доливает
-    резерв зарезервированных УИП на даты [сегодня; сегодня + ProductSKU.reserve_days].
+    резерв УИП на даты [сегодня; сегодня + ProductSKU.reserve_days].
 
-    Режим (черновики или реальное резервирование в ЧЗ) определяется
-    настройкой `UIP_DRAFT_MODE`: 1 — только черновики (оценка объёмов),
-    0 — резервирование в ЧЗ.
+    Продукция со сроком годности 41..UIP_SHORT_SHELF_LIFE_DAYS резервируется
+    в ЧЗ собственным (локальным) номером; для срока годности не более
+    `UIP_DRAFT_SHELF_LIFE_DAYS` (по умолчанию 40) создаются черновики без
+    обращения к ЧЗ. `UIP_DRAFT_MODE` на накопление не влияет.
     """
     from app_uip.services.reserve_accumulation import (
         accumulate_short_shelf_life_reserve,

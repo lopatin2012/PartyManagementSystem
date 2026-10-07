@@ -1121,7 +1121,6 @@ class SearchQueryHelpersTests(TestCase):
 # Тесты накопления резерва УИП на дни вперёд.
 # ==========================================
 
-@override_settings(UIP_DRAFT_MODE=True)
 class ReserveAccumulationTests(TestCase):
     """Проверка app_uip.services.reserve_accumulation."""
 
@@ -1177,7 +1176,8 @@ class ReserveAccumulationTests(TestCase):
             result = accumulate_short_shelf_life_reserve(pause_seconds=0)
 
         self.assertFalse(result['is_error'])
-        self.assertTrue(result['skip_cz'])
+        self.assertEqual(result['drafted'], 3)
+        self.assertEqual(result['reserved'], 0)
         self.assertEqual(result['created'], 3)  # сегодня, +1, +2
         mock_reserve.assert_not_called()  # в ЧЗ не обращаемся
         uips = UIP.objects.filter(product_sku=self.sku)
@@ -1209,7 +1209,7 @@ class ReserveAccumulationTests(TestCase):
             )
 
         self.assertFalse(result['is_error'])
-        self.assertFalse(result['skip_cz'])
+        self.assertEqual(result['reserved'], 3)
         self.assertEqual(result['created'], 3)
         mock_reserve.assert_called()
         uips = UIP.objects.filter(product_sku=self.sku)
@@ -1251,17 +1251,89 @@ class ReserveAccumulationTests(TestCase):
         self.assertEqual(result['created'], 3)
         self.assertEqual(UIP.objects.filter(product_sku=self.sku).count(), 3)
 
-    def test_shelf_life_boundary_45_included_46_excluded(self):
-        boundary = self._make_product('B45', '04601751026030', shelf_life=45)
-        boundary.reserve_days = 2
-        boundary.save(update_fields=['reserve_days'])
+    def test_shelf_life_band_41_to_45_reserved_in_cz(self):
+        """41–45 дней — резерв в ЧЗ; короткий срок (self.sku=14) — черновик."""
+        band_41 = self._make_product('B41', '04601751026040', shelf_life=41)
+        band_45 = self._make_product('B45', '04601751026030', shelf_life=45)
+        for sku in (band_41, band_45):
+            sku.reserve_days = 2
+            sku.save(update_fields=['reserve_days'])
+
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = self._cz_success()
+            result = accumulate_short_shelf_life_reserve(pause_seconds=0)
+
+        mock_reserve.assert_called()
+        for sku in (band_41, band_45):
+            self.assertEqual(
+                set(UIP.objects.filter(product_sku=sku)
+                    .values_list('status', flat=True)),
+                {PartyStatusChoices.RESERVED_LOCAL},
+            )
+        self.assertEqual(result['reserved'], 6)  # band_41 + band_45
+        self.assertEqual(result['drafted'], 3)   # self.sku (14)
+        self.assertEqual(
+            set(UIP.objects.filter(product_sku=self.sku)
+                .values_list('status', flat=True)),
+            {PartyStatusChoices.DRAFT},
+        )
+
+    def test_shelf_life_40_is_draft_41_is_reserved(self):
+        """Граница: 40 — черновик, 41 — резерв в ЧЗ."""
+        draft_40 = self._make_product('B40', '04601751026041', shelf_life=40)
+        reserve_41 = self._make_product('B41b', '04601751026042', shelf_life=41)
+        for sku in (draft_40, reserve_41):
+            sku.reserve_days = 2
+            sku.save(update_fields=['reserve_days'])
+
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = self._cz_success()
+            accumulate_short_shelf_life_reserve(pause_seconds=0)
+
+        self.assertEqual(
+            set(UIP.objects.filter(product_sku=draft_40)
+                .values_list('status', flat=True)),
+            {PartyStatusChoices.DRAFT},
+        )
+        self.assertEqual(
+            set(UIP.objects.filter(product_sku=reserve_41)
+                .values_list('status', flat=True)),
+            {PartyStatusChoices.RESERVED_LOCAL},
+        )
+
+    def test_long_shelf_life_reserved_even_with_skip_cz_true(self):
+        """Диапазон важнее: 41–45 резервируются, даже если skip_cz=True."""
+        reserve_45 = self._make_product('B45c', '04601751026043', shelf_life=45)
+        reserve_45.reserve_days = 2
+        reserve_45.save(update_fields=['reserve_days'])
+
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = self._cz_success()
+            accumulate_short_shelf_life_reserve(pause_seconds=0, skip_cz=True)
+
+        mock_reserve.assert_called()
+        self.assertEqual(
+            set(UIP.objects.filter(product_sku=reserve_45)
+                .values_list('status', flat=True)),
+            {PartyStatusChoices.RESERVED_LOCAL},
+        )
+
+    def test_shelf_life_46_excluded(self):
         too_long = self._make_product('B46', '04601751026031', shelf_life=46)
 
-        result = accumulate_short_shelf_life_reserve(pause_seconds=0)
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = self._cz_success()
+            accumulate_short_shelf_life_reserve(pause_seconds=0)
 
-        self.assertEqual(UIP.objects.filter(product_sku=boundary).count(), 3)
         self.assertEqual(UIP.objects.filter(product_sku=too_long).count(), 0)
-        self.assertEqual(result['created'], 6)  # self.sku (3) + boundary (3)
 
     def test_existing_active_skipped_and_deleted_restored(self):
         active_date = self.today + timedelta(days=1)
