@@ -1142,6 +1142,33 @@ class CodeSyncFilterTests(TestCase):
         self.assertIn('d3', synced)
         self.assertNotIn('d4', synced)
 
+    def test_ineligible_tasks_not_left_pending(self):
+        """Необрабатываемые задания не остаются в «Ожидают синхронизации»."""
+        from datetime import timedelta as _td
+        now = timezone.now()
+        work = self._party('work-p', ProductionPartyStatusChoices.WORK, now)
+        created = self._party('created-p', ProductionPartyStatusChoices.CREATED, now)
+        completed = self._party(
+            'completed-p', ProductionPartyStatusChoices.COMPLETED, now,
+        )
+        old = self._party(
+            'old-p', ProductionPartyStatusChoices.WORK, now - _td(days=5),
+        )
+
+        self._synced_numbers()
+
+        for party in (created, completed, old):
+            party.refresh_from_db()
+            self.assertEqual(
+                party.sync_status, ProductionPartySyncStatusChoices.SYNCED,
+            )
+        # Обрабатываемое задание остаётся PENDING (в тесте sync замокан и
+        # статус не проставляет).
+        work.refresh_from_db()
+        self.assertEqual(
+            work.sync_status, ProductionPartySyncStatusChoices.PENDING,
+        )
+
     def test_receive_maps_datetime_create(self):
         code_sync.receive_external_task({
             'uuid_str': 'task-dt-1',
