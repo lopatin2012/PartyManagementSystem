@@ -948,6 +948,19 @@ def sync_all_external_tasks(progress_name: str = None) -> dict:
             summary['codes_created'] += result.get('synced_count', 0)
             summary['codes_updated'] += result.get('updated_count', 0)
 
+    # Задания, по которым коды не тянутся (статус не «В работе»/«Закрыто» или
+    # создано раньше окна CODE_SYNC_WINDOW_DAYS), не должны висеть в «Ожидают
+    # синхронизации»: по ним синхронизировать нечего. Помечаем их
+    # «Синхронизировано» — если внешний сервис снова изменит задание (например,
+    # «Создано» → «В работе»), приёмник вернёт его в PENDING.
+    ProductionParty.objects.filter(
+        is_external=True,
+        sync_status=ProductionPartySyncStatusChoices.PENDING,
+    ).exclude(
+        status__in=CODE_SYNC_STATUSES,
+        external_created_at__date__gte=since,
+    ).update(sync_status=ProductionPartySyncStatusChoices.SYNCED)
+
     parts = [
         f'партий синхронизировано: {summary["parties_synced"]}',
         f'кодов создано: {summary["codes_created"]}',
