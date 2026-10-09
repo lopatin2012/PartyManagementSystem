@@ -195,6 +195,35 @@ class SchedulerStatusViewTests(TestCase):
         )
 
 
+class SchedulerCheckEnqueueTests(TestCase):
+    """_check_and_enqueue не падает в ветке «ещё рано» (регресс)."""
+
+    def test_not_due_branch_does_not_crash(self):
+        import io
+
+        from django.utils import timezone
+        from django_tasks_db.models import DBTaskResult
+
+        from app_scheduler.management.commands.run_scheduler import Command
+        from app_scheduler.registry import get_scheduled_tasks
+
+        task_map = get_scheduled_tasks()
+        task_func = task_map['refresh_suz_token']
+        ref = task_func.func
+        task_path = f'{ref.__module__}.{ref.__name__}'
+
+        # Свежий успешный запуск: интервал (6 ч) ещё не истёк.
+        task_func.enqueue()
+        DBTaskResult.objects.filter(task_path=task_path).update(
+            status=TaskResultStatus.SUCCESSFUL,
+            finished_at=timezone.now(),
+        )
+
+        command = Command(stdout=io.StringIO(), stderr=io.StringIO())
+        # Не должно бросать AttributeError (интервал — timedelta, не функция).
+        command._check_and_enqueue(task_map, DBTaskResult, TaskResultStatus)
+
+
 class TaskProgressTests(TestCase):
     """Запись/чтение/очистка прогресса выполнения задачи."""
 

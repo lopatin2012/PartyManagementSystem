@@ -389,7 +389,7 @@ class Command(BaseCommand):
                     f'прошло {self._format_interval(int(time_since))}',
                 )
             else:
-                time_left = effective_interval.total_seconds() - time_since
+                time_left = interval_to_use.total_seconds() - time_since
                 logger.debug(
                     f'Планировщик: {description} — ещё рано '
                     f'(осталось {self._format_interval(int(time_left))})'

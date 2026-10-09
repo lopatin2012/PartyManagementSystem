@@ -1335,6 +1335,70 @@ class ReserveAccumulationTests(TestCase):
 
         self.assertEqual(UIP.objects.filter(product_sku=too_long).count(), 0)
 
+    def test_should_reserve_in_cz_by_shelf_life(self):
+        from app_uip.services.reserve_accumulation import should_reserve_in_cz
+
+        self.assertFalse(should_reserve_in_cz(
+            self._make_product('R40', '04601751026060', shelf_life=40)
+        ))
+        self.assertTrue(should_reserve_in_cz(
+            self._make_product('R41', '04601751026061', shelf_life=41)
+        ))
+        self.assertTrue(should_reserve_in_cz(
+            self._make_product('R45', '04601751026062', shelf_life=45)
+        ))
+
+    def test_short_shelf_life_reserved_from_constant_date(self):
+        from datetime import date
+        from app_uip.services import reserve_accumulation as ra
+
+        sku = self._make_product('C40', '04601751026082', shelf_life=40)
+        entry = {
+            'sku': sku,
+            'date': date(2027, 3, 10),
+            'number': '04601751026082270310134250000000',
+            'action': 'create',
+        }
+        with patch.object(
+            ra, '_plan_reserve', return_value=[entry],
+        ), patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = self._cz_success()
+            result = accumulate_short_shelf_life_reserve(pause_seconds=0)
+
+        mock_reserve.assert_called()
+        self.assertEqual(result['reserved'], 1)
+        self.assertEqual(
+            UIP.objects.get(product_sku=sku).status,
+            PartyStatusChoices.RESERVED_LOCAL,
+        )
+
+    def test_short_shelf_life_draft_before_constant_date(self):
+        from datetime import date
+        from app_uip.services import reserve_accumulation as ra
+
+        sku = self._make_product('C40b', '04601751026083', shelf_life=40)
+        entry = {
+            'sku': sku,
+            'date': date(2027, 2, 28),
+            'number': '04601751026083270228134250000000',
+            'action': 'create',
+        }
+        with patch.object(
+            ra, '_plan_reserve', return_value=[entry],
+        ), patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            result = accumulate_short_shelf_life_reserve(pause_seconds=0)
+
+        mock_reserve.assert_not_called()
+        self.assertEqual(result['drafted'], 1)
+        self.assertEqual(
+            UIP.objects.get(product_sku=sku).status,
+            PartyStatusChoices.DRAFT,
+        )
+
     def test_existing_active_skipped_and_deleted_restored(self):
         active_date = self.today + timedelta(days=1)
         UIP.objects.create(
