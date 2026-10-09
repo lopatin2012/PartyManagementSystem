@@ -13,8 +13,6 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 # Импорты встроенных библиотек.
 from pathlib import Path
 import os
-import random
-import string
 
 # Импорты сторонних библиотек.
 from dotenv import load_dotenv
@@ -356,9 +354,9 @@ LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'home'
 LOGOUT_REDIRECT_URL = 'home'
 
-# Генерируем имя сессии, если он не указан в файле .env.
-letters = string.ascii_lowercase
-random_session_cookie_name = "".join(random.choices(letters, k=10))
-
-# Наименование сессии для работы разных проектов на одном сервере.
-SESSION_COOKIE_NAME = os.getenv('SESSION_COOKIE_NAME', random_session_cookie_name)
+# Имя сессионной cookie (чтобы несколько проектов не пересекались на одном
+# сервере). По умолчанию — стабильное: раньше генерировалось случайно при
+# каждом старте процесса, из-за чего после перезапуска сессия терялась и
+# требовался повторный вход.
+DEFAULT_SESSION_COOKIE_NAME = 'pms_sessionid'
+SESSION_COOKIE_NAME = os.getenv('SESSION_COOKIE_NAME') or DEFAULT_SESSION_COOKIE_NAME

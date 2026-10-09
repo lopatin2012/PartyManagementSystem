@@ -67,6 +67,7 @@ run_all.py          Запуск web + scheduler + worker в одном терм
 | `DB_PASSWORD` | Пароль БД |
 | `TIME_ZONE` | Часовой пояс (по умолчанию `Europe/Moscow`) |
 | `IS_TIME_ZONE` | `1` — использовать временную зону (USE_TZ) |
+| `SESSION_COOKIE_NAME` | Имя сессионной cookie (по умолчанию `pms_sessionid`; задавайте, если на одном сервере несколько проектов) |
 | `PYTHONIOENCODING` | Кодировка вывода (рекомендуется `utf-8`) |
 
 ## Запуск
