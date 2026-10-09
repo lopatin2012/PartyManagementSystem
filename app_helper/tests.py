@@ -34,6 +34,32 @@ class LoadStatsMessageTests(SimpleTestCase):
         self.assertIn('100', stats['message'])
 
 
+class SessionCookieNameTests(SimpleTestCase):
+    """SESSION_COOKIE_NAME по умолчанию стабилен между перезапусками."""
+
+    def test_default_name_is_stable_across_reload(self):
+        import importlib
+        import os
+
+        import config.settings as settings_module
+
+        clean_env = {
+            key: value
+            for key, value in os.environ.items()
+            if key != 'SESSION_COOKIE_NAME'
+        }
+        with patch.dict(os.environ, clean_env, clear=True), patch(
+            'dotenv.load_dotenv',
+        ):
+            importlib.reload(settings_module)
+            first = settings_module.SESSION_COOKIE_NAME
+            importlib.reload(settings_module)
+            second = settings_module.SESSION_COOKIE_NAME
+
+        self.assertEqual(first, 'pms_sessionid')
+        self.assertEqual(first, second)
+
+
 class DiagnoseServiceTests(TestCase):
     """Самодиагностика: у проверок есть читаемое имя и понятное сообщение."""
 
