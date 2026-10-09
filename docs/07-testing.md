@@ -24,7 +24,7 @@ python manage.py test app_uip.tests.ReserveUipsServiceTests.test_generate_count_
 | --- | --- |
 | `app_uip/tests.py` | Ядро УИП, сериализаторы, резервирование, API статусов, роли/доступ, карточки поиска |
 | `app_cz/tests.py` | Устойчивость синхронизации с внешним сервисом: персональная метка завода, поведение при сбоях |
-| `app_scheduler/tests.py` | Логика планировщика (`_effective_interval`, быстрый повтор) |
+| `app_scheduler/tests.py` | Логика планировщика (`effective_interval`, быстрый повтор) |
 
 Остальные приложения (`app_factory`, `app_page`, `app_helper`, `app_wms`) — пустые заглушки
 `tests.py`.

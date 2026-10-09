@@ -9,7 +9,11 @@ from django.views import View
 
 from app_helper.access import admin_required_json
 
-from app_scheduler.management.commands.run_scheduler import SCHEDULE
+from app_scheduler.management.commands.run_scheduler import (
+    FIXED_DAILY_TIMES,
+    SCHEDULE,
+    next_fixed_daily_run,
+)
 from app_scheduler.progress import get_task_progress
 
 MINUTE = timedelta(minutes=1)
@@ -79,23 +83,39 @@ class SchedulerStatusView(View):
             ).exists()
 
             if last_run and last_run.finished_at:
-                next_run = last_run.finished_at + interval
-                if next_run <= now:
-                    next_run_str = 'Сейчас (при следующей проверке)'
-                else:
-                    next_run_str = next_run.strftime('%d.%m.%Y %H:%M:%S')
                 last_run_str = last_run.finished_at.strftime('%d.%m.%Y %H:%M:%S')
                 last_status = last_run.status
             else:
-                next_run_str = 'Первый запуск'
                 last_run_str = None
                 last_status = None
+
+            # Задачи с фиксированным временем суток (например, 00:30).
+            if name in FIXED_DAILY_TIMES:
+                hour, minute = FIXED_DAILY_TIMES[name]
+                target = next_fixed_daily_run(name, last_run, now)
+                interval_display = f'ежедневно {hour:02d}:{minute:02d}'
+                next_run_str = (
+                    'Сейчас (при следующей проверке)'
+                    if target <= now
+                    else target.strftime('%d.%m.%Y %H:%M:%S')
+                )
+            elif last_run and last_run.finished_at:
+                next_run = last_run.finished_at + interval
+                interval_display = self._format_interval(int(interval.total_seconds()))
+                next_run_str = (
+                    'Сейчас (при следующей проверке)'
+                    if next_run <= now
+                    else next_run.strftime('%d.%m.%Y %H:%M:%S')
+                )
+            else:
+                interval_display = self._format_interval(int(interval.total_seconds()))
+                next_run_str = 'Первый запуск'
 
             schedule_data.append({
                 'name': name,
                 'description': description,
                 'interval_seconds': int(interval.total_seconds()),
-                'interval_display': self._format_interval(int(interval.total_seconds())),
+                'interval_display': interval_display,
                 'last_run': last_run_str,
                 'last_status': last_status,
                 'next_run': next_run_str,
