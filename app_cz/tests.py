@@ -1082,6 +1082,64 @@ class ReservePartiesTokenFailureTests(TestCase):
 
 
 
+class ReservePartiesDuplicatesTests(TestCase):
+    """ЧЗ отклоняет весь батч при дубликатах — повторяем с остатком."""
+
+    def _resp(self, status_code, payload):
+        resp = Mock()
+        resp.status_code = status_code
+        resp.json.return_value = payload
+        resp.text = json.dumps(payload, ensure_ascii=False)
+        return resp
+
+    def test_duplicates_dropped_and_retried(self):
+        dup = '04601751028990261011134240000000'
+        ok = '04601751028990261012134240000000'
+        first = self._resp(400, {
+            'errorMessage': 'В списке партий содержатся дубликаты',
+            'errorResult': {'partyNumber': [dup]},
+        })
+        second = self._resp(200, {'partyNumberInfo': [{'partyNumber': ok}]})
+
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={'uuid': 'u', 'token': 't'},
+        ), patch(
+            'app_cz.services.party_service.requests.post',
+            side_effect=[first, second],
+        ) as mock_post:
+            result = party_service.reserve_parties_honest_sign(
+                product_group='milk', party_numbers=[dup, ok],
+            )
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(mock_post.call_count, 2)
+        second_body = json.loads(mock_post.call_args_list[1].kwargs['data'])
+        self.assertEqual(second_body['partyNumber'], [ok])
+        self.assertEqual(result['already_reserved'], [dup])
+
+    def test_all_duplicates_returns_success(self):
+        dup = '04601751028990261011134240000000'
+        resp = self._resp(400, {
+            'errorMessage': 'В списке партий содержатся дубликаты',
+            'errorResult': {'partyNumber': [dup]},
+        })
+
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={'uuid': 'u', 'token': 't'},
+        ), patch(
+            'app_cz.services.party_service.requests.post',
+            return_value=resp,
+        ):
+            result = party_service.reserve_parties_honest_sign(
+                product_group='milk', party_numbers=[dup],
+            )
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['already_reserved'], [dup])
+
+
 class CodeSyncFilterTests(TestCase):
     """Синхронизация кодов: только «В работе»/«Закрыто» и за последние 3 дня."""
 
