@@ -33,8 +33,58 @@ FAST_RETRY_TASKS = {
     'sync_external_parties_codes',
 }
 
+# Задачи с фиксированным местным временем запуска (ЧЧ, ММ). Для них интервал из
+# SCHEDULE не используется: задача запускается один раз в сутки, начиная с
+# указанного времени (первая же проверка планировщика после него). Пока задача
+# не завершилась после сегодняшнего времени — повторно в тот же день не идёт.
+FIXED_DAILY_TIMES = {
+    'accumulate_short_shelf_life_reserve': (0, 30),  # 00:30
+}
 
-def _effective_interval(name, interval, last_run):
+
+def _local_moment(value):
+    """Приводит datetime к местному времени (учитывает USE_TZ)."""
+    if value is None:
+        value = timezone.now()
+    try:
+        return timezone.localtime(value)
+    except (ValueError, AttributeError):
+        # Naive datetime (USE_TZ=False) — уже местное.
+        return value
+
+
+def _fixed_daily_target(name, reference=None):
+    """Целевое местное время задачи на дату reference (по умолчанию — сегодня)."""
+    hour, minute = FIXED_DAILY_TIMES[name]
+    moment = _local_moment(reference)
+    return moment.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
+def is_fixed_daily_due(name, last_run, now=None) -> bool:
+    """Пора ли запускать задачу с фиксированным временем."""
+    if now is None:
+        now = timezone.now()
+    target = _fixed_daily_target(name, now)
+    if _local_moment(now) < target:
+        return False
+    last_finished = getattr(last_run, 'finished_at', None)
+    if last_finished and last_finished >= target:
+        return False
+    return True
+
+
+def next_fixed_daily_run(name, last_run, now=None):
+    """Следующее время запуска задачи с фиксированным временем (для отображения)."""
+    if now is None:
+        now = timezone.now()
+    target = _fixed_daily_target(name, now)
+    last_finished = getattr(last_run, 'finished_at', None)
+    if last_finished and last_finished >= target:
+        target = target + timedelta(days=1)
+    return target
+
+
+def effective_interval(name, interval, last_run):
     """
     Интервал до следующего запуска задачи.
 
@@ -147,8 +197,30 @@ class Command(BaseCommand):
                 .first()
             )
 
+            # Задача с фиксированным временем суток (например, 00:30).
+            if name in FIXED_DAILY_TIMES:
+                hour, minute = FIXED_DAILY_TIMES[name]
+                target = next_fixed_daily_run(name, last_run, now)
+                schedule_info.append({
+                    'name': name,
+                    'description': description,
+                    'interval': str(interval),
+                    'interval_display': f'ежедневно {hour:02d}:{minute:02d}',
+                    'last_run': (
+                        last_run.finished_at.strftime('%d.%m.%Y %H:%M:%S')
+                        if last_run and last_run.finished_at else 'никогда'
+                    ),
+                    'next_run': (
+                        'сейчас (при следующей проверке)'
+                        if target <= now
+                        else target.strftime('%d.%m.%Y %H:%M:%S')
+                    ),
+                    'next_run_dt': target,
+                })
+                continue
+
             if last_run and last_run.finished_at:
-                next_run = last_run.finished_at + _effective_interval(
+                next_run = last_run.finished_at + effective_interval(
                     name, interval, last_run
                 )
                 # Если время уже прошло — задача будет запущена при следующей проверке.
@@ -290,6 +362,17 @@ class Command(BaseCommand):
                 .first()
             )
 
+            # Задача с фиксированным временем суток (например, 00:30).
+            if name in FIXED_DAILY_TIMES:
+                if is_fixed_daily_due(name, last_run, now):
+                    hour, minute = FIXED_DAILY_TIMES[name]
+                    self._enqueue(
+                        task_func,
+                        description,
+                        f'по расписанию {hour:02d}:{minute:02d}',
+                    )
+                continue
+
             # Если это первый запуск — выполняем сразу.
             if not last_run:
                 self._enqueue(task_func, description, 'первый запуск')
@@ -297,9 +380,9 @@ class Command(BaseCommand):
 
             # Проверяем, прошло ли достаточно времени.
             # Для упавших задач из FAST_RETRY_TASKS интервал сокращённый.
-            effective_interval = _effective_interval(name, interval, last_run)
+            interval_to_use = effective_interval(name, interval, last_run)
             time_since = (now - last_run.finished_at).total_seconds()
-            if time_since >= effective_interval.total_seconds():
+            if time_since >= interval_to_use.total_seconds():
                 self._enqueue(
                     task_func,
                     description,

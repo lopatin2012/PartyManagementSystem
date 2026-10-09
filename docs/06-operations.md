@@ -133,7 +133,8 @@ workshop/api/v1/product-list/`. SKU, привязанные к линиям за
 
 ### Накопление резерва УИП на дни вперёд
 
-Задача `accumulate_short_shelf_life_reserve_task` (раз в сутки) доливает резерв
+Задача `accumulate_short_shelf_life_reserve_task` (ежедневно в **00:30**, местное
+время) доливает резерв
 для активных SKU **обычного** формата (`ProductSKU.type_formation_uip =
 «Обычный»`), у продукта которых срок годности не больше `UIP_SHORT_SHELF_LIFE_DAYS`
 (по умолчанию 45 дней, включительно):

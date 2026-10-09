@@ -9,9 +9,12 @@ from django_tasks.base import TaskResultStatus
 
 from app_scheduler.management.commands.run_scheduler import (
     FAST_RETRY_INTERVAL,
+    FIXED_DAILY_TIMES,
     HOUR,
     SCHEDULE,
-    _effective_interval,
+    effective_interval,
+    is_fixed_daily_due,
+    next_fixed_daily_run,
 )
 
 
@@ -22,30 +25,37 @@ class _FakeResult:
         self.status = status
 
 
+class _FakeRun:
+    """Заглушка последнего запуска задачи (только finished_at)."""
+
+    def __init__(self, finished_at):
+        self.finished_at = finished_at
+
+
 class EffectiveIntervalTests(SimpleTestCase):
     """Упавшие задачи из FAST_RETRY_TASKS повторяются раньше."""
 
     def test_failed_external_sync_retries_fast(self):
         result = _FakeResult(TaskResultStatus.FAILED)
         self.assertEqual(
-            _effective_interval('sync_external_parties_codes', HOUR, result),
+            effective_interval('sync_external_parties_codes', HOUR, result),
             FAST_RETRY_INTERVAL,
         )
 
     def test_successful_external_sync_uses_full_interval(self):
         result = _FakeResult(TaskResultStatus.SUCCESSFUL)
         self.assertEqual(
-            _effective_interval('sync_external_parties_codes', HOUR, result),
+            effective_interval('sync_external_parties_codes', HOUR, result),
             HOUR,
         )
 
     def test_other_tasks_are_not_fast_retried(self):
         result = _FakeResult(TaskResultStatus.FAILED)
-        self.assertEqual(_effective_interval('refresh_suz_token', HOUR, result), HOUR)
+        self.assertEqual(effective_interval('refresh_suz_token', HOUR, result), HOUR)
 
     def test_no_last_run_uses_full_interval(self):
         self.assertEqual(
-            _effective_interval('sync_external_parties_codes', HOUR, None), HOUR
+            effective_interval('sync_external_parties_codes', HOUR, None), HOUR
         )
 
 
@@ -97,6 +107,52 @@ class SchedulerRegistryTests(SimpleTestCase):
         self.assertEqual(registry_names, schedule_names)
 
 
+class FixedDailyScheduleTests(SimpleTestCase):
+    """Накопление резерва запускается в фиксированное время (00:30)."""
+
+    TASK = 'accumulate_short_shelf_life_reserve'
+
+    def _at(self, hour, minute):
+        from django.utils import timezone
+
+        return timezone.now().replace(
+            hour=hour, minute=minute, second=0, microsecond=0,
+        )
+
+    def test_task_scheduled_at_0030(self):
+        self.assertEqual(FIXED_DAILY_TIMES[self.TASK], (0, 30))
+
+    def test_not_due_before_time(self):
+        now = self._at(0, 0)
+        self.assertFalse(is_fixed_daily_due(self.TASK, None, now))
+
+    def test_due_after_time_without_run(self):
+        now = self._at(0, 45)
+        self.assertTrue(is_fixed_daily_due(self.TASK, None, now))
+
+    def test_not_due_again_after_running_today(self):
+        now = self._at(0, 45)
+        last = _FakeRun(self._at(0, 31))
+        self.assertFalse(is_fixed_daily_due(self.TASK, last, now))
+
+    def test_due_again_next_day(self):
+        from datetime import timedelta
+
+        now = self._at(0, 45)
+        last = _FakeRun(self._at(0, 31) - timedelta(days=1))
+        self.assertTrue(is_fixed_daily_due(self.TASK, last, now))
+
+    def test_next_run_is_tomorrow_after_running_today(self):
+        from datetime import timedelta
+
+        now = self._at(0, 45)
+        last = _FakeRun(self._at(0, 31))
+        self.assertEqual(
+            next_fixed_daily_run(self.TASK, last, now),
+            self._at(0, 30) + timedelta(days=1),
+        )
+
+
 class SchedulerStatusViewTests(TestCase):
     """API расписания отдаёт все задачи из SCHEDULE (только админ)."""
 
@@ -126,6 +182,17 @@ class SchedulerStatusViewTests(TestCase):
             self.assertIn('is_running', task)
             self.assertIn('is_queued', task)
             self.assertIn('progress', task)
+
+    def test_accumulate_task_shows_fixed_time(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.get(reverse('status'))
+
+        tasks = {task['name']: task for task in response.json()['schedule']}
+        self.assertEqual(
+            tasks['accumulate_short_shelf_life_reserve']['interval_display'],
+            'ежедневно 00:30',
+        )
 
 
 class TaskProgressTests(TestCase):
