@@ -76,6 +76,7 @@ from app_cz.serializers import (
 from app_factory.models import Product, ProductSKU, NationalCatalogProduct, CardStateChoices, StateConditionChoices
 
 from app_uip.models import UIP, ProductionParty, PartyStatusChoices, ProductionPartyStatusChoices, ProductionPartySyncStatusChoices
+from app_uip.services.reserve_accumulation import should_reserve_in_cz
 
 from app_helper.sign_helper import get_list_certificates
 
@@ -1213,9 +1214,16 @@ class GenerateUIPView(View):
                 product_sku, production_date, party_number,
             )
         else:
+            # Для локального номера: если по сроку годности УИП должен быть
+            # зарезервирован в ЧЗ (продукт дольше порога черновиков) —
+            # резервируем, а не создаём черновик, даже если глобально включён
+            # режим черновиков UIP_DRAFT_MODE.
+            skip_cz = None
+            if mode == 'local' and should_reserve_in_cz(product_sku):
+                skip_cz = False
             result = generate_uip(
                 product_sku, production_date, mode,
-                party=party
+                party=party, skip_cz=skip_cz,
             )
 
         status_code = (

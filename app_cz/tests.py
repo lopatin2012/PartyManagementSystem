@@ -1472,6 +1472,77 @@ class GenerateUipFactoryScopeTests(TestCase):
         self.assertFalse(response.json()['is_error'])
 
 
+class GenerateUipShelfLifeReserveTests(TestCase):
+    """Ручная локальная генерация: резерв в ЧЗ по сроку годности (>40 дней)."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            username='gen-life', password='pass', email='a@a.a',
+        )
+        self.client.force_login(self.admin)
+
+    @staticmethod
+    def _make_sku(article, gtin, shelf_life):
+        product = Product.objects.create(
+            group=ProductGroupChoices.MILK,
+            name=f'Продукт {article}',
+            shelf_life_in_days=shelf_life,
+            item_condition=StateConditionChoices.READY_ORDER_KM,
+            card_status=CardStateChoices.PUBLISHED,
+        )
+        ProductPackaging.objects.create(
+            product=product,
+            level=PackagingLevelChoices.UNIT,
+            gtin=gtin,
+            quantity_inside=1,
+        )
+        return ProductSKU.objects.create(product=product, article=article)
+
+    def _generate_local(self, sku):
+        return self.client.post(
+            '/cz/uip/generate/',
+            data=json.dumps({
+                'product_sku_id': str(sku.id),
+                'production_date': '2026-01-01',
+                'mode': 'local',
+            }),
+            content_type='application/json',
+        )
+
+    @override_settings(UIP_DRAFT_MODE=True)
+    def test_long_shelf_life_reserved_in_cz(self):
+        sku = self._make_sku('L45', '04601751026071', 45)
+
+        with patch(
+            'app_cz.services.party_service.reserve_parties_honest_sign',
+        ) as mock_reserve:
+            mock_reserve.return_value = {
+                'is_error': False,
+                'message_error': 'ОК',
+                'lst_party_number_info': [],
+            }
+            response = self._generate_local(sku)
+
+        self.assertEqual(response.status_code, 200)
+        mock_reserve.assert_called()
+        uip = UIP.objects.get(product_sku=sku)
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+
+    @override_settings(UIP_DRAFT_MODE=True)
+    def test_short_shelf_life_stays_draft(self):
+        sku = self._make_sku('S14', '04601751026072', 14)
+
+        with patch(
+            'app_cz.services.party_service.reserve_parties_honest_sign',
+        ) as mock_reserve:
+            response = self._generate_local(sku)
+
+        self.assertEqual(response.status_code, 200)
+        mock_reserve.assert_not_called()
+        uip = UIP.objects.get(product_sku=sku)
+        self.assertEqual(uip.status, PartyStatusChoices.DRAFT)
+
+
 class AdminBypassesFactoryScopeTests(TestCase):
     """Админ не ограничивается заводом ни в генерации, ни в действиях."""
 

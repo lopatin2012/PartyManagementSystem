@@ -16,15 +16,17 @@
 * срок годности `41..UIP_SHORT_SHELF_LIFE_DAYS` — УИП резервируются в ЧЗ
   собственным (локальным) номером (`reserved_local`);
 * срок годности не более `UIP_DRAFT_SHELF_LIFE_DAYS` (по умолчанию 40) —
-  создаются черновики без обращения к ЧЗ; при явном `skip_cz=False` такие
-  УИП тоже резервируются в ЧЗ;
+  создаются черновики без обращения к ЧЗ; **кроме дат производства начиная с
+  `SHORT_SHELF_LIFE_RESERVE_FROM` (01.03.2027)** — они резервируются в ЧЗ
+  (только автоматическое накопление; ручная генерация это правило не
+  применяет); при явном `skip_cz=False` такие УИП тоже резервируются в ЧЗ;
 * при резервировании в ЧЗ, если заполнение резерва превышает `RELEASE_PERCENT`
   (95%) — резервирование пропускается, чтобы не ухудшать ситуацию.
 """
 
 import logging
 import time
-from datetime import timedelta
+from datetime import date, timedelta
 
 from django.conf import settings
 from django.db import transaction
@@ -48,6 +50,11 @@ CZ_BATCH_PAUSE_SECONDS = 10
 # Формат УИП, для которого поддерживается накопление.
 RESERVE_TYPE_FORMATION = TypeFormationUIP.general
 
+# С этой даты продукция с коротким сроком годности (не более
+# UIP_DRAFT_SHELF_LIFE_DAYS) тоже резервируется в ЧЗ. До неё — черновик.
+# Правило действует только для автоматического накопления.
+SHORT_SHELF_LIFE_RESERVE_FROM = date(2027, 3, 1)
+
 
 def _short_shelf_life_days() -> int:
     """Порог срока годности (дней, включительно), до которого накапливаем резерв."""
@@ -59,17 +66,30 @@ def _draft_shelf_life_days() -> int:
     return int(getattr(settings, 'UIP_DRAFT_SHELF_LIFE_DAYS', 40) or 40)
 
 
-def _should_reserve(sku, skip_cz) -> bool:
+def should_reserve_in_cz(sku) -> bool:
     """
-    Резервировать ли УИП этого SKU в ЧЗ (иначе — черновик).
+    Должен ли УИП этого SKU резервироваться в ЧЗ по сроку годности продукта.
 
-    Продукция со сроком годности больше `UIP_DRAFT_SHELF_LIFE_DAYS` (в пределах
-    `UIP_SHORT_SHELF_LIFE_DAYS`) всегда резервируется в ЧЗ. Для более короткого
-    срока решение определяется явным `skip_cz` (None/True — черновик,
-    False — резерв).
+    Продукция со сроком годности больше `UIP_DRAFT_SHELF_LIFE_DAYS` (по
+    умолчанию 40 дней) резервируется в ЧЗ; более короткий срок — черновик.
     """
-    shelf_life = sku.product.shelf_life_in_days
-    if shelf_life > _draft_shelf_life_days():
+    return sku.product.shelf_life_in_days > _draft_shelf_life_days()
+
+
+def _should_reserve_entry(entry, skip_cz) -> bool:
+    """
+    Резервировать ли конкретный УИП (SKU + дата производства) в ЧЗ.
+
+    * срок годности > `UIP_DRAFT_SHELF_LIFE_DAYS` (в пределах
+      `UIP_SHORT_SHELF_LIFE_DAYS`) — всегда резерв в ЧЗ;
+    * короткий срок, но дата производства >= `SHORT_SHELF_LIFE_RESERVE_FROM`
+      (01.03.2027) — тоже резерв в ЧЗ (только при автопополнении);
+    * иначе — черновик, если не передан явный `skip_cz=False`.
+    """
+    if should_reserve_in_cz(entry['sku']):
+        return True
+    production_date = entry.get('date')
+    if production_date and production_date >= SHORT_SHELF_LIFE_RESERVE_FROM:
         return True
     return skip_cz is False
 
@@ -291,10 +311,10 @@ def accumulate_short_shelf_life_reserve(
         }
 
     reserve_entries = [
-        e for e in to_process if _should_reserve(e['sku'], skip_cz)
+        e for e in to_process if _should_reserve_entry(e, skip_cz)
     ]
     draft_entries = [
-        e for e in to_process if not _should_reserve(e['sku'], skip_cz)
+        e for e in to_process if not _should_reserve_entry(e, skip_cz)
     ]
 
     # Резервирование в ЧЗ не запускаем, если резерв уже переполнен.
