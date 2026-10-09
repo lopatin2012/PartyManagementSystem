@@ -811,16 +811,25 @@ def sync_parties_from_cz() -> dict:
                         else 'Создан при синхронизации с ЧЗ'
                     )
 
-                    uip = UIP.objects.create(
+                    uip, was_created = UIP.objects.get_or_create(
                         number=party_number,
-                        product_sku=product_sku,
-                        status=new_status,
-                        production_date=production_date,
-                        reservation_date=reservation_date,
-                        planned_quantity=party_info.get('expectedQuantity', 0),
-                        is_desync=False,
-                        description=note,
+                        defaults={
+                            'product_sku': product_sku,
+                            'status': new_status,
+                            'production_date': production_date,
+                            'reservation_date': reservation_date,
+                            'planned_quantity': party_info.get('expectedQuantity', 0),
+                            'is_desync': False,
+                            'description': note,
+                        },
                     )
+                    if not was_created:
+                        # Номер создан параллельно (например, накоплением резерва)
+                        # — не дублируем, обновит следующий цикл синхронизации.
+                        logger.info(
+                            f'УИП {party_number} уже создан параллельно — пропуск.'
+                        )
+                        continue
                     UIPStatusLog.objects.create(
                         uip=uip,
                         from_status=None,

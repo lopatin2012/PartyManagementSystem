@@ -457,6 +457,20 @@ class SyncPartiesFormatDetectionTests(TestCase):
         uip = UIP.objects.get(number='0460175102601926011520AB12XYZ999')
         self.assertEqual(uip.status, PartyStatusChoices.RESERVED_CZ)
 
+    def test_duplicate_cz_number_created_once(self):
+        party = {
+            'partyNumber': self.local_number,
+            'gtin': '04601751026019',
+            'productionDate': '2026-01-15',
+        }
+
+        result = self._sync([party, dict(party)])
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(
+            UIP.objects.filter(number=self.local_number).count(), 1,
+        )
+
 
 class GenerateUipManualEndpointTests(TestCase):
     """POST /cz/uip/generate/ в режиме mode=manual."""
