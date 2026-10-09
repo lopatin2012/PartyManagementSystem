@@ -1448,6 +1448,28 @@ class ReserveAccumulationTests(TestCase):
             {PartyStatusChoices.RESERVED_LOCAL},
         )
 
+    def test_create_uip_is_idempotent(self):
+        from app_uip.services import reserve_accumulation as ra
+
+        sku = self._make_product('ID45', '04601751026100', shelf_life=45)
+        number = '04601751026100261010134250000000'
+        UIP.objects.create(
+            product_sku=sku,
+            number=number,
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        entry = {
+            'sku': sku,
+            'date': date(2026, 10, 10),
+            'number': number,
+            'action': 'create',
+        }
+
+        # Номер уже есть (гонка) — IntegrityError быть не должно.
+        ra._create_uip(entry, skip_cz=False)
+
+        self.assertEqual(UIP.objects.filter(number=number).count(), 1)
+
     def test_existing_active_skipped_and_deleted_restored(self):
         active_date = self.today + timedelta(days=1)
         UIP.objects.create(

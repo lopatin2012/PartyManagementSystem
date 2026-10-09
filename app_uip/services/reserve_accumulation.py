@@ -223,21 +223,24 @@ def _create_uip(entry: dict, skip_cz: bool) -> None:
         note = 'Автоматическое накопление резерва УИП'
 
     with transaction.atomic():
-        uip = UIP.objects.create(
-            product_sku=sku,
+        uip, created = UIP.objects.get_or_create(
             number=entry['number'],
-            status=status,
-            production_date=entry['date'],
-            reservation_date=reservation_date,
-            description=note,
+            defaults={
+                'product_sku': sku,
+                'status': status,
+                'production_date': entry['date'],
+                'reservation_date': reservation_date,
+                'description': note,
+            },
         )
-        UIPStatusLog.objects.create(
-            uip=uip,
-            from_status=None,
-            to_status=status,
-            source='service',
-            note=note,
-        )
+        if created:
+            UIPStatusLog.objects.create(
+                uip=uip,
+                from_status=None,
+                to_status=status,
+                source='service',
+                note=note,
+            )
 
 
 def _persist_entries(entries: list[dict], skip_cz: bool) -> tuple[int, int]:
