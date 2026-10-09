@@ -274,6 +274,21 @@ def generate_party_numbers(
         }
 
 
+def _extract_already_reserved(body: dict) -> list[str]:
+    """
+    Достаёт из ответа ЧЗ номера, которые уже зарезервированы (дубликаты).
+
+    Формат: {"errorMessage": "...", "errorResult": {"partyNumber": [...]}}.
+    """
+    if not isinstance(body, dict):
+        return []
+    error_result = body.get('errorResult') or {}
+    numbers = error_result.get('partyNumber') or []
+    if isinstance(numbers, str):
+        return [numbers]
+    return [n for n in numbers if isinstance(n, str)]
+
+
 def reserve_parties_honest_sign(
         product_group: str,
         party_numbers: list[str]
@@ -295,7 +310,7 @@ def reserve_parties_honest_sign(
             'message_error': f'Некорректный формат номеров партий: {", ".join(invalid_parties[:3])}...'
         }
 
-    # 2. Проверка на дубликаты.
+    # 2. Проверка на дубликаты в локальной БД и дедуп внутри запроса.
     existing_parties = set(
         UIP.objects.filter(
             number__in=party_numbers,
@@ -303,11 +318,9 @@ def reserve_parties_honest_sign(
         ).values_list('number', flat=True)
     )
 
-    available_to_reserve = [
-        p
-        for p in party_numbers
-        if p not in existing_parties
-    ]
+    available_to_reserve = list(dict.fromkeys(
+        p for p in party_numbers if p not in existing_parties
+    ))
 
     if not available_to_reserve:
         logger.warning("Все указанные УИП уже зарезервированы или находятся в работе.")
@@ -336,49 +349,81 @@ def reserve_parties_honest_sign(
 
     params = {}
 
-    data = {
-        'pg': product_group,
-        'partyNumber': available_to_reserve
-    }
-    json_dumps_data = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
+    # ЧЗ отклоняет ВЕСЬ батч, если хотя бы один номер уже зарезервирован у него
+    # («В списке партий содержатся дубликаты»). Такие номера считаем уже
+    # зарезервированными, убираем из запроса и повторяем с остатком.
+    to_reserve = available_to_reserve
+    already_reserved = []
+    while to_reserve:
+        data = {
+            'pg': product_group,
+            'partyNumber': to_reserve
+        }
+        json_dumps_data = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
 
-    try:
-        logger.info(f"Запрос резервирования {len(available_to_reserve)} партий в ЧЗ.")
-        response = requests.post(
-            SUZ.reservation_party,
-            headers=headers,
-            params=params,
-            data=json_dumps_data,
-            timeout=15
-        )
-
-        if response.status_code != 200:
-            logger.error(f"Ошибка резервирования {response.status_code}: {response.text}")
-            error_msg = (
-                    response.json().get('errorMessage')
-                    or response.json().get('error_message', 'Неизвестная ошибка ЧЗ')
+        try:
+            logger.info(f"Запрос резервирования {len(to_reserve)} партий в ЧЗ.")
+            response = requests.post(
+                SUZ.reservation_party,
+                headers=headers,
+                params=params,
+                data=json_dumps_data,
+                timeout=15
             )
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Сетевая ошибка при резервировании партий: {e}")
             return {
                 'is_error': True,
-                'message_error': error_msg
+                'message_error': f'Ошибка соединения с ЧЗ: {str(e)}'
             }
 
-        response_data = response.json()
-        lst_party_info = response_data.get('partyNumberInfo', [])
+        if response.status_code == 200:
+            lst_party_info = response.json().get('partyNumberInfo', [])
+            logger.info("Резервирование партий успешно завершено.")
+            return {
+                'is_error': False,
+                'message_error': 'Ошибки отсутствуют',
+                'lst_party_number_info': (
+                    lst_party_info
+                    + [{'partyNumber': n} for n in already_reserved]
+                ),
+                'already_reserved': already_reserved,
+            }
 
-        logger.info("Резервирование партий успешно завершено.")
-        return {
-            'is_error': False,
-            'message_error': 'Ошибки отсутствуют',
-            'lst_party_number_info': lst_party_info
-        }
+        # Не 200: пробуем распознать уже зарезервированные номера (дубликаты).
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
 
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Сетевая ошибка при резервировании партий: {e}")
+        duplicates = set(_extract_already_reserved(body)) & set(to_reserve)
+        if duplicates:
+            logger.warning(
+                f'Резервирование в ЧЗ: {len(duplicates)} номер(ов) уже '
+                f'зарезервированы, повторяю с остальными.'
+            )
+            already_reserved.extend(sorted(duplicates))
+            to_reserve = [n for n in to_reserve if n not in duplicates]
+            continue
+
+        logger.error(f"Ошибка резервирования {response.status_code}: {response.text}")
+        error_msg = (
+            body.get('errorMessage')
+            or body.get('error_message', 'Неизвестная ошибка ЧЗ')
+        )
         return {
             'is_error': True,
-            'message_error': f'Ошибка соединения с ЧЗ: {str(e)}'
+            'message_error': error_msg
         }
+
+    # Все номера оказались уже зарезервированы в ЧЗ.
+    logger.info("Все номера уже зарезервированы в ЧЗ.")
+    return {
+        'is_error': False,
+        'message_error': 'Ошибки отсутствуют',
+        'lst_party_number_info': [{'partyNumber': n} for n in already_reserved],
+        'already_reserved': already_reserved,
+    }
 
 
 def reserve_party_numbers_cz(

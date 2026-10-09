@@ -1399,6 +1399,55 @@ class ReserveAccumulationTests(TestCase):
             PartyStatusChoices.DRAFT,
         )
 
+    def test_reserved_elsewhere_is_recorded_locally(self):
+        """Номер, уже зарезервированный в ЧЗ, фиксируется локально."""
+        import json
+        from unittest.mock import Mock
+
+        sku = self._make_product('X45', '04601751026090', shelf_life=45)
+        sku.reserve_days = 1
+        sku.save(update_fields=['reserve_days'])
+
+        state = {'first': True}
+
+        def fake_post(url=None, headers=None, params=None, data=None, timeout=None):
+            numbers = json.loads(data)['partyNumber']
+            response = Mock()
+            if state['first']:
+                state['first'] = False
+                response.status_code = 400
+                response.json.return_value = {
+                    'errorMessage': 'В списке партий содержатся дубликаты',
+                    'errorResult': {'partyNumber': [numbers[0]]},
+                }
+                response.text = 'duplicates'
+            else:
+                response.status_code = 200
+                response.json.return_value = {
+                    'partyNumberInfo': [
+                        {'partyNumber': n} for n in numbers
+                    ],
+                }
+                response.text = 'ok'
+            return response
+
+        with patch(
+            'app_cz.services.party_service.get_true_api_session_token',
+            return_value={'uuid': 'u', 'token': 't'},
+        ), patch(
+            'app_cz.services.party_service.requests.post',
+            side_effect=fake_post,
+        ):
+            result = accumulate_short_shelf_life_reserve(pause_seconds=0)
+
+        self.assertFalse(result['is_error'])
+        uips = UIP.objects.filter(product_sku=sku)
+        self.assertEqual(uips.count(), 2)
+        self.assertEqual(
+            set(uips.values_list('status', flat=True)),
+            {PartyStatusChoices.RESERVED_LOCAL},
+        )
+
     def test_existing_active_skipped_and_deleted_restored(self):
         active_date = self.today + timedelta(days=1)
         UIP.objects.create(
