@@ -41,6 +41,7 @@ from app_uip.models import (
 )
 from app_cz.models import CISCode
 from app_cz.services import code_sync
+from app_cz.services import desync_resolution
 from app_cz.services import party_service
 
 
@@ -405,6 +406,140 @@ class SyncPartiesReserveReconciliationTests(TestCase):
         self.assertTrue(
             all(UIP.objects.values_list('is_desync', flat=True))
         )
+
+
+class ResolveDesyncUipsTests(TestCase):
+    """Разбор УИП в рассинхроне по кодам из внешних заданий."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.packaging = self.sku.product.packagings.first()
+
+    def _uip(self, number, status=PartyStatusChoices.RESERVED_LOCAL,
+             is_desync=True):
+        return UIP.objects.create(
+            product_sku=self.sku,
+            number=number,
+            status=status,
+            is_desync=is_desync,
+        )
+
+    def _party_with_code(self, uip, code, index='1'):
+        party = ProductionParty.objects.create(
+            uip=uip,
+            production_party=index,
+            external_number_task=f'task-{index}',
+        )
+        CISCode.objects.create(
+            production_party=party,
+            product_packaging=self.packaging,
+            code=code,
+            level=PackagingLevelChoices.UNIT,
+        )
+        return party
+
+    def _resolve(self, statuses=None):
+        with patch(
+            'app_cz.services.code_status.get_cises_statuses',
+            return_value=statuses or {},
+        ):
+            return desync_resolution.resolve_desync_uips()
+
+    def test_reserved_with_applied_code_becomes_registered(self):
+        uip = self._uip('04601751026019260101500320000000')
+        self._party_with_code(uip, '010460175102601921CODE0001')
+
+        result = self._resolve({'010460175102601921CODE0001': 'APPLIED'})
+
+        self.assertEqual(result['registered'], 1)
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.REGISTERED)
+        self.assertFalse(uip.is_desync)
+
+    def test_registered_still_in_cz_clears_flag_only(self):
+        """Case A: УИП уже registered, но ЧЗ держит его в резерве."""
+        uip = self._uip(
+            '04601751026019260101500320000000',
+            status=PartyStatusChoices.REGISTERED,
+        )
+        self._party_with_code(uip, '010460175102601921CODE0001')
+
+        result = self._resolve({'010460175102601921CODE0001': 'INTRODUCED'})
+
+        self.assertEqual(result['registered'], 0)
+        self.assertEqual(result['desync_cleared'], 1)
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.REGISTERED)
+        self.assertFalse(uip.is_desync)
+
+    def test_any_applied_code_registers_uip(self):
+        """Достаточно одного нанесённого кода из нескольких."""
+        uip = self._uip('04601751026019260101500320000000')
+        self._party_with_code(uip, '010460175102601921CODE0001', index='1')
+        self._party_with_code(uip, '010460175102601921CODE0002', index='2')
+
+        result = self._resolve({
+            '010460175102601921CODE0001': 'EMITTED',
+            '010460175102601921CODE0002': 'APPLIED',
+        })
+
+        self.assertEqual(result['registered'], 1)
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.REGISTERED)
+
+    def test_pending_code_keeps_desync(self):
+        uip = self._uip('04601751026019260101500320000000')
+        self._party_with_code(uip, '010460175102601921CODE0001')
+
+        result = self._resolve({'010460175102601921CODE0001': 'EMITTED'})
+
+        self.assertEqual(result['registered'], 0)
+        self.assertEqual(result['remaining'], 1)
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertTrue(uip.is_desync)
+
+    def test_no_codes_keeps_desync(self):
+        uip = self._uip('04601751026019260101500320000000')
+
+        result = self._resolve()
+
+        self.assertEqual(result['remaining'], 1)
+        uip.refresh_from_db()
+        self.assertTrue(uip.is_desync)
+
+    def test_external_code_fetched_when_no_local_codes(self):
+        uip = self._uip('04601751026019260101500320000000')
+        ProductionParty.objects.create(
+            uip=uip, production_party='1', external_number_task='task-1',
+        )
+        with patch.object(
+            desync_resolution, '_fetch_external_code',
+            return_value='010460175102601921EXTERN01',
+        ), patch(
+            'app_cz.services.code_status.get_cises_statuses',
+            return_value={'010460175102601921EXTERN01': 'APPLIED'},
+        ):
+            result = desync_resolution.resolve_desync_uips()
+
+        self.assertEqual(result['registered'], 1)
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.REGISTERED)
+        self.assertFalse(uip.is_desync)
+
+    def test_deleted_uip_ignored(self):
+        uip = self._uip(
+            '04601751026019260101500320000000',
+            status=PartyStatusChoices.DELETED,
+        )
+        self._party_with_code(uip, '010460175102601921CODE0001')
+
+        result = self._resolve({'010460175102601921CODE0001': 'APPLIED'})
+
+        self.assertEqual(result['checked'], 0)
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.DELETED)
+        self.assertTrue(uip.is_desync)
 
 
 class SyncPartiesFormatDetectionTests(TestCase):

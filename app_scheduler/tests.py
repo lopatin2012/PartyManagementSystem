@@ -84,6 +84,17 @@ class ScheduleRegistrationTests(SimpleTestCase):
         self.assertEqual(entries['sync_parties'], timedelta(minutes=30))
         self.assertTrue(hasattr(sync_parties_task, 'enqueue'))
 
+    def test_resolve_desync_task_in_schedule(self):
+        from datetime import timedelta
+
+        from app_scheduler.management.commands.run_scheduler import SCHEDULE
+        from app_scheduler.tasks import resolve_desync_uips_task
+
+        entries = {name: interval for name, interval, _ in SCHEDULE}
+        self.assertIn('resolve_desync_uips', entries)
+        self.assertEqual(entries['resolve_desync_uips'], timedelta(hours=1))
+        self.assertTrue(hasattr(resolve_desync_uips_task, 'enqueue'))
+
     def test_system_health_task_in_schedule(self):
         from datetime import timedelta
 
