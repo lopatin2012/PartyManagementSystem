@@ -817,6 +817,53 @@ class UIPActiveListEndpointTests(TestCase):
         self.assertEqual(data['count'], 1)
         self.assertEqual(data['result'][0]['product_name'], 'Тестовый продукт')
 
+    def test_active_list_respects_page_size(self):
+        """page_size ограничивает выдачу (иначе с page_size=1000 ответ огромный)."""
+        sku = create_product()
+        for i in range(3):
+            UIP.objects.create(
+                product_sku=sku,
+                number=f'046017510260192601015003200{i:02d}',
+                status=PartyStatusChoices.RESERVED_LOCAL,
+            )
+
+        response = self.client.get(
+            '/uip/api/v1/status_parties/active/?page_size=2&page=1'
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['count'], 3)
+        self.assertEqual(data['page_size'], 2)
+        self.assertEqual(len(data['result']), 2)
+
+    def test_active_list_queries_do_not_grow_with_rows(self):
+        """product_name не должен порождать N+1 запрос."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        sku = create_product()
+        UIP.objects.create(
+            product_sku=sku,
+            number='04601751026019260101500320001',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        with CaptureQueriesContext(connection) as one:
+            self.client.get('/uip/api/v1/status_parties/active/?page_size=1000')
+
+        for i in range(2, 6):
+            UIP.objects.create(
+                product_sku=sku,
+                number=f'046017510260192601015003200{i:02d}',
+                status=PartyStatusChoices.RESERVED_LOCAL,
+            )
+        with CaptureQueriesContext(connection) as many:
+            self.client.get('/uip/api/v1/status_parties/active/?page_size=1000')
+
+        self.assertEqual(
+            len(one.captured_queries), len(many.captured_queries),
+        )
+
 
 
 

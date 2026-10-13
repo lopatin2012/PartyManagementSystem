@@ -152,6 +152,8 @@ class UIPStatusViewSet(viewsets.ViewSet):
             OpenApiParameter(name='production_date_to', type=OpenApiTypes.DATE, location=OpenApiParameter.QUERY),
             OpenApiParameter(name='reservation_date_from', type=OpenApiTypes.DATE, location=OpenApiParameter.QUERY),
             OpenApiParameter(name='reservation_date_to', type=OpenApiTypes.DATE, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='page', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='page_size', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY),
         ],
         responses={200: UIPActiveListSerializer(many=True)},
     )
@@ -168,12 +170,16 @@ class UIPStatusViewSet(viewsets.ViewSet):
         )).lower() == 'true'
 
         # Базовый queryset: либо все, либо только действующие.
+        # select_related('product_sku__product') — сериализатор читает
+        # product_sku.product.name, без этого N+1 на каждый УИП.
         if include_all:
-            queryset = UIP.objects.select_related('product_sku').order_by('-created_at')
+            queryset = UIP.objects.select_related(
+                'product_sku__product'
+            ).order_by('-created_at')
         else:
             queryset = UIP.objects.filter(
                 status__in=UIP.ACTIVE_STATUSES
-            ).select_related('product_sku').order_by('-created_at')
+            ).select_related('product_sku__product').order_by('-created_at')
 
         # Фильтры по продукту.
         product_id = request.query_params.get('product_id')
@@ -232,9 +238,21 @@ class UIPStatusViewSet(viewsets.ViewSet):
                 )
             )
 
-        serializer = UIPActiveListSerializer(queryset, many=True)
+        # Пагинация: без неё с page_size=1000 по диапазону дат ответ огромный и
+        # медленный, клиент отваливается по таймауту (CancelledError в uvicorn).
+        try:
+            page_size = int(request.query_params.get('page_size') or 1000)
+        except (TypeError, ValueError):
+            page_size = 1000
+        page_size = max(1, min(page_size, 1000))
+
+        paginator = Paginator(queryset, page_size)
+        page_obj = paginator.get_page(request.query_params.get('page') or 1)
+        serializer = UIPActiveListSerializer(page_obj.object_list, many=True)
         return Response({
-            'count': queryset.count(),
+            'count': paginator.count,
+            'page': page_obj.number,
+            'page_size': page_size,
             'result': serializer.data
         })
 
