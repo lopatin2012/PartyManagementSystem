@@ -565,6 +565,26 @@ def get_all_reserved_parties() -> dict:
         }
 
 
+def get_reserved_party_numbers() -> set:
+    """
+    Номера партий, зарезервированных в ЧЗ (одним запросом списка).
+
+    Используется, чтобы отличить «номер уже зарезервирован» от «номер уже
+    зарегистрирован»: если резерв не удался, а номера в списке нет — он занят
+    (зарегистрирован/использован).
+
+    :return: множество номеров или None, если список получить не удалось.
+    """
+    result = get_all_reserved_parties()
+    if result.get('is_error'):
+        return None
+    return {
+        p.get('partyNumber')
+        for p in result.get('lst_party_number_info', [])
+        if p.get('partyNumber')
+    }
+
+
 def close_party_reservation(
         cis: str,
         batch_number: str,

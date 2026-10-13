@@ -1629,7 +1629,8 @@ class CheckUipCzEndpointTests(TestCase):
         self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
         self.assertFalse(self.uip.is_desync)
 
-    def test_failed_reserve_without_applied_code_keeps_desync(self):
+    def _failed_reserve(self, reserved_numbers):
+        """Отказ резерва + код не подтверждён; задаём ответ списка резерва ЧЗ."""
         self._login()
         with patch.object(
             self.views_module, 'reserve_party_numbers_cz',
@@ -1637,18 +1638,47 @@ class CheckUipCzEndpointTests(TestCase):
         ), patch(
             'app_cz.services.code_status.get_cises_statuses',
             return_value={},
+        ), patch(
+            'app_cz.services.party_service.get_reserved_party_numbers',
+            return_value=reserved_numbers,
         ):
-            response = self.client.post(
+            return self.client.post(
                 self.url, data={'uip_id': str(self.uip.id)},
                 content_type='application/json',
             )
 
+    def test_failed_reserve_number_in_cz_reserve_clears_desync(self):
+        """Номер есть в резерве ЧЗ → он зарезервирован, флаг снимается."""
+        response = self._failed_reserve({self.uip.number})
+
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertFalse(body['is_error'])
+        self.assertEqual(body['result'], 'reserved')
+        self.uip.refresh_from_db()
+        self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertFalse(self.uip.is_desync)
+
+    def test_failed_reserve_number_not_in_cz_registers_uip(self):
+        """Номера нет в резерве ЧЗ и он не резервируется → зарегистрирован."""
+        response = self._failed_reserve(set())
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body['is_error'])
+        self.assertEqual(body['result'], 'registered')
+        self.uip.refresh_from_db()
+        self.assertEqual(self.uip.status, PartyStatusChoices.REGISTERED)
+        self.assertFalse(self.uip.is_desync)
+
+    def test_failed_reserve_list_unavailable_keeps_desync(self):
+        """Список резерва ЧЗ недоступен → оставляем в рассинхроне."""
+        response = self._failed_reserve(None)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
         self.assertEqual(body['result'], 'desync')
         self.uip.refresh_from_db()
-        # Код не нанесён — статус не меняется, флаг остаётся.
         self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
         self.assertTrue(self.uip.is_desync)
 
