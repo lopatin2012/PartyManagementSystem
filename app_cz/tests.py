@@ -1629,24 +1629,60 @@ class CheckUipCzEndpointTests(TestCase):
         self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
         self.assertFalse(self.uip.is_desync)
 
-    def test_failed_reserve_reports_registered(self):
+    def test_failed_reserve_without_applied_code_keeps_desync(self):
         self._login()
         with patch.object(
             self.views_module, 'reserve_party_numbers_cz',
             return_value={'is_error': True, 'message_error': 'Номер уже занят'},
+        ), patch(
+            'app_cz.services.code_status.get_cises_statuses',
+            return_value={},
         ):
             response = self.client.post(
                 self.url, data={'uip_id': str(self.uip.id)},
                 content_type='application/json',
             )
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body['result'], 'registered')
+        self.assertFalse(body['is_error'])
+        self.assertEqual(body['result'], 'desync')
         self.uip.refresh_from_db()
-        # Статус не меняется при отказе ЧЗ.
+        # Код не нанесён — статус не меняется, флаг остаётся.
         self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
         self.assertTrue(self.uip.is_desync)
+
+    def test_failed_reserve_with_applied_code_registers_uip(self):
+        self._login()
+        party = ProductionParty.objects.create(
+            uip=self.uip, production_party='1', external_number_task='task-1',
+        )
+        CISCode.objects.create(
+            production_party=party,
+            product_packaging=self.sku.product.packagings.first(),
+            code='010460175102601921CODE0001',
+            level=PackagingLevelChoices.UNIT,
+        )
+        with patch.object(
+            self.views_module, 'reserve_party_numbers_cz',
+            return_value={'is_error': True, 'message_error': 'Номер уже занят'},
+        ), patch(
+            'app_cz.services.code_status.get_cises_statuses',
+            return_value={'010460175102601921CODE0001': 'APPLIED'},
+        ):
+            response = self.client.post(
+                self.url, data={'uip_id': str(self.uip.id)},
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body['is_error'])
+        self.assertEqual(body['result'], 'registered')
+        self.uip.refresh_from_db()
+        # Код нанесён → регистрация подтверждена.
+        self.assertEqual(self.uip.status, PartyStatusChoices.REGISTERED)
+        self.assertFalse(self.uip.is_desync)
 
     def test_unknown_uip_returns_404(self):
         self._login()
