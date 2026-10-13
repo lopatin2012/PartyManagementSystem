@@ -438,6 +438,67 @@ class MapCzStatusTests(SimpleTestCase):
             self.assertNotIn(map_cz_status(raw), APPLIED_STATUSES)
 
 
+class GetCisesStatusesTests(SimpleTestCase):
+    """Проверка статусов кодов в ЧЗ: Bearer-токен True API, нормализация КИ."""
+
+    def _response(self, items):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = items
+        response.raise_for_status.return_value = None
+        return response
+
+    def test_uses_bearer_and_normalizes_codes(self):
+        from app_cz.services import code_status
+        from app_cz.suz_config import SUZ
+
+        response = self._response([{
+            'cisInfo': {
+                'requestedCis': '010460175102601921CODE00',
+                'cis': '010460175102601921CODE00',
+                'status': 'APPLIED',
+            },
+        }])
+        # Код с GS + AI 93 (агрегация) — должен обрезаться до 24 символов.
+        stored_code = '010460175102601921CODE00\x1d93ABCDEF'
+
+        with patch.object(code_status, 'CISES_INFO_PAUSE_SECONDS', 0), patch(
+            'app_cz.services.suz_client.get_true_api_session_token',
+            return_value={'token': 'TEST-TOKEN', 'message': 'ok'},
+        ), patch.object(code_status.requests, 'post', return_value=response) as post:
+            result = code_status.get_cises_statuses([stored_code], 'milk')
+
+        # Статус возвращается по исходному (полному) коду.
+        self.assertEqual(result, {stored_code: 'APPLIED'})
+        _, kwargs = post.call_args
+        self.assertEqual(kwargs['headers']['Authorization'], 'Bearer TEST-TOKEN')
+        self.assertNotIn('clientToken', kwargs['headers'])
+        self.assertEqual(post.call_args.args[0], SUZ.cises_info)
+        self.assertEqual(kwargs['params'], {'pg': 'milk'})
+        self.assertEqual(kwargs['json'], ['010460175102601921CODE00'])
+
+    def test_no_token_returns_empty(self):
+        from app_cz.services import code_status
+
+        with patch(
+            'app_cz.services.suz_client.get_true_api_session_token',
+            return_value={'token': None, 'message': 'нет токена'},
+        ):
+            self.assertEqual(
+                code_status.get_cises_statuses(['x' * 24], 'milk'), {},
+            )
+
+    def test_normalize_cis_strips_control_chars_and_truncates(self):
+        from app_cz.services.code_status import normalize_cis
+
+        self.assertEqual(
+            normalize_cis('010460175102601921CODE00\x1d93ABCDEF', 'milk'),
+            '010460175102601921CODE00',
+        )
+        # Для неизвестной группы не обрезаем, только чистим управляющие символы.
+        self.assertEqual(normalize_cis('abc\x1d93', 'other'), 'abc93')
+
+
 class ResolveDesyncUipsTests(TestCase):
     """Разбор УИП в рассинхроне по кодам из внешних заданий."""
 
