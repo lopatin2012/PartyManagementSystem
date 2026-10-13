@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html, mark_safe
 from django.core.paginator import Paginator
-from django.db import connection
+from django.db import connections
 
 from app_cz.models import (
     CISCode, CISCodeArchive, CISCodesStatusChoices, ProductionCodeStatusChoices, SUZAccount
@@ -13,8 +13,13 @@ from app_cz.models import (
 # ==========================================
 class LargeTablePaginator(Paginator):
     """
-    Пагинатор, который не делает медленный COUNT(*) на больших таблицах.
-    Вместо этого использует приближённое количество строк из статистики PostgreSQL (pg_class).
+    Пагинатор без медленного COUNT(*) на больших таблицах.
+
+    Django-админка ВСЕГДА запрашивает `paginator.count` (для числа страниц), а
+    на таблицах с миллионами строк `SELECT COUNT(*)` очень дорог. Здесь число
+    строк берётся приблизительно из статистики PostgreSQL (`pg_class.reltuples`)
+    для таблицы и БД переданного queryset (важно для архива в отдельной БД).
+    При неудаче — откат к обычному COUNT.
     """
 
     def __init__(self, *args, **kwargs):
@@ -24,24 +29,29 @@ class LargeTablePaginator(Paginator):
     @property
     def count(self):
         if self._count is None:
-            try:
-                with connection.cursor() as cursor:
-                    # Получаем примерное количество строк из системного каталога PostgreSQL
-                    # Это работает в сотни раз быстрее, чем SELECT COUNT(*)
-                    cursor.execute("""
-                        SELECT reltuples::bigint 
-                        FROM pg_class 
-                        WHERE relname = 'app_cz_ciscode'
-                    """)
-                    row = cursor.fetchone()
-                    # Если таблица пуста или статистика ещё не собрана, reltuples может быть None.
-                    self._count = row[0] if row and row[0] is not None else 0
-            except Exception:
-                # В случае ошибки (например, таблица ещё не создана, или это не PostgreSQL)
-                # безопасно откатываемся к стандартному поведению Django (хоть оно и медленнее).
-                self._count = super().count
-
+            self._count = self._estimate_count()
         return self._count
+
+    def _estimate_count(self):
+        queryset = self.object_list
+        model = getattr(queryset, 'model', None)
+        if model is None:
+            return super().count
+        table = model._meta.db_table
+        db = getattr(queryset, 'db', None) or 'default'
+        try:
+            with connections[db].cursor() as cursor:
+                cursor.execute(
+                    "SELECT reltuples::bigint FROM pg_class WHERE relname = %s",
+                    [table],
+                )
+                row = cursor.fetchone()
+            if row and row[0] is not None and row[0] >= 0:
+                return row[0]
+        except Exception:
+            # Таблица ещё не создана / не PostgreSQL — откат к обычному COUNT.
+            pass
+        return super().count
 
 
 # ==========================================
@@ -126,7 +136,10 @@ class CISCodeAdmin(admin.ModelAdmin):
     search_fields = ('=code',)  # Знак '=' означает точное совпадение.
 
     autocomplete_fields = ('production_party', 'product_packaging', 'parent')
-    ordering = ('-created_at',)
+    # Сортировка по PK (-id): у created_at в рабочей таблице НЕТ индекса, и
+    # ORDER BY -created_at заставляет PostgreSQL сортировать миллионы строк.
+    # -id использует индекс первичного ключа и совпадает с порядком создания.
+    ordering = ('-id',)
     list_per_page = 100  # 100 для удобства.
 
     readonly_fields = ('created_at', 'updated_at')
@@ -221,6 +234,12 @@ class CISCodeArchiveAdmin(admin.ModelAdmin):
     search_fields = ('=code',)
     ordering = ('-created_at',)
     list_per_page = 100
+
+    # Архив в разы больше рабочей таблицы (не чистится). Без этого админка
+    # делала бы COUNT(*) по всей таблице и медленно открывалась. Пагинатор
+    # берёт приблизительное число строк из pg_class для БД 'archive'.
+    paginator = LargeTablePaginator
+    show_full_result_count = False
 
     readonly_fields = tuple(
         f.name for f in CISCodeArchive._meta.fields
