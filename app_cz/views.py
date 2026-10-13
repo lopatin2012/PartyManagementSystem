@@ -1027,6 +1027,7 @@ def api_check_uip_cz(request):
     from app_cz.services.desync_resolution import (
         register_desync_uip,
         resolve_desync_uip,
+        set_desync_uip_reserved,
     )
 
     if resolve_desync_uip(
@@ -1069,10 +1070,13 @@ def api_check_uip_cz(request):
         )
 
     if uip.number in reserved_numbers:
-        # Номер числится зарезервированным в ЧЗ — локально это reserved.
-        if uip.is_desync:
-            uip.is_desync = False
-            uip.save(update_fields=['is_desync', 'updated_at'])
+        # Номер числится зарезервированным в ЧЗ → приводим статус к reserved_*
+        # (черновик/рассинхрон перестаёт быть черновиком).
+        set_desync_uip_reserved(
+            uip,
+            source='api',
+            note='Проверка в ЧЗ: номер числится зарезервированным в ЧЗ',
+        )
         return Response(
             {
                 'is_error': False,
