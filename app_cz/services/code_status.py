@@ -37,6 +37,9 @@ CZ_STATUS_MAP = {
     'WRITTEN_OFF': CISCodesStatusChoices.WITHDRAWN_FROM_CIRCULATION,
     'RETIRED': CISCodesStatusChoices.WITHDRAWN_FROM_CIRCULATION,
     'WITHDRAWN': CISCodesStatusChoices.WITHDRAWN_FROM_CIRCULATION,
+    # Расформирован (агрегат/КиЗ) — код больше не в обороте.
+    'DISAGGREGATION': CISCodesStatusChoices.WITHDRAWN_FROM_CIRCULATION,
+    'DISAGGREGATED': CISCodesStatusChoices.WITHDRAWN_FROM_CIRCULATION,
 }
 
 
