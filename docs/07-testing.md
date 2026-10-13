@@ -7,8 +7,7 @@
 python manage.py test
 
 # По приложениям
-python manage.py test app_uip
-python manage.py test app_cz app_scheduler
+python manage.py test app_uip app_cz app_factory app_event app_scheduler app_page app_helper
 
 # Отдельный класс/метод
 python manage.py test app_uip.tests.ReserveUipsServiceTests
@@ -22,12 +21,15 @@ python manage.py test app_uip.tests.ReserveUipsServiceTests.test_generate_count_
 
 | Файл | Что покрывает |
 | --- | --- |
-| `app_uip/tests.py` | Ядро УИП, сериализаторы, резервирование, API статусов, роли/доступ, карточки поиска |
-| `app_cz/tests.py` | Устойчивость синхронизации с внешним сервисом: персональная метка завода, поведение при сбоях |
-| `app_scheduler/tests.py` | Логика планировщика (`effective_interval`, быстрый повтор) |
+| `app_uip/tests.py` | Ядро УИП, сериализаторы, резервирование, накопление резерва, API статусов, роли/доступ, поиск |
+| `app_cz/tests.py` | Устойчивость синхронизации (метка завода, сбои), синхронизация кодов, генерация/резерв УИП, ручной УИП, дата маркировки |
+| `app_factory/tests.py` | Активность продуктов и `sku_links`, сроки годности НК, общие упаковки |
+| `app_event/tests.py` | Health-проверки и алерты |
+| `app_scheduler/tests.py` | Логика расписания (`effective_interval`, фиксированное время 00:30, статус-API) |
+| `app_page/tests.py` | Страница продукции, заводской доступ, инлайн-правки, рендер статус-панели |
+| `app_helper/tests.py` | Сообщение нагрузки, имена и сообщения проверок `diagnose_service`, стабильное имя сессии |
 
-Остальные приложения (`app_factory`, `app_page`, `app_helper`, `app_wms`) — пустые заглушки
-`tests.py`.
+`app_wms/tests.py` — пустая заглушка.
 
 ## Что важно проверять
 
@@ -51,7 +53,7 @@ python manage.py test app_uip.tests.ReserveUipsServiceTests.test_generate_count_
 
 В тестах `DEBUG` выключен, а `ManifestStaticFilesStorage` требует собранный манифест. Для тестов,
 которые рендерят шаблоны, используется `override_settings(STORAGES=...)` с простым
-`StaticFilesStorage` (см. `STATIC_OVERRIDE` в `app_uip/tests.py`).
+`StaticFilesStorage` (см. `STATIC_OVERRIDE` в `app_page/tests.py`).
 
 ## Проверки перед коммитом
 

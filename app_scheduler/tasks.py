@@ -428,6 +428,22 @@ def sync_parties_task() -> dict:
 
 
 @task(queue_name='default')
+def resolve_desync_uips_task() -> dict:
+    """
+    Разбор УИП в рассинхроне (`is_desync=True`) по кодам из внешних заданий.
+
+    Код УИП (локальный `CISCode`, а если его нет — из внешнего задания через
+    сервер завода) проверяется в ЧЗ пакетно (`/cises/info`). Если код нанесён
+    (APPLIED/INTRODUCED) — отчёт о нанесении сформирован: `reserved_*`
+    переводится в `registered` (дальше обычная лестница `closed` → `archived`),
+    а у `registered`/`closed`/`archived` снимается флаг рассинхрона.
+    """
+    from app_cz.services.desync_resolution import resolve_desync_uips
+
+    return resolve_desync_uips()
+
+
+@task(queue_name='default')
 def sync_product_activity_task() -> dict:
     """
     Проверка активности продуктов через серверы «Молвест.Маркировка» (раз в сутки).
