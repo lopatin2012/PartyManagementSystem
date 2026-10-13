@@ -569,6 +569,25 @@ class ResolveDesyncUipsTests(TestCase):
         self.assertEqual(uip.status, PartyStatusChoices.REGISTERED)
         self.assertFalse(uip.is_desync)
 
+    def test_external_fetch_capped_per_run(self):
+        """Число внешних запросов кода за прогон ограничено MAX_EXTERNAL_FETCHES."""
+        for i in range(3):
+            uip = self._uip(f'04601751026019260101500320000{i:02d}')
+            ProductionParty.objects.create(
+                uip=uip, production_party=str(i + 1),
+                external_number_task=f'task-{i + 1}',
+            )
+
+        with patch.object(
+            desync_resolution, 'MAX_EXTERNAL_FETCHES', 1,
+        ), patch.object(
+            desync_resolution, '_fetch_external_code', return_value=None,
+        ) as fetch:
+            result = desync_resolution.resolve_desync_uips()
+
+        self.assertEqual(fetch.call_count, 1)
+        self.assertEqual(result['remaining'], 3)
+
     def test_deleted_uip_ignored(self):
         uip = self._uip(
             '04601751026019260101500320000000',

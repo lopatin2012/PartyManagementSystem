@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 MAX_UIPS_PER_RUN = 200
 # Максимум кодов одного УИП, отправляемых в /cises/info за прогон.
 MAX_CODES_PER_UIP = 100
+# Максимум внешних запросов кода у серверов заводов за один прогон
+# (get_any_code_for_task делает до одного сетевого запроса на УИП без
+# локальных кодов; ограничение не даёт недоступному заводу затормозить воркер).
+MAX_EXTERNAL_FETCHES = 30
 
 # Статусы, которые переводятся в REGISTERED при подтверждении регистрации.
 RESERVED_STATUSES = [
@@ -91,11 +95,22 @@ def _fetch_external_code(uip: UIP) -> str:
 
 
 def _collect_codes(uips: list, fetch_external: bool) -> dict:
-    """Собирает коды по УИП: локальные, при отсутствии — из внешнего задания."""
+    """
+    Собирает коды по УИП: локальные, при отсутствии — из внешнего задания.
+
+    Число внешних запросов ограничено MAX_EXTERNAL_FETCHES за прогон: остальные
+    УИП без кодов будут проверены в следующих прогонах.
+    """
     codes_by_uip = {}
+    external_fetches = 0
     for uip in uips:
         codes = _local_codes(uip)
-        if not codes and fetch_external:
+        if (
+            not codes
+            and fetch_external
+            and external_fetches < MAX_EXTERNAL_FETCHES
+        ):
+            external_fetches += 1
             external = _fetch_external_code(uip)
             if external:
                 codes = [external]
