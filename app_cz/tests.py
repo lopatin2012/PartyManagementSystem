@@ -1682,6 +1682,66 @@ class CheckUipCzEndpointTests(TestCase):
         self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
         self.assertTrue(self.uip.is_desync)
 
+    def test_draft_in_cz_reserve_becomes_reserved(self):
+        """Черновик, числящийся в резерве ЧЗ, становится reserved_local."""
+        self.uip.status = PartyStatusChoices.DRAFT
+        self.uip.save(update_fields=['status'])
+
+        response = self._failed_reserve({self.uip.number})
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['result'], 'reserved')
+        self.uip.refresh_from_db()
+        self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertFalse(self.uip.is_desync)
+
+    def test_draft_not_in_cz_reserve_becomes_registered(self):
+        self.uip.status = PartyStatusChoices.DRAFT
+        self.uip.save(update_fields=['status'])
+
+        response = self._failed_reserve(set())
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['result'], 'registered')
+        self.uip.refresh_from_db()
+        self.assertEqual(self.uip.status, PartyStatusChoices.REGISTERED)
+        self.assertFalse(self.uip.is_desync)
+
+    def test_draft_with_applied_code_becomes_registered(self):
+        """Черновик с нанесённым (В обороте) кодом → registered."""
+        self.uip.status = PartyStatusChoices.DRAFT
+        self.uip.save(update_fields=['status'])
+        party = ProductionParty.objects.create(
+            uip=self.uip, production_party='1', external_number_task='task-1',
+        )
+        CISCode.objects.create(
+            production_party=party,
+            product_packaging=self.sku.product.packagings.first(),
+            code='010460175102601921CODE0001',
+            level=PackagingLevelChoices.UNIT,
+        )
+        self._login()
+        with patch.object(
+            self.views_module, 'reserve_party_numbers_cz',
+            return_value={'is_error': True, 'message_error': 'Номер уже занят'},
+        ), patch(
+            'app_cz.services.code_status.get_cises_statuses',
+            return_value={'010460175102601921CODE0001': 'INTRODUCED'},
+        ):
+            response = self.client.post(
+                self.url, data={'uip_id': str(self.uip.id)},
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['result'], 'registered')
+        self.uip.refresh_from_db()
+        self.assertEqual(self.uip.status, PartyStatusChoices.REGISTERED)
+        self.assertFalse(self.uip.is_desync)
+
     def test_failed_reserve_with_applied_code_registers_uip(self):
         self._login()
         party = ProductionParty.objects.create(

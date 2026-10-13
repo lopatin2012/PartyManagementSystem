@@ -52,6 +52,14 @@ REGISTERED_STATUSES = [
     PartyStatusChoices.ARCHIVED,
 ]
 
+# Статусы, из которых УИП переводится в registered (код нанесён) или в
+# reserved_* (код не нанесён) при разборе рассинхрона.
+REGISTRABLE_STATUSES = [
+    PartyStatusChoices.DRAFT,
+    PartyStatusChoices.RESERVED_CZ,
+    PartyStatusChoices.RESERVED_LOCAL,
+]
+
 # Статусы кода в ЧЗ, означающие, что код нанесён (отчёт сформирован).
 APPLIED_STATUSES = {
     CISCodesStatusChoices.APPLIED,
@@ -63,6 +71,10 @@ SKIPPED_STATUSES = [PartyStatusChoices.DRAFT, PartyStatusChoices.DELETED]
 
 REGISTERED_NOTE = (
     'Разбор рассинхрона: код нанесён в ЧЗ (отчёт о нанесении сформирован)'
+)
+
+RESERVED_NOTE = (
+    'Разбор рассинхрона: код не нанесён — УИП числится зарезервированным'
 )
 
 
@@ -149,18 +161,27 @@ def _applied_codes(codes_by_uip: dict, uip_by_id: dict, token: str = None) -> se
     return applied
 
 
+def _clear_desync(uip: UIP) -> bool:
+    """Снимает флаг is_desync. :return: True, если флаг был снят."""
+    if not uip.is_desync:
+        return False
+    uip.is_desync = False
+    uip.save(update_fields=['is_desync', 'updated_at'])
+    return True
+
+
 def _register_by_code(uip: UIP, source: str, note: str) -> tuple:
     """
     Код(ы) УИП нанесены в ЧЗ → подтверждаем регистрацию.
 
-    `reserved_*` переводится в `registered`; `registered`/`closed`/`archived`
-    статус не меняют (только снимается `is_desync`); `draft`/`deleted` не
-    трогаются.
+    `draft`/`reserved_*` переводятся в `registered`; `registered`/`closed`/
+    `archived` статус не меняют (только снимается `is_desync`); `deleted` не
+    трогается.
 
     :return: (status_changed, desync_cleared)
     """
     status_changed = False
-    if uip.status in RESERVED_STATUSES:
+    if uip.status in REGISTRABLE_STATUSES:
         uip.change_status(
             PartyStatusChoices.REGISTERED, source=source, note=note,
         )
@@ -168,12 +189,40 @@ def _register_by_code(uip: UIP, source: str, note: str) -> tuple:
     elif uip.status not in REGISTERED_STATUSES:
         return False, False
 
-    desync_cleared = False
-    if uip.is_desync:
-        uip.is_desync = False
-        uip.save(update_fields=['is_desync', 'updated_at'])
-        desync_cleared = True
-    return status_changed, desync_cleared
+    return status_changed, _clear_desync(uip)
+
+
+def _reserved_target_status(uip: UIP) -> str:
+    """
+    Резервный статус для УИП: `reserved_local`, если номер совпадает с нашим
+    локальным форматом, иначе `reserved_cz` (как в sync_parties_from_cz).
+    """
+    if not uip.product_sku_id:
+        return PartyStatusChoices.RESERVED_LOCAL
+    from app_cz.services.party_service import _is_local_format_number
+
+    if _is_local_format_number(uip.product_sku, uip.production_date, uip.number):
+        return PartyStatusChoices.RESERVED_LOCAL
+    return PartyStatusChoices.RESERVED_CZ
+
+
+def _set_reserved(uip: UIP, source: str, note: str) -> tuple:
+    """
+    Код(ы) УИП НЕ нанесены → УИП числится зарезервированным.
+
+    `draft`/`reserved_*` приводятся к резервному статусу (по формату номера);
+    `registered`/`closed`/`archived`/`deleted` статус не меняют.
+
+    :return: (status_changed, desync_cleared)
+    """
+    status_changed = False
+    if uip.status in REGISTRABLE_STATUSES:
+        target = _reserved_target_status(uip)
+        if uip.status != target:
+            uip.change_status(target, source=source, note=note)
+            status_changed = True
+
+    return status_changed, _clear_desync(uip)
 
 
 def resolve_desync_uips(fetch_external: bool = True, max_uips: int = MAX_UIPS_PER_RUN) -> dict:
@@ -274,8 +323,8 @@ def resolve_desync_uip(
 
 def register_desync_uip(uip: UIP, source: str = 'sync', note: str = None) -> tuple:
     """
-    Подтверждает регистрацию УИП без проверки кодов: `reserved_*` → `registered`,
-    у `registered`/`closed`/`archived` снимается `is_desync`.
+    Подтверждает регистрацию УИП без проверки кодов: `draft`/`reserved_*` →
+    `registered`, у `registered`/`closed`/`archived` снимается `is_desync`.
 
     Используется, когда регистрация следует из других признаков (например,
     номера нет в резерве ЧЗ и зарезервировать его не удалось).
@@ -283,3 +332,14 @@ def register_desync_uip(uip: UIP, source: str = 'sync', note: str = None) -> tup
     :return: (status_changed, desync_cleared)
     """
     return _register_by_code(uip, source=source, note=note or REGISTERED_NOTE)
+
+
+def set_desync_uip_reserved(uip: UIP, source: str = 'sync', note: str = None) -> tuple:
+    """
+    Код УИП не нанесён → УИП числится зарезервированным: `draft`/`reserved_*`
+    приводятся к `reserved_local`/`reserved_cz` (по формату номера), `is_desync`
+    снимается. `registered`/`closed`/`archived`/`deleted` статус не меняют.
+
+    :return: (status_changed, desync_cleared)
+    """
+    return _set_reserved(uip, source=source, note=note or RESERVED_NOTE)
