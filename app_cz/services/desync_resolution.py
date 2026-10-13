@@ -270,3 +270,16 @@ def resolve_desync_uip(
 
     _register_by_code(uip, source=source, note=note or REGISTERED_NOTE)
     return True
+
+
+def register_desync_uip(uip: UIP, source: str = 'sync', note: str = None) -> tuple:
+    """
+    Подтверждает регистрацию УИП без проверки кодов: `reserved_*` → `registered`,
+    у `registered`/`closed`/`archived` снимается `is_desync`.
+
+    Используется, когда регистрация следует из других признаков (например,
+    номера нет в резерве ЧЗ и зарезервировать его не удалось).
+
+    :return: (status_changed, desync_cleared)
+    """
+    return _register_by_code(uip, source=source, note=note or REGISTERED_NOTE)

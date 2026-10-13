@@ -929,14 +929,17 @@ def api_report_uip(request):
 @permission_classes([IsAppAdmin])
 def api_check_uip_cz(request):
     """
-    Проверка УИП в рассинхроне: резерв в ЧЗ + подтверждение регистрации по кодам.
+    Проверка УИП в рассинхроне: резерв в ЧЗ + определение фактического статуса.
 
     - Резерв удался → номер был свободен (резерв снят) → RESERVED_LOCAL,
       снимаем is_desync. `result: "reserved"`.
-    - Отказ ЧЗ → проверяем коды УИП в ЧЗ (`/cises/info`, как в задаче
-      resolve_desync_uips): код APPLIED/INTRODUCED → регистрация подтверждена,
-      `reserved_*` → REGISTERED, снимаем is_desync. `result: "registered"`.
-    - Отказ ЧЗ и код не нанесён → УИП остаётся в рассинхроне, `result: "desync"`.
+    - Отказ ЧЗ: проверяем коды УИП в ЧЗ (`/cises/info`): код APPLIED/INTRODUCED →
+      регистрация подтверждена, `reserved_*` → REGISTERED, снимаем is_desync.
+      `result: "registered"`.
+    - Код регистрацию не подтвердил: смотрим список резерва ЧЗ. Номер в списке →
+      он зарезервирован, снимаем is_desync (`result: "reserved"`); номера нет и
+      зарезервировать его не удалось → он уже зарегистрирован (`result: "registered"`).
+    - Список резерва ЧЗ недоступен → УИП остаётся в рассинхроне (`result: "desync"`).
 
     Во всех исходах (кроме ошибок запроса) отвечаем 200 — чтобы для фронта
     «уже зарегистрирован» не выглядело как ошибка. Доступно только админам.
@@ -1018,23 +1021,23 @@ def api_check_uip_cz(request):
             status=status.HTTP_200_OK,
         )
 
-    # ЧЗ не дал зарезервировать. Подтверждаем регистрацию по кодам УИП
-    # (APPLIED/INTRODUCED в ЧЗ = отчёт о нанесении сформирован).
-    from app_cz.services.desync_resolution import resolve_desync_uip
+    # ЧЗ не дал зарезервировать.
+    # 1) Подтверждаем регистрацию по кодам УИП (APPLIED/INTRODUCED в ЧЗ =
+    #    отчёт о нанесении сформирован).
+    from app_cz.services.desync_resolution import (
+        register_desync_uip,
+        resolve_desync_uip,
+    )
 
-    registered = resolve_desync_uip(
+    if resolve_desync_uip(
         uip,
         source='api',
         note='Проверка в ЧЗ: регистрация подтверждена по коду (код нанесён в ЧЗ)',
-    )
-
-    if registered:
+    ):
         return Response(
             {
                 'is_error': False,
-                'message': (
-                    f'УИП {uip.number} зарегистрирован (код нанесён в ЧЗ).'
-                ),
+                'message': f'УИП {uip.number} зарегистрирован (код нанесён в ЧЗ).',
                 'result': 'registered',
                 'number': uip.number,
                 'new_status': uip.status,
@@ -1042,15 +1045,62 @@ def api_check_uip_cz(request):
             status=status.HTTP_200_OK,
         )
 
+    # 2) Код не подтвердил регистрацию — различаем «зарезервирован» и
+    #    «зарегистрирован» по списку резерва ЧЗ:
+    #    - номер есть в резерве ЧЗ → он зарезервирован;
+    #    - номера нет и зарезервировать его не удалось → он уже зарегистрирован.
+    from app_cz.services.party_service import get_reserved_party_numbers
+
+    reserved_numbers = get_reserved_party_numbers()
+    if reserved_numbers is None:
+        return Response(
+            {
+                'is_error': False,
+                'message': (
+                    'ЧЗ не дал зарезервировать номер, код регистрацию не '
+                    'подтверждает, и список резерва ЧЗ недоступен — УИП '
+                    'остаётся в рассинхроне.'
+                ),
+                'result': 'desync',
+                'number': uip.number,
+                'new_status': uip.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    if uip.number in reserved_numbers:
+        # Номер числится зарезервированным в ЧЗ — локально это reserved.
+        if uip.is_desync:
+            uip.is_desync = False
+            uip.save(update_fields=['is_desync', 'updated_at'])
+        return Response(
+            {
+                'is_error': False,
+                'message': f'УИП {uip.number} числится зарезервированным в ЧЗ.',
+                'result': 'reserved',
+                'number': uip.number,
+                'new_status': uip.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    # Номера нет в резерве ЧЗ, и зарезервировать его не удалось → зарегистрирован.
+    register_desync_uip(
+        uip,
+        source='api',
+        note=(
+            'Проверка в ЧЗ: номера нет в резерве ЧЗ и он не резервируется — '
+            'УИП считается зарегистрированным'
+        ),
+    )
     return Response(
         {
             'is_error': False,
             'message': (
-                f'ЧЗ не дал зарезервировать номер, и регистрация по кодам не '
-                f'подтверждена — УИП остаётся в рассинхроне. '
-                f'Ответ ЧЗ: {result.get("message_error", "—")}'
+                f'Номера {uip.number} нет в резерве ЧЗ и зарезервировать его '
+                f'не удалось — УИП считается зарегистрированным.'
             ),
-            'result': 'desync',
+            'result': 'registered',
             'number': uip.number,
             'new_status': uip.status,
         },
