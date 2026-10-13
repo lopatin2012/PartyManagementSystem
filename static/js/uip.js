@@ -836,21 +836,33 @@ async function checkUipInCz(btn) {
         }
 
         if (!response.ok || result.is_error) {
-            // ЧЗ не дал зарезервировать — считаем зарегистрированным.
             const message = result.message || result.message_error
                 || `Ошибка: ${response.status}`;
-            const span = document.createElement('span');
-            span.className = 'row-status warning';
-            span.textContent = 'Зарегистрирован?';
-            span.title = message;
-            cell.innerHTML = '';
-            cell.appendChild(span);
+            showError(btn, cell, message);
             return;
         }
 
-        // Успех: номер был свободен — снова зарезервирован.
-        cell.innerHTML = '<span class="row-status success">✓ Резерв восстановлен</span>';
-        setTimeout(() => window.location.reload(), 1200);
+        if (result.result === 'reserved') {
+            // Номер был свободен — снова зарезервирован.
+            cell.innerHTML = '<span class="row-status success">✓ Резерв восстановлен</span>';
+            setTimeout(() => window.location.reload(), 1200);
+            return;
+        }
+
+        if (result.result === 'registered') {
+            // Код нанесён в ЧЗ — регистрация подтверждена.
+            cell.innerHTML = '<span class="row-status success">✓ Зарегистрирован</span>';
+            setTimeout(() => window.location.reload(), 1200);
+            return;
+        }
+
+        // result === 'desync': регистрация не подтверждена, УИП в рассинхроне.
+        const span = document.createElement('span');
+        span.className = 'row-status warning';
+        span.textContent = 'Остаётся в рассинхроне';
+        span.title = result.message || '';
+        cell.innerHTML = '';
+        cell.appendChild(span);
 
     } catch (error) {
         showError(btn, cell, 'Ошибка соединения с сервером');

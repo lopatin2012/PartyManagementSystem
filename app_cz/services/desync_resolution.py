@@ -61,6 +61,10 @@ APPLIED_STATUSES = {
 # Статусы, которые задача не трогает.
 SKIPPED_STATUSES = [PartyStatusChoices.DRAFT, PartyStatusChoices.DELETED]
 
+REGISTERED_NOTE = (
+    'Разбор рассинхрона: код нанесён в ЧЗ (отчёт о нанесении сформирован)'
+)
+
 
 def _local_codes(uip: UIP) -> list:
     """До MAX_CODES_PER_UIP локальных кодов УИП (старейшие первыми)."""
@@ -119,7 +123,7 @@ def _collect_codes(uips: list, fetch_external: bool) -> dict:
     return codes_by_uip
 
 
-def _applied_codes(codes_by_uip: dict, uip_by_id: dict) -> set:
+def _applied_codes(codes_by_uip: dict, uip_by_id: dict, token: str = None) -> set:
     """
     Возвращает множество кодов УИП, нанесённых (APPLIED) в ЧЗ.
 
@@ -139,10 +143,37 @@ def _applied_codes(codes_by_uip: dict, uip_by_id: dict) -> set:
 
     applied = set()
     for group, codes in codes_by_group.items():
-        for code, raw_status in get_cises_statuses(codes, group).items():
+        for code, raw_status in get_cises_statuses(codes, group, token=token).items():
             if map_cz_status(raw_status) in APPLIED_STATUSES:
                 applied.add(code)
     return applied
+
+
+def _register_by_code(uip: UIP, source: str, note: str) -> tuple:
+    """
+    Код(ы) УИП нанесены в ЧЗ → подтверждаем регистрацию.
+
+    `reserved_*` переводится в `registered`; `registered`/`closed`/`archived`
+    статус не меняют (только снимается `is_desync`); `draft`/`deleted` не
+    трогаются.
+
+    :return: (status_changed, desync_cleared)
+    """
+    status_changed = False
+    if uip.status in RESERVED_STATUSES:
+        uip.change_status(
+            PartyStatusChoices.REGISTERED, source=source, note=note,
+        )
+        status_changed = True
+    elif uip.status not in REGISTERED_STATUSES:
+        return False, False
+
+    desync_cleared = False
+    if uip.is_desync:
+        uip.is_desync = False
+        uip.save(update_fields=['is_desync', 'updated_at'])
+        desync_cleared = True
+    return status_changed, desync_cleared
 
 
 def resolve_desync_uips(fetch_external: bool = True, max_uips: int = MAX_UIPS_PER_RUN) -> dict:
@@ -191,25 +222,15 @@ def resolve_desync_uips(fetch_external: bool = True, max_uips: int = MAX_UIPS_PE
 
         # Код нанесён в ЧЗ → отчёт о нанесении сформирован.
         try:
-            if uip.status in RESERVED_STATUSES:
-                uip.change_status(
-                    PartyStatusChoices.REGISTERED,
-                    source='sync',
-                    note=(
-                        'Разбор рассинхрона: код нанесён в ЧЗ '
-                        '(отчёт о нанесении сформирован)'
-                    ),
-                )
-                summary['registered'] += 1
-            elif uip.status not in REGISTERED_STATUSES:
+            status_changed, desync_cleared = _register_by_code(
+                uip, source='sync', note=REGISTERED_NOTE,
+            )
+            if not status_changed and not desync_cleared:
                 # Неожиданный статус — не трогаем, оставляем администратору.
                 summary['remaining'] += 1
                 continue
-
-            if uip.is_desync:
-                uip.is_desync = False
-                uip.save(update_fields=['is_desync', 'updated_at'])
-            summary['desync_cleared'] += 1
+            summary['registered'] += int(status_changed)
+            summary['desync_cleared'] += int(desync_cleared)
         except Exception:
             logger.exception(
                 f'Разбор рассинхрона: ошибка обновления УИП {uip.number}'
@@ -225,3 +246,27 @@ def resolve_desync_uips(fetch_external: bool = True, max_uips: int = MAX_UIPS_PE
     )
     logger.info(summary['message'])
     return summary
+
+
+def resolve_desync_uip(
+        uip: UIP,
+        source: str = 'sync',
+        note: str = None,
+        fetch_external: bool = True,
+) -> bool:
+    """
+    Разбирает один УИП по кодам из его заданий (ручная проверка в ЧЗ).
+
+    Если код нанесён в ЧЗ (APPLIED/INTRODUCED) — `reserved_*` переводится в
+    `registered`, а у `registered`/`closed`/`archived` снимается `is_desync`.
+
+    :return: True, если регистрация подтверждена кодом.
+    """
+    codes_by_uip = _collect_codes([uip], fetch_external)
+    applied = _applied_codes(codes_by_uip, {uip.id: uip})
+    codes = codes_by_uip.get(uip.id) or []
+    if not codes or not any(code in applied for code in codes):
+        return False
+
+    _register_by_code(uip, source=source, note=note or REGISTERED_NOTE)
+    return True

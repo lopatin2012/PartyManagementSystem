@@ -929,14 +929,17 @@ def api_report_uip(request):
 @permission_classes([IsAppAdmin])
 def api_check_uip_cz(request):
     """
-    Проверка УИП в рассинхроне: пробуем зарезервировать номер в ЧЗ.
+    Проверка УИП в рассинхроне: резерв в ЧЗ + подтверждение регистрации по кодам.
 
-    - Успех резервирования → номер был свободен (резерв снят) → переводим
-      локальный статус в RESERVED_LOCAL, снимаем is_desync.
-    - Отказ ЧЗ → номер уже зарегистрирован/занят в ЧЗ → статус не меняем,
-      возвращаем понятное сообщение.
+    - Резерв удался → номер был свободен (резерв снят) → RESERVED_LOCAL,
+      снимаем is_desync. `result: "reserved"`.
+    - Отказ ЧЗ → проверяем коды УИП в ЧЗ (`/cises/info`, как в задаче
+      resolve_desync_uips): код APPLIED/INTRODUCED → регистрация подтверждена,
+      `reserved_*` → REGISTERED, снимаем is_desync. `result: "registered"`.
+    - Отказ ЧЗ и код не нанесён → УИП остаётся в рассинхроне, `result: "desync"`.
 
-    Доступно только администраторам.
+    Во всех исходах (кроме ошибок запроса) отвечаем 200 — чтобы для фронта
+    «уже зарегистрирован» не выглядело как ошибка. Доступно только админам.
     """
     serializer = CheckUipCzSerializer(data=request.data)
     if not serializer.is_valid():
@@ -984,47 +987,72 @@ def api_check_uip_cz(request):
         party_numbers=[uip.number],
     )
 
-    if result.get('is_error'):
-        # ЧЗ не дал зарезервировать — считаем номер зарегистрированным/занятым.
+    if not result.get('is_error'):
+        # Успех: номер был свободен → возвращаем в резерв.
+        uip.reservation_date = timezone.now().date()
+        uip.is_desync = False
+        uip.description = 'Проверка в ЧЗ: номер зарезервирован повторно (резерв снят)'
+        uip.save(update_fields=[
+            'reservation_date', 'is_desync', 'description', 'updated_at',
+        ])
+
+        uip.change_status(
+            PartyStatusChoices.RESERVED_LOCAL,
+            source='api',
+            note='Проверка в ЧЗ: номер зарезервирован повторно',
+            changed_by=(
+                request.user if request.user.is_authenticated else None
+            ),
+        )
+
         return Response(
             {
-                'is_error': True,
+                'is_error': False,
                 'message': (
-                    f'ЧЗ не дал зарезервировать номер — вероятно, УИП уже '
-                    f'зарегистрирован. Ответ ЧЗ: {result.get("message_error", "—")}'
+                    f'УИП {uip.number} зарезервирован повторно — резерв был снят.'
+                ),
+                'result': 'reserved',
+                'number': uip.number,
+                'new_status': PartyStatusChoices.RESERVED_LOCAL,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    # ЧЗ не дал зарезервировать. Подтверждаем регистрацию по кодам УИП
+    # (APPLIED/INTRODUCED в ЧЗ = отчёт о нанесении сформирован).
+    from app_cz.services.desync_resolution import resolve_desync_uip
+
+    registered = resolve_desync_uip(
+        uip,
+        source='api',
+        note='Проверка в ЧЗ: регистрация подтверждена по коду (код нанесён в ЧЗ)',
+    )
+
+    if registered:
+        return Response(
+            {
+                'is_error': False,
+                'message': (
+                    f'УИП {uip.number} зарегистрирован (код нанесён в ЧЗ).'
                 ),
                 'result': 'registered',
                 'number': uip.number,
+                'new_status': uip.status,
             },
-            status=status.HTTP_400_BAD_REQUEST,
+            status=status.HTTP_200_OK,
         )
-
-    # Успех: номер был свободен → возвращаем в резерв.
-    uip.reservation_date = timezone.now().date()
-    uip.is_desync = False
-    uip.description = 'Проверка в ЧЗ: номер зарезервирован повторно (резерв снят)'
-    uip.save(update_fields=[
-        'reservation_date', 'is_desync', 'description', 'updated_at',
-    ])
-
-    uip.change_status(
-        PartyStatusChoices.RESERVED_LOCAL,
-        source='api',
-        note='Проверка в ЧЗ: номер зарезервирован повторно',
-        changed_by=(
-            request.user if request.user.is_authenticated else None
-        ),
-    )
 
     return Response(
         {
             'is_error': False,
             'message': (
-                f'УИП {uip.number} зарезервирован повторно — резерв был снят.'
+                f'ЧЗ не дал зарезервировать номер, и регистрация по кодам не '
+                f'подтверждена — УИП остаётся в рассинхроне. '
+                f'Ответ ЧЗ: {result.get("message_error", "—")}'
             ),
-            'result': 'reserved',
+            'result': 'desync',
             'number': uip.number,
-            'new_status': PartyStatusChoices.RESERVED_LOCAL,
+            'new_status': uip.status,
         },
         status=status.HTTP_200_OK,
     )
