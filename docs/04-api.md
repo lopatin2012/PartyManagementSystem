@@ -82,6 +82,8 @@
 `GET /uip/api/v1/status_parties/active/` — фильтры: `include_all_statuses`, `product_id`,
 `product_article`, `gtin`, `search`, `production_date_from/to`, `reservation_date_from/to`.
 По умолчанию: `reserved_cz`/`reserved_local` + `registered` за последние 7 дней.
+Пагинация: `page`/`page_size` (по умолчанию и максимум 1000); ответ —
+`{count, page, page_size, result}`.
 
 ### Единый поиск
 `GET /uip/api/v1/search/?q=<запрос>&type=code|uip&page=&page_size=` — тип определяется

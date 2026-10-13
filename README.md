@@ -224,7 +224,7 @@ python manage.py test app_uip.tests.ReserveAccumulationTests.test_generate_count
 | --- | --- |
 | `GET /uip/api/v1/search/?q=<запрос>` | Единый поиск по УИП или коду маркировки |
 | `GET /uip/api/v1/status_parties/{number}/` | Статус одного УИП |
-| `GET /uip/api/v1/status_parties/active/` | Список действующих УИП (фильтры: `search`, `gtin`, `product_article`, даты) |
+| `GET /uip/api/v1/status_parties/active/` | Список действующих УИП (фильтры: `search`, `gtin`, `product_article`, даты; пагинация `page`/`page_size`) |
 
 Параметры поиска: `q` (обязательный), `type` (`code`/`uip` — принудительно задать тип), `page`, `page_size` (по умолчанию 25, максимум 100).
 
