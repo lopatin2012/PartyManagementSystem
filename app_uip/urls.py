@@ -20,4 +20,9 @@ urlpatterns = [
         views.api_search,
         name='api-search'
     ),
+    path(
+        'api/v1/product-by-gtin/',
+        views.api_product_by_gtin,
+        name='api-product-by-gtin'
+    ),
 ]
