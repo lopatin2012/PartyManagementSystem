@@ -1785,6 +1785,52 @@ class CheckUipCzEndpointTests(TestCase):
 
 
 
+class CISCodeAdminConfigTests(SimpleTestCase):
+    """Админка кодов маркировки оптимизирована под большие таблицы."""
+
+    def test_ciscode_admin_orders_by_id(self):
+        # created_at без индекса → сортировка миллионов строк; -id использует PK.
+        from app_cz.admin import CISCodeAdmin
+
+        self.assertEqual(CISCodeAdmin.ordering, ('-id',))
+
+    def test_archive_admin_uses_fast_paginator(self):
+        from app_cz.admin import CISCodeArchiveAdmin, LargeTablePaginator
+
+        self.assertIs(CISCodeArchiveAdmin.paginator, LargeTablePaginator)
+        self.assertFalse(CISCodeArchiveAdmin.show_full_result_count)
+
+
+class LargeTablePaginatorTests(TestCase):
+    """Пагинатор берёт приблизительный count из pg_class, а не COUNT(*)."""
+
+    def test_uses_reltuples_from_queryset_table(self):
+        from app_cz.admin import LargeTablePaginator
+
+        cursor = Mock()
+        cursor.__enter__ = Mock(return_value=cursor)
+        cursor.__exit__ = Mock(return_value=False)
+        cursor.fetchone.return_value = (555000,)
+        connections = Mock()
+        connections.__getitem__ = Mock(
+            return_value=Mock(cursor=Mock(return_value=cursor))
+        )
+        with patch('app_cz.admin.connections', connections):
+            paginator = LargeTablePaginator(CISCode.objects.all(), 100)
+            self.assertEqual(paginator.count, 555000)
+
+        # Таблица взята из queryset (для архива — своя таблица/БД).
+        self.assertIn('app_cz_ciscode', cursor.execute.call_args.args[1])
+
+    def test_falls_back_to_real_count_on_error(self):
+        from app_cz.admin import LargeTablePaginator
+
+        with patch('app_cz.admin.connections') as connections:
+            connections.__getitem__.side_effect = Exception('нет связи')
+            paginator = LargeTablePaginator(CISCode.objects.all(), 100)
+            self.assertEqual(paginator.count, 0)
+
+
 class RefreshSuzTokenRetryTests(TestCase):
     """Обновление динамического токена СУЗ: повторы и проактивность."""
 
