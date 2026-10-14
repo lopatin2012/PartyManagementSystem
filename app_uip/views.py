@@ -32,6 +32,7 @@ from app_uip.serializers import (
     CISCodeArchiveSearchResultSerializer,
 )
 from app_uip.services.uip_reserve import reserve_uips
+from app_cz.services.party_service import find_sku_by_gtin
 
 
 class UIPStatusViewSet(viewsets.ViewSet):
@@ -414,4 +415,54 @@ def api_search(request):
         'page_size': page_size,
         'in_archive': in_archive,
         'results': serializer.data,
+    })
+
+
+@extend_schema(
+    tags=['УИП'],
+    operation_id='product_by_gtin',
+    summary='Получение названия продукта по GTIN',
+    description=(
+        'Возвращает название продукта (и артикул активного SKU) по GTIN '
+        'потребительской упаковки. Для внешних сервисов.'
+    ),
+    parameters=[
+        OpenApiParameter(
+            name='gtin',
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.QUERY,
+            required=True,
+            description='14-значный GTIN потребительской упаковки',
+        ),
+    ],
+    responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+)
+@api_view(['GET'])
+def api_product_by_gtin(request):
+    """
+    GET /uip/api/v1/product-by-gtin/?gtin=<GTIN>
+
+    Возвращает название продукта по GTIN потребительской упаковки.
+    Использует find_sku_by_gtin (активный SKU активного продукта).
+    """
+    gtin = (request.query_params.get('gtin') or '').strip()
+    if not gtin:
+        return Response(
+            {'is_error': True, 'message': 'Укажите gtin.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    sku = find_sku_by_gtin(gtin)
+    if not sku:
+        return Response(
+            {'is_error': True, 'message': 'Товар не найден.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    return Response({
+        'is_error': False,
+        'gtin': gtin,
+        'name': sku.product.name,
+        'article': sku.article,
+        'product_id': str(sku.product_id),
     })

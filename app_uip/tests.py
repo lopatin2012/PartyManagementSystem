@@ -798,6 +798,47 @@ class UIPSearchEndpointTests(TestCase):
         self.assertEqual(len(data['results']), 1)
 
 
+class ProductByGtinEndpointTests(TestCase):
+    """Проверка GET /uip/api/v1/product-by-gtin/."""
+
+    URL = '/uip/api/v1/product-by-gtin/'
+    GTIN = '04601751026019'
+
+    def setUp(self):
+        self.sku = create_product(article='50032', gtin=self.GTIN)
+
+    def test_returns_product_name_by_gtin(self):
+        response = self.client.get(self.URL, {'gtin': self.GTIN})
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertFalse(data['is_error'])
+        self.assertEqual(data['gtin'], self.GTIN)
+        self.assertEqual(data['name'], 'Тестовый продукт')
+        self.assertEqual(data['article'], '50032')
+        self.assertEqual(data['product_id'], str(self.sku.product_id))
+
+    def test_missing_gtin_returns_400(self):
+        response = self.client.get(self.URL)
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(response.json()['is_error'])
+
+    def test_blank_gtin_returns_400(self):
+        response = self.client.get(self.URL, {'gtin': '   '})
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(response.json()['is_error'])
+
+    def test_unknown_gtin_returns_404(self):
+        response = self.client.get(self.URL, {'gtin': '00000000000000'})
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(response.json()['is_error'])
+
+    def test_inactive_sku_returns_404(self):
+        self.sku.is_active = False
+        self.sku.save(update_fields=['is_active'])
+        response = self.client.get(self.URL, {'gtin': self.GTIN})
+        self.assertEqual(response.status_code, 404)
+
+
 class UIPActiveListEndpointTests(TestCase):
     """
     Регрессия: product_name должен браться из product_sku.product.name
