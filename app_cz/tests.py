@@ -1831,6 +1831,50 @@ class LargeTablePaginatorTests(TestCase):
             self.assertEqual(paginator.count, 0)
 
 
+class UipBurnEmailTests(TestCase):
+    """Письмо о сгорании УИП: полное имя продукта, без лишних строк."""
+
+    def test_burn_email_content(self):
+        from app_cz.services import reserve_monitor
+
+        product = Product.objects.create(
+            group=ProductGroupChoices.MILK,
+            name='Напиток кисломолочный пастеризованный',
+            shelf_life_in_days=14,
+            item_condition=StateConditionChoices.READY_ORDER_KM,
+            card_status=CardStateChoices.PUBLISHED,
+        )
+        ProductPackaging.objects.create(
+            product=product,
+            level=PackagingLevelChoices.UNIT,
+            gtin='04601751028945',
+            quantity_inside=1,
+        )
+        sku = ProductSKU.objects.create(product=product, article='13426')
+        today = timezone.now().date()
+        UIP.objects.create(
+            product_sku=sku,
+            number='04601751028945260923134260000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+            reservation_date=today - timedelta(days=23),
+        )
+
+        with patch.object(
+            reserve_monitor, '_notify', return_value={'sent': True},
+        ) as notify:
+            result = reserve_monitor.check_uip_burn_and_notify()
+
+        self.assertEqual(result['at_risk_count'], 1)
+        subject, body, _recipients = notify.call_args.args
+        self.assertIn('не более 7 дней', subject)
+        # Полное наименование (Product.__str__ обрезал бы до 20 символов).
+        self.assertIn('Напиток кисломолочный пастеризованный', body)
+        self.assertNotIn('...', body)
+        self.assertNotIn('30 дней после резервирования', body)
+        self.assertIn('Осталось дней', body)
+        self.assertIn('| 7', body)
+
+
 class RefreshSuzTokenRetryTests(TestCase):
     """Обновление динамического токена СУЗ: повторы и проактивность."""
 

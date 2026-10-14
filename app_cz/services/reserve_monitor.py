@@ -625,7 +625,7 @@ def check_uip_burn_and_notify() -> dict:
     Проверка «сгорания» УИП (раз в сутки).
 
     УИП в резерве сгорает через BURN_DAYS (30) дней после резервирования.
-    Если до сгорания осталось менее BURN_WARN_DAYS (7) дней — отправляется
+    Если до сгорания осталось не более BURN_WARN_DAYS (7) дней — отправляется
     email-предупреждение со списком таких УИП и оставшимися днями.
 
     :return: Сводка проверки.
@@ -651,7 +651,10 @@ def check_uip_burn_and_notify() -> dict:
         records.append({
             'number': uip.number,
             'status': uip.get_status_display(),
-            'product': str(uip.product_sku.product) if uip.product_sku_id else '-',
+            # Полное наименование (Product.__str__ обрезает до 20 символов).
+            'product': (
+                uip.product_sku.product.name if uip.product_sku_id else '-'
+            ),
             'reservation_date': reserve_date,
             'burn_date': burn_date,
             'days_left': days_left,
@@ -667,28 +670,26 @@ def check_uip_burn_and_notify() -> dict:
     if not records:
         result['message'] = (
             f'Сгорание УИП: нет УИП, до сгорания которых осталось '
-            f'менее {BURN_WARN_DAYS} дней.'
+            f'не более {BURN_WARN_DAYS} дней.'
         )
         logger.info(result['message'])
         return result
 
     subject = (
         f'ВНИМАНИЕ: до сгорания {len(records)} УИП осталось '
-        f'менее {BURN_WARN_DAYS} дней'
+        f'не более {BURN_WARN_DAYS} дней'
     )
     body_lines = [
-        f'До сгорания следующих УИП осталось менее {BURN_WARN_DAYS} дней:',
-        f'УИП сгорает через {BURN_DAYS} дней после резервирования.',
+        f'До сгорания {len(records)} УИП осталось не более '
+        f'{BURN_WARN_DAYS} дней.',
         '',
-        f'Всего УИП под угрозой: {len(records)}',
-        '',
-        '№  УИП  |  Продукт  |  Дата резервирования  |  Дата сгорания  |  Осталось дней',
+        'УИП | Продукт | Дата резервирования | Дата сгорания | Осталось дней',
     ]
     body_lines += [
-        f'{i}. {r["number"]} | {r["product"]} | '
+        f'{r["number"]} | {r["product"]} | '
         f'{r["reservation_date"]:%d.%m.%Y} | {r["burn_date"]:%d.%m.%Y} | '
         f'{r["days_left"]}'
-        for i, r in enumerate(records, start=1)
+        for r in records
     ]
 
     recipients = getattr(settings, 'UIP_RESERVE_NOTIFICATION_EMAILS', []) or []
