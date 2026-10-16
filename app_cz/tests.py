@@ -1180,6 +1180,61 @@ class SplitLocalPartyNumberTests(SimpleTestCase):
         self.assertIn('партия(12)', legend)
 
 
+class ReceiveExternalTaskEndpointTests(TestCase):
+    """POST /cz/api/tasks/receive/ — 400 только для реальных ошибок."""
+
+    URL = '/cz/api/tasks/receive/'
+
+    def _post(self, payload):
+        return self.client.post(
+            self.URL, data=payload, content_type='application/json',
+        )
+
+    def test_task_without_any_id_is_bad_request(self):
+        response = self._post({'status': 'Создано'})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(response.json()['has_error'])
+
+    def test_task_with_only_numeric_id_returns_200_skipped(self):
+        # Только что созданное задание: uuid ещё нет, кодов (amount) 0.
+        response = self._post({
+            'task_id': '12345',
+            'status': 'Создано',
+            'amount': '',
+            'plan_amount': '0',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['skipped_no_uuid'])
+
+    def test_task_with_uuid_is_created(self):
+        uuid_str = '11111111-1111-1111-1111-111111111111'
+        response = self._post({'uuid_str': uuid_str, 'status': 'Создано'})
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body['has_error'])
+        self.assertTrue(body['created'])
+        self.assertTrue(
+            ProductionParty.objects.filter(
+                external_number_task=uuid_str
+            ).exists()
+        )
+
+    def test_save_error_still_returns_400(self):
+        with patch(
+            'app_cz.views.receive_external_task',
+            return_value={'has_error': True, 'message': 'Ошибка сохранения'},
+        ):
+            response = self._post({
+                'uuid_str': '11111111-1111-1111-1111-111111111111',
+                'status': 'Создано',
+            })
+
+        self.assertEqual(response.status_code, 400)
+
+
 class DeletedTaskSyncStatusTests(TestCase):
     """Удалённое задание считается синхронизированным («Ожидают» не висит)."""
 
