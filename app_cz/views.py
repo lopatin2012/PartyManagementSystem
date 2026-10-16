@@ -1135,6 +1135,9 @@ def api_receive_external_task(request):
     """
     serializer = ReceiveExternalTaskSerializer(data=request.data)
     if not serializer.is_valid():
+        logger.warning(
+            'Приём задания: некорректные данные — %s', serializer.errors
+        )
         return Response(
             {
                 'has_error': True,
@@ -1146,6 +1149,19 @@ def api_receive_external_task(request):
 
     result = receive_external_task(serializer.validated_data)
 
+    # Задание без uuid — ожидаемый случай (например, только что созданное
+    # задание, у которого ещё не присвоен УИП/нет кодов). Это не ошибка:
+    # отвечаем 200, чтобы внешний сервис не считал приём сбойным и не ретраил.
+    if result.get('skipped_no_uuid'):
+        logger.info(
+            'Приём задания: пропущено без uuid (task_id=%s, uip=%s)',
+            serializer.validated_data.get('task_id')
+            or serializer.validated_data.get('id'),
+            serializer.validated_data.get('uip'),
+        )
+        return Response(result, status=status.HTTP_200_OK)
+
+    # Остальные has_error — реальные ошибки (не удалось сохранить задание).
     if result.get('has_error'):
         return Response(result, status=status.HTTP_400_BAD_REQUEST)
 
