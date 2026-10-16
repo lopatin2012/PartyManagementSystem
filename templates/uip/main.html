@@ -2,6 +2,7 @@
 
 {% extends 'base.html' %}
 {% load static %}
+{% load uip_display %}
 
 {% block head %}
 <link rel="stylesheet" href="{% static 'css/uip.css' %}" type="text/css">
@@ -235,6 +236,11 @@
                                 Номер УИП
                                 <span class="filter-caret {% if current_number %}active{% endif %}">▾</span>
                             </div>
+                            <div class="th-legend">
+                                <span class="part-gtin">GTIN(14)</span> +
+                                <span class="part-date">дата(6)</span> +
+                                <span class="part-party">партия(12)</span>
+                            </div>
                             <div class="th-filter {% if not current_number %}hidden{% endif %}" id="thf-number">
                                 <input type="text" name="number" value="{{ current_number }}"
                                        placeholder="Поиск по номеру"
@@ -312,7 +318,7 @@
                     <tbody>
                     {% for uip in page_obj %}
                         <tr>
-                            <td class="uip-number" title="{{ uip.number }}">{{ uip.number }}</td>
+                            <td class="uip-number" title="{{ uip.number }}">{% uip_number_colored uip %}</td>
                             <td>
                                 <span class="status-badge status-{{ uip.status }}">
                                     {{ uip.get_status_display }}

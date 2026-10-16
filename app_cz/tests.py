@@ -1142,6 +1142,44 @@ class BuildLocalPartyNumberArticleTruncationTests(TestCase):
         self.assertNotIn('12345-1', number)
 
 
+class SplitLocalPartyNumberTests(SimpleTestCase):
+    """Разбор номера УИП: GTIN(14) + дата(6) + партия(12)."""
+
+    GTIN = '04601751026019'
+
+    def test_parts_are_gtin_date_party(self):
+        number = self.GTIN + '260115' + '123450000000'
+        parts, legend = party_service.split_local_party_number(number)
+
+        self.assertEqual([p['cls'] for p in parts], ['gtin', 'date', 'party'])
+        self.assertEqual(parts[0]['text'], self.GTIN)
+        self.assertEqual(parts[1]['text'], '260115')
+        self.assertEqual(parts[2]['text'], '123450000000')
+        self.assertEqual(''.join(p['text'] for p in parts), number)
+        self.assertEqual(legend, 'GTIN(14) + дата ГГММДД(6) + партия(12)')
+
+    def test_cz_alphanumeric_serial_lands_in_party(self):
+        number = self.GTIN + '260115' + 'ABCDEF123456'
+        parts, _ = party_service.split_local_party_number(number)
+
+        self.assertEqual(parts[2]['cls'], 'party')
+        self.assertEqual(parts[2]['text'], 'ABCDEF123456')
+        self.assertEqual(''.join(p['text'] for p in parts), number)
+
+    def test_short_number_does_not_break(self):
+        number = self.GTIN + '260115' + '1'
+        parts, _ = party_service.split_local_party_number(number)
+
+        self.assertEqual(parts[2]['text'], '1')
+        self.assertEqual(''.join(p['text'] for p in parts), number)
+
+    def test_empty_number(self):
+        parts, legend = party_service.split_local_party_number('')
+
+        self.assertEqual([p['text'] for p in parts], ['', '', ''])
+        self.assertIn('партия(12)', legend)
+
+
 class DeletedTaskSyncStatusTests(TestCase):
     """Удалённое задание считается синхронизированным («Ожидают» не висит)."""
 

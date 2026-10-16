@@ -210,6 +210,27 @@ tr:hover {
     word-break: break-all;
 }
 
+/* Разбивка номера УИП по информационным частям — как в блоке
+   «Предпросмотр номера» на странице /uip/. */
+.uip-code-value {
+    display: inline-block;
+    line-height: 1.6;
+}
+
+.uip-legend {
+    display: block;
+    margin-top: 0.25rem;
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 0.72rem;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.part-gtin { color: #6495ED; }
+.part-date { color: var(--accent-yellow, #FABB1C); }
+.part-article { color: var(--accent-green, #BBCF32); }
+.part-party { color: #E06C9F; }
+.part-zeros { color: rgba(255, 255, 255, 0.35); }
+
 .level-badge {
     display: inline-block;
     padding: 0.25rem 0.6rem;
