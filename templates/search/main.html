@@ -2,6 +2,7 @@
 
 {% extends 'base.html' %}
 {% load static %}
+{% load uip_display %}
 
 {% block head %}
     <link rel="stylesheet" href="{% static 'css/search.css' %}">
@@ -141,7 +142,7 @@
                             <article class="result-card">
                                 <div class="card-head">
                                     <span class="status-badge uip-status-{{ item.status }}">{{ item.get_status_display }}</span>
-                                    <span class="code-value" title="{{ item.number }}">{{ item.number }}</span>
+                                    <span class="code-value uip-code-value" title="{{ item.number }}">{% uip_number_breakdown item %}</span>
                                 </div>
                                 <div class="card-grid">
                                     <div class="card-field">

@@ -744,6 +744,32 @@
 .part-party { color: #E06C9F; }
 .part-zeros { color: rgba(255, 255, 255, 0.35); }
 
+/* Легенда разбора номера УИП. */
+.uip-legend {
+    display: block;
+    margin-top: 0.25rem;
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 0.7rem;
+    font-weight: 400;
+    font-style: normal;
+    letter-spacing: normal;
+    text-transform: none;
+    white-space: normal;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+/* Легенда в заголовке таблицы «Номер УИП». */
+.uip-table th .th-legend {
+    padding: 0 1rem 0.75rem;
+    font-size: 0.68rem;
+    font-weight: 400;
+    line-height: 1.4;
+    letter-spacing: normal;
+    text-transform: none;
+    white-space: normal;
+    color: rgba(255, 255, 255, 0.5);
+}
+
 .modal-footer {
     display: flex;
     align-items: center;

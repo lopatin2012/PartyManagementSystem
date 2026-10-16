@@ -129,6 +129,28 @@ def build_local_party_number(
             return uip
 
 
+def split_local_party_number(number: str) -> tuple[list[dict], str]:
+    """
+    Разбирает номер УИП на информационные части для подсветки:
+
+        GTIN(14) + дата ГГММДД(6) + партия(12).
+
+    Локальное правило: 12 знаков после даты — это «партия», внутри которой
+    указывается артикул (см. build_local_party_number()).
+
+    :return: (parts, legend), где parts — список словарей
+        {'cls': 'gtin'|'date'|'party', 'text': str}.
+    """
+    number = number or ''
+    parts = [
+        {'cls': 'gtin', 'text': number[:14]},
+        {'cls': 'date', 'text': number[14:20]},
+        {'cls': 'party', 'text': number[20:32]},
+    ]
+    legend = 'GTIN(14) + дата ГГММДД(6) + партия(12)'
+    return parts, legend
+
+
 def find_sku_by_gtin(gtin: str):
     """Ищет активный SKU по GTIN потребительской упаковки."""
     product = Product.objects.filter(

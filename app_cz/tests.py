@@ -1142,6 +1142,44 @@ class BuildLocalPartyNumberArticleTruncationTests(TestCase):
         self.assertNotIn('12345-1', number)
 
 
+class SplitLocalPartyNumberTests(SimpleTestCase):
+    """Разбор номера УИП: GTIN(14) + дата(6) + партия(12)."""
+
+    GTIN = '04601751026019'
+
+    def test_parts_are_gtin_date_party(self):
+        number = self.GTIN + '260115' + '123450000000'
+        parts, legend = party_service.split_local_party_number(number)
+
+        self.assertEqual([p['cls'] for p in parts], ['gtin', 'date', 'party'])
+        self.assertEqual(parts[0]['text'], self.GTIN)
+        self.assertEqual(parts[1]['text'], '260115')
+        self.assertEqual(parts[2]['text'], '123450000000')
+        self.assertEqual(''.join(p['text'] for p in parts), number)
+        self.assertEqual(legend, 'GTIN(14) + дата ГГММДД(6) + партия(12)')
+
+    def test_cz_alphanumeric_serial_lands_in_party(self):
+        number = self.GTIN + '260115' + 'ABCDEF123456'
+        parts, _ = party_service.split_local_party_number(number)
+
+        self.assertEqual(parts[2]['cls'], 'party')
+        self.assertEqual(parts[2]['text'], 'ABCDEF123456')
+        self.assertEqual(''.join(p['text'] for p in parts), number)
+
+    def test_short_number_does_not_break(self):
+        number = self.GTIN + '260115' + '1'
+        parts, _ = party_service.split_local_party_number(number)
+
+        self.assertEqual(parts[2]['text'], '1')
+        self.assertEqual(''.join(p['text'] for p in parts), number)
+
+    def test_empty_number(self):
+        parts, legend = party_service.split_local_party_number('')
+
+        self.assertEqual([p['text'] for p in parts], ['', '', ''])
+        self.assertIn('партия(12)', legend)
+
+
 class DeletedTaskSyncStatusTests(TestCase):
     """Удалённое задание считается синхронизированным («Ожидают» не висит)."""
 
@@ -1829,6 +1867,50 @@ class LargeTablePaginatorTests(TestCase):
             connections.__getitem__.side_effect = Exception('нет связи')
             paginator = LargeTablePaginator(CISCode.objects.all(), 100)
             self.assertEqual(paginator.count, 0)
+
+
+class UipBurnEmailTests(TestCase):
+    """Письмо о сгорании УИП: полное имя продукта, без лишних строк."""
+
+    def test_burn_email_content(self):
+        from app_cz.services import reserve_monitor
+
+        product = Product.objects.create(
+            group=ProductGroupChoices.MILK,
+            name='Напиток кисломолочный пастеризованный',
+            shelf_life_in_days=14,
+            item_condition=StateConditionChoices.READY_ORDER_KM,
+            card_status=CardStateChoices.PUBLISHED,
+        )
+        ProductPackaging.objects.create(
+            product=product,
+            level=PackagingLevelChoices.UNIT,
+            gtin='04601751028945',
+            quantity_inside=1,
+        )
+        sku = ProductSKU.objects.create(product=product, article='13426')
+        today = timezone.now().date()
+        UIP.objects.create(
+            product_sku=sku,
+            number='04601751028945260923134260000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+            reservation_date=today - timedelta(days=23),
+        )
+
+        with patch.object(
+            reserve_monitor, '_notify', return_value={'sent': True},
+        ) as notify:
+            result = reserve_monitor.check_uip_burn_and_notify()
+
+        self.assertEqual(result['at_risk_count'], 1)
+        subject, body, _recipients = notify.call_args.args
+        self.assertIn('не более 7 дней', subject)
+        # Полное наименование (Product.__str__ обрезал бы до 20 символов).
+        self.assertIn('Напиток кисломолочный пастеризованный', body)
+        self.assertNotIn('...', body)
+        self.assertNotIn('30 дней после резервирования', body)
+        self.assertIn('Осталось дней', body)
+        self.assertIn('| 7', body)
 
 
 class RefreshSuzTokenRetryTests(TestCase):
