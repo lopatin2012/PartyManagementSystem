@@ -1006,6 +1006,9 @@ class ReportUipEndpointTests(TestCase):
         ), patch(
             'app_cz.services.reserve_monitor._fetch_code_for_task',
             return_value='010460175102601921CODE0001',
+        ), patch(
+            'app_cz.services.party_service.get_reserved_party_numbers',
+            return_value=set(),
         ):
             response = self.client.post(
                 self.url, data={'uip_id': str(self.uip.id)},
@@ -1042,6 +1045,9 @@ class RegisterUipMarkingDateTests(TestCase):
         ) as mock_report, patch(
             'app_cz.services.reserve_monitor._fetch_code_for_task',
             return_value='010460175102601921CODE0001',
+        ), patch(
+            'app_cz.services.party_service.get_reserved_party_numbers',
+            return_value=set(),
         ):
             register_uip(self.uip)
         return mock_report.call_args.kwargs
@@ -1057,6 +1063,74 @@ class RegisterUipMarkingDateTests(TestCase):
         past = timezone.now().date() - timedelta(days=5)
         kwargs = self._register(past)
         self.assertEqual(kwargs['marking_date'], past.isoformat())
+
+
+class RegisterUipReserveConfirmationTests(TestCase):
+    """registered ставится только если номер ушёл из резерва ЧЗ (≤ 30 дней)."""
+
+    NUMBER = '04601751026019260101500320000000'
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.uip = UIP.objects.create(
+            product_sku=self.sku,
+            number=self.NUMBER,
+            status=PartyStatusChoices.RESERVED_LOCAL,
+            reservation_date=timezone.now().date(),
+            production_date=timezone.now().date(),
+        )
+        ProductionParty.objects.create(
+            uip=self.uip, production_party='1', external_number_task='task-1',
+        )
+
+    def _register(self, reserved_numbers):
+        from app_cz.services.reserve_monitor import register_uip
+
+        with patch(
+            'app_cz.services.reserve_monitor.send_application_report',
+            return_value={'has_error': False, 'status_close': True, 'responses': []},
+        ), patch(
+            'app_cz.services.reserve_monitor._fetch_code_for_task',
+            return_value='010460175102601921CODE0001',
+        ), patch(
+            'app_cz.services.party_service.get_reserved_party_numbers',
+            return_value=reserved_numbers,
+        ):
+            return register_uip(self.uip)
+
+    def test_registered_when_left_reserve_in_30_days(self):
+        result = self._register(set())
+
+        self.assertTrue(result['registered'])
+        self.uip.refresh_from_db()
+        self.assertEqual(self.uip.status, PartyStatusChoices.REGISTERED)
+
+    def test_not_registered_when_still_reserved(self):
+        result = self._register({self.NUMBER})
+
+        self.assertFalse(result['registered'])
+        self.assertIn('остаётся в списке резерва', result['reason'])
+        self.uip.refresh_from_db()
+        self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
+
+    def test_not_registered_when_reserve_list_unavailable(self):
+        result = self._register(None)
+
+        self.assertFalse(result['registered'])
+        self.assertIn('недоступен', result['reason'])
+        self.uip.refresh_from_db()
+        self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
+
+    def test_not_registered_when_burned_after_30_days(self):
+        self.uip.reservation_date = timezone.now().date() - timedelta(days=31)
+        self.uip.save(update_fields=['reservation_date'])
+
+        result = self._register(set())
+
+        self.assertFalse(result['registered'])
+        self.assertIn('сгорел', result['reason'])
+        self.uip.refresh_from_db()
+        self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
 
 
 class BuildLocalPartyNumberNaturaTests(TestCase):
@@ -1959,13 +2033,27 @@ class UipBurnEmailTests(TestCase):
 
         self.assertEqual(result['at_risk_count'], 1)
         subject, body, _recipients = notify.call_args.args
+        html = notify.call_args.kwargs.get('html_message')
+
         self.assertIn('не более 7 дней', subject)
         # Полное наименование (Product.__str__ обрезал бы до 20 символов).
         self.assertIn('Напиток кисломолочный пастеризованный', body)
         self.assertNotIn('...', body)
         self.assertNotIn('30 дней после резервирования', body)
-        self.assertIn('Осталось дней', body)
-        self.assertIn('| 7', body)
+        # Больше не «простыня» из столбцов через «|».
+        self.assertNotIn(' | ', body)
+        self.assertIn('осталось: 7 дн.', body)
+
+        # HTML-версия: таблица с заголовками и данными.
+        self.assertIsNotNone(html)
+        self.assertIn('<table', html)
+        self.assertIn('Осталось дней', html)
+        self.assertIn('04601751028945260923134260000000', html)
+        self.assertIn('Напиток кисломолочный пастеризованный', html)
+        reserve = today - timedelta(days=23)
+        burn = reserve + timedelta(days=30)
+        self.assertIn(f'{reserve:%d.%m.%Y}', html)
+        self.assertIn(f'{burn:%d.%m.%Y}', html)
 
 
 class RefreshSuzTokenRetryTests(TestCase):
