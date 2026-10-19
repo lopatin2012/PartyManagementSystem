@@ -238,6 +238,37 @@ def _get_expiration_date(uip: UIP):
     return party.expiration_datetime.date().isoformat()
 
 
+def _confirm_reserve_release(uip: UIP) -> tuple[bool, str]:
+    """
+    Подтверждает, что номер УИП ушёл из списка резерва ЧЗ.
+
+    Правило сгорания: регистрировать можно только если номер ушёл из резерва
+    в пределах BURN_DAYS (30) дней с даты резервирования. Если номер ещё в
+    резерве — регистрация не подтверждена; если ушёл позже 30 дней — УИП сгорел.
+
+    :return: (confirmed, reason).
+    """
+    from app_cz.services.party_service import get_reserved_party_numbers
+
+    reserved = get_reserved_party_numbers()
+    if reserved is None:
+        return False, (
+            'Список резерва ЧЗ недоступен — регистрация не подтверждена'
+        )
+    if uip.number in reserved:
+        return False, (
+            'Номер УИП остаётся в списке резерва ЧЗ — регистрация не '
+            'подтверждена (отчёт не снял партию с резерва)'
+        )
+    burn_date = _uip_effective_reservation_date(uip) + timedelta(days=BURN_DAYS)
+    if timezone.now().date() > burn_date:
+        return False, (
+            f'Номер ушёл из резерва позже {BURN_DAYS} дней — УИП сгорел, '
+            'регистрация не выполняется'
+        )
+    return True, 'Номер ушёл из резерва ЧЗ'
+
+
 def register_uip(uip: UIP, source: str = 'auto', note: str = None) -> dict:
     """
     Регистрирует УИП через отчёт о нанесении (УИП → REGISTERED).
@@ -345,7 +376,22 @@ def register_uip(uip: UIP, source: str = 'auto', note: str = None) -> dict:
             'reason': result.get('message', 'Ошибка отчёта о нанесении'),
         }
 
-    # 5. Успех: помечаем локальные коды как нанесённые, статус УИП → REGISTERED.
+    # 5. Подтверждаем снятие с резерва: отчёт мог пройти с кодом, не
+    #    относящимся к этой партии, и тогда номер остаётся зарезервированным.
+    #    Регистрируем только если номер ушёл из резерва ЧЗ.
+    confirmed, reason = _confirm_reserve_release(uip)
+    if not confirmed:
+        logger.warning(
+            f'УИП {uip.number}: отчёт отправлен, но регистрация не '
+            f'подтверждена — {reason}'
+        )
+        return {
+            'registered': False,
+            'number': uip.number,
+            'reason': reason,
+        }
+
+    # 6. Успех: помечаем локальные коды как нанесённые, статус УИП → REGISTERED.
     with transaction.atomic():
         CISCode.objects.filter(
             production_party__uip=uip,
@@ -528,7 +574,10 @@ def _build_email_body(stats: dict, release: dict = None) -> str:
     return '\n'.join(lines)
 
 
-def _notify(subject: str, body: str, recipients: list) -> dict:
+def _notify(
+        subject: str, body: str, recipients: list,
+        html_message: str = None,
+) -> dict:
     """
     Отправляет письмо через фоновую задачу (очередь 'emails').
     """
@@ -546,6 +595,7 @@ def _notify(subject: str, body: str, recipients: list) -> dict:
             subject=subject,
             message=body,
             recipient_list=list(recipients),
+            html_message=html_message,
         )
         return {'sent': True, 'task_id': str(result.id) if result else None}
     except Exception as e:
@@ -620,6 +670,90 @@ def check_uip_reserve_and_notify() -> dict:
     return result
 
 
+def _build_burn_email(records: list, warn_days: int) -> tuple[str, str]:
+    """Собирает (text, html) письма о сгорании УИП."""
+    from html import escape
+
+    total = len(records)
+    title = f'До сгорания {total} УИП осталось не более {warn_days} дней.'
+
+    # Текстовая версия — fallback для клиентов без HTML.
+    text_lines = [title, '']
+    for r in records:
+        text_lines.append(f'УИП {r["number"]}')
+        text_lines.append(f'  Продукт: {r["product"]}')
+        text_lines.append(
+            f'  Резерв: {r["reservation_date"]:%d.%m.%Y} · '
+            f'сгорание: {r["burn_date"]:%d.%m.%Y} · '
+            f'осталось: {r["days_left"]} дн.'
+        )
+        text_lines.append('')
+    text_lines.append('Система управления партиями PartyManagementSystem')
+    text = '\n'.join(text_lines)
+
+    text_color = '#202124'
+    muted = '#5f6368'
+    border = '#e0e0e0'
+    danger = '#d93025'
+    warning = '#e37400'
+
+    def days_color(days: int) -> str:
+        if days <= 2:
+            return danger
+        if days <= 5:
+            return warning
+        return text_color
+
+    head_cells = ''.join(
+        f'<th style="padding:10px 12px;text-align:left;font-size:12px;'
+        f'text-transform:uppercase;letter-spacing:0.03em;color:{muted};'
+        f'border-bottom:2px solid {border}">{label}</th>'
+        for label in (
+            'УИП', 'Продукт', 'Дата резервирования',
+            'Дата сгорания', 'Осталось дней',
+        )
+    )
+    rows_html = ''.join(
+        '<tr>'
+        f'<td style="padding:10px 12px;border-bottom:1px solid {border};'
+        f'font-family:Consolas,Menlo,monospace;font-size:12px;'
+        f'color:{text_color};white-space:nowrap;vertical-align:top">'
+        f'{escape(r["number"])}</td>'
+        f'<td style="padding:10px 12px;border-bottom:1px solid {border};'
+        f'font-size:13px;color:{text_color}">{escape(r["product"])}</td>'
+        f'<td style="padding:10px 12px;border-bottom:1px solid {border};'
+        f'font-size:13px;color:{muted};white-space:nowrap;'
+        f'text-align:center">{r["reservation_date"]:%d.%m.%Y}</td>'
+        f'<td style="padding:10px 12px;border-bottom:1px solid {border};'
+        f'font-size:13px;color:{muted};white-space:nowrap;'
+        f'text-align:center">{r["burn_date"]:%d.%m.%Y}</td>'
+        f'<td style="padding:10px 12px;border-bottom:1px solid {border};'
+        f'font-size:15px;font-weight:700;text-align:center;'
+        f'color:{days_color(r["days_left"])}">{r["days_left"]}</td>'
+        '</tr>'
+        for r in records
+    )
+
+    html = (
+        f'<div style="font-family:Arial,Helvetica,sans-serif;'
+        f'color:{text_color};max-width:960px">'
+        f'<div style="background:{danger};color:#ffffff;padding:16px 20px;'
+        f'border-radius:8px 8px 0 0;font-size:18px;font-weight:700">'
+        f'&#9888; {escape(title)}</div>'
+        f'<div style="border:1px solid {border};border-top:none;'
+        f'border-radius:0 0 8px 8px;padding:16px 18px">'
+        f'<p style="margin:0 0 14px;font-size:14px;color:{muted}">'
+        f'Эти УИП нужно использовать или снять с резерва, иначе они сгорят.</p>'
+        f'<table style="border-collapse:collapse;width:100%">'
+        f'<thead><tr>{head_cells}</tr></thead>'
+        f'<tbody>{rows_html}</tbody></table>'
+        f'<p style="color:{muted};font-size:12px;margin:18px 0 0">'
+        f'Система управления партиями PartyManagementSystem</p>'
+        f'</div></div>'
+    )
+    return text, html
+
+
 def check_uip_burn_and_notify() -> dict:
     """
     Проверка «сгорания» УИП (раз в сутки).
@@ -679,21 +813,12 @@ def check_uip_burn_and_notify() -> dict:
         f'ВНИМАНИЕ: до сгорания {len(records)} УИП осталось '
         f'не более {BURN_WARN_DAYS} дней'
     )
-    body_lines = [
-        f'До сгорания {len(records)} УИП осталось не более '
-        f'{BURN_WARN_DAYS} дней.',
-        '',
-        'УИП | Продукт | Дата резервирования | Дата сгорания | Осталось дней',
-    ]
-    body_lines += [
-        f'{r["number"]} | {r["product"]} | '
-        f'{r["reservation_date"]:%d.%m.%Y} | {r["burn_date"]:%d.%m.%Y} | '
-        f'{r["days_left"]}'
-        for r in records
-    ]
+    body, html_message = _build_burn_email(records, BURN_WARN_DAYS)
 
     recipients = getattr(settings, 'UIP_RESERVE_NOTIFICATION_EMAILS', []) or []
-    sent = _notify(subject, '\n'.join(body_lines), recipients)
+    sent = _notify(
+        subject, body, recipients, html_message=html_message,
+    )
 
     result['is_error'] = not sent.get('sent')
     result['message'] = (

@@ -659,9 +659,23 @@ def close_party_reservation(
                 'message': err_msg
             }
 
-        # 4. Если отчёт отправлен успешно, обновляем статус УИП в нашей БД.
+        # 4. Если отчёт отправлен успешно, подтверждаем, что номер ушёл из
+        #    резерва ЧЗ, и только затем обновляем статус УИП.
         uip = UIP.objects.filter(number=batch_number).first()
         if uip:
+            from app_cz.services.reserve_monitor import _confirm_reserve_release
+
+            confirmed, reason = _confirm_reserve_release(uip)
+            if not confirmed:
+                logger.warning(
+                    f"Партия {batch_number}: отчёт отправлен, но регистрация "
+                    f"не подтверждена — {reason}"
+                )
+                return {
+                    'has_error': True,
+                    'status_close': False,
+                    'message': reason,
+                }
             changed = uip.change_status(
                 PartyStatusChoices.REGISTERED,
                 source='service',
