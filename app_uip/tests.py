@@ -486,6 +486,32 @@ class ReserveUipsEndpointTests(TestCase):
         data = response.json()
         self.assertEqual(len(data['results']), 2)
 
+    def test_inactive_product_activated(self):
+        """Внешнее задание резервирует УИП для неактивного продукта."""
+        self.client.force_login(self.admin)
+        self.sku.is_active = False
+        self.sku.save(update_fields=['is_active'])
+        self.sku.product.is_active = False
+        self.sku.product.save(update_fields=['is_active'])
+
+        response = self.client.post(
+            self.url,
+            {
+                'article': '50032',
+                'production_date': '2026-01-01',
+                'mode': 'local',
+                'skip_cz': True,
+            },
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()['is_error'])
+        self.sku.refresh_from_db()
+        self.sku.product.refresh_from_db()
+        self.assertTrue(self.sku.is_active)
+        self.assertTrue(self.sku.product.is_active)
+
     def test_invalid_payload_returns_400(self):
         self.client.force_login(self.admin)
         response = self.client.post(

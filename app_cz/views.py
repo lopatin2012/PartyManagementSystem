@@ -38,7 +38,8 @@ from app_cz.services.party_service import (
     reserve_parties_honest_sign,
     reserve_party_numbers_cz,
     get_all_reserved_parties,
-    close_party_reservation, generate_uip, find_sku_by_gtin,
+    close_party_reservation, generate_uip,
+    find_or_activate_sku_for_task,
     sync_parties_from_cz, reserve_manual_uip,
     get_available_products,
 )
@@ -644,15 +645,11 @@ def api_generate_uip(request):
 
     data = serializer.validated_data
 
-    # Поиск продукта по артикулу или GTIN.
-    product_sku = None
-    if data.get('article'):
-        product_sku = ProductSKU.objects.filter(
-            article=data['article'], is_active=True
-        ).select_related('product').first()
-
-    elif data.get('gtin'):
-        product_sku = find_sku_by_gtin(data['gtin'])
+    # Поиск продукта по артикулу или GTIN. Внешнее задание может запросить
+    # неактивный продукт — тогда активируем его и резервируем УИП.
+    product_sku, _activated = find_or_activate_sku_for_task(
+        article=data.get('article'), gtin=data.get('gtin'),
+    )
 
     if not product_sku:
         logger.error(

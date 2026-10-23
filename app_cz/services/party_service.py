@@ -165,6 +165,64 @@ def find_sku_by_gtin(gtin: str):
     return product.skus.filter(is_active=True).first()
 
 
+def find_any_sku_by_gtin(gtin: str):
+    """Ищет SKU по GTIN без фильтра активности (для внешних заданий)."""
+    product = Product.objects.filter(
+        packagings__gtin=gtin,
+        packagings__level=PackagingLevelChoices.UNIT,
+    ).first()
+
+    if not product:
+        return None
+
+    return product.skus.order_by('-is_active', 'id').first()
+
+
+def find_or_activate_sku_for_task(article: str = None, gtin: str = None):
+    """
+    Находит SKU для внешнего задания (даже неактивный) и активирует его
+    вместе с продуктом.
+
+    Задание «Молвест.Маркировка» может потребовать продукт, который у нас
+    помечен неактивным (например, снят по данным Молвеста, но задание на него
+    ещё пришло). В этом случае продукт/SKU включаются обратно, чтобы УИП
+    можно было сгенерировать и зарезервировать.
+
+    :return: (product_sku, activated) или (None, False).
+    """
+    sku = None
+    if article:
+        sku = (
+            ProductSKU.objects.filter(article=article, is_active=True)
+            .select_related('product').first()
+            or ProductSKU.objects.filter(article=article)
+            .select_related('product').first()
+        )
+    elif gtin:
+        sku = find_sku_by_gtin(gtin) or find_any_sku_by_gtin(gtin)
+
+    if sku is None:
+        return None, False
+
+    activated = False
+    if not sku.is_active:
+        sku.is_active = True
+        sku.save(update_fields=['is_active'])
+        activated = True
+    if sku.product_id and not sku.product.is_active:
+        sku.product.is_active = True
+        sku.product.save(update_fields=['is_active'])
+        activated = True
+
+    if activated:
+        logger.warning(
+            f'Продукт/SKU {sku.article} были неактивны, но запрошены внешним '
+            f'заданием — активированы для резервирования УИП.'
+        )
+
+    return sku, activated
+
+
 def get_available_products(factory=None) -> list[dict]:
     """
     Список продуктов, доступных для генерации УИП (с GTIN и артикулом).
