@@ -7,10 +7,9 @@ from datetime import datetime
 from app_cz.services.party_service import (
     generate_uip,
     reserve_parties_honest_sign,
-    find_sku_by_gtin,
+    find_or_activate_sku_for_task,
     restore_burned_uips,
 )
-from app_factory.models import ProductSKU
 
 logger = logging.getLogger(__name__)
 
@@ -29,22 +28,16 @@ def _parse_date(value):
 def _resolve_product_sku(item: dict):
     """
     Находит SKU по артикулу или GTIN (потребительская упаковка).
+
+    Неактивный продукт/SKU активируется: внешнее задание может потребовать
+    продукт, снятый по данным Молвеста, — тогда он возвращается в работу.
     Возвращает (product_sku, error_message).
     """
-    article = item.get('article')
-    gtin = item.get('gtin')
-
-    if article:
-        sku = ProductSKU.objects.filter(
-            article=article, is_active=True
-        ).select_related('product').first()
-        if sku:
-            return sku, None
-
-    if gtin:
-        sku = find_sku_by_gtin(gtin)
-        if sku:
-            return sku, None
+    sku, _activated = find_or_activate_sku_for_task(
+        article=item.get('article'), gtin=item.get('gtin'),
+    )
+    if sku:
+        return sku, None
 
     return None, 'Продукт не найден или неактивен (укажите article или gtin).'
 

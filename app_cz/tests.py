@@ -891,6 +891,51 @@ class GenerateUipTypeSyncTests(TestCase):
         self.assertEqual(response.status_code, 400)
 
 
+class GenerateUipInactiveProductTests(TestCase):
+    """Внешний generate-uip активирует неактивный продукт и создаёт УИП."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.sku.is_active = False
+        self.sku.save(update_fields=['is_active'])
+        self.sku.product.is_active = False
+        self.sku.product.save(update_fields=['is_active'])
+        self.url = '/cz/api/v1/generate-uip/'
+
+    def _post(self, body):
+        return self.client.post(
+            self.url, body, content_type='application/json',
+        )
+
+    def test_inactive_product_activated_and_uip_created(self):
+        response = self._post({
+            'gtin': self.sku.product.consumer_gtin,
+            'production_date': '2026-01-15',
+            'mode': 'local',
+            'skip_cz': True,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()['is_error'])
+        self.sku.refresh_from_db()
+        self.sku.product.refresh_from_db()
+        self.assertTrue(self.sku.is_active)
+        self.assertTrue(self.sku.product.is_active)
+        self.assertTrue(
+            UIP.objects.filter(number=response.json()['number']).exists()
+        )
+
+    def test_unknown_product_still_404(self):
+        response = self._post({
+            'article': 'НЕСУЩЕСТВУЮЩИЙ',
+            'production_date': '2026-01-15',
+            'mode': 'local',
+            'skip_cz': True,
+        })
+
+        self.assertEqual(response.status_code, 404)
+
+
 class CheckUipNumberEndpointTests(TestCase):
     """GET /cz/uip/check-number/ — проверка номера в СУП и ЧЗ."""
 
