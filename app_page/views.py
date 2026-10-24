@@ -1,15 +1,23 @@
 # app_page/views.py
 
+from datetime import datetime
+
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.paginator import Paginator
 from django.db.models import Exists, OuterRef, Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views import View
 from django.views.generic import TemplateView
 
 from app_cz.models import CISCode, CISCodeArchive
+from app_cz.services.order_service import (
+    ORDER_STATUS_LABELS,
+    get_suz_orders,
+    order_status_label,
+)
 from app_cz.services.party_service import get_available_products
 
 from app_factory.models import (
@@ -26,6 +34,7 @@ from app_factory.models import (
 from app_uip.models import UIP, ProductionParty, PartyStatusChoices
 
 from app_helper.access import (
+    AdminRequiredMixin,
     UipPageAccessMixin,
     filter_uips_for_user,
     get_user_factory,
@@ -464,3 +473,85 @@ class ProductControlDetailView(LoginRequiredMixin, View):
             'type_choices': TypeFormationUIP.choices,
             'level_choices': PackagingLevelChoices.choices,
         }
+
+
+# ==========================================
+# Заказы кодов маркировки в СУЗ.
+# ==========================================
+
+def _to_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _from_ms(value):
+    """Unix-время в миллисекундах → timezone-aware datetime (или None)."""
+    ms = _to_int(value, 0)
+    if not ms:
+        return None
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.get_current_timezone())
+
+
+class SuzOrdersView(AdminRequiredMixin, TemplateView):
+    """Текущие заказы кодов маркировки в СУЗ."""
+
+    template_name = 'suz/main.html'
+    page_size = 50
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        get = self.request.GET
+
+        page = max(1, _to_int(get.get('page'), 1))
+        status = (get.get('status') or '').strip()
+        order_id = (get.get('order_id') or '').strip()
+
+        result = get_suz_orders(
+            page=page,
+            limit=self.page_size,
+            status=status or None,
+            order_id=order_id or None,
+        )
+
+        orders = result.get('orders') or []
+        for order in orders:
+            buffers = order.get('buffers') or []
+            gtins = [b.get('gtin') for b in buffers if b.get('gtin')]
+            order['created_at'] = _from_ms(order.get('createdTimestamp'))
+            order['gtins'] = gtins
+            order['product_count'] = len(gtins) or len(buffers)
+            order['total_codes'] = sum(
+                _to_int(b.get('totalCodes'), 0) for b in buffers
+            )
+            order['available_codes'] = sum(
+                _to_int(b.get('availableCodes'), 0) for b in buffers
+            )
+            order['status_label'] = order_status_label(order.get('orderStatus'))
+
+        total_count = _to_int(result.get('total_count'), 0)
+        page_size = _to_int(result.get('limit'), self.page_size) or self.page_size
+        total_pages = max(1, (total_count + page_size - 1) // page_size)
+
+        params = get.copy()
+        params.pop('page', None)
+        query_string = params.urlencode()
+
+        context.update({
+            'title_name': 'Заказы кодов в СУЗ',
+            'page_name': 'Заказы кодов в СУЗ',
+            'orders': orders,
+            'total_count': total_count,
+            'page': page,
+            'total_pages': total_pages,
+            'has_previous': page > 1,
+            'has_next': page < total_pages,
+            'query_string': query_string,
+            'current_status': status,
+            'current_order_id': order_id,
+            'status_choices': list(ORDER_STATUS_LABELS.items()),
+            'is_error': result.get('is_error', False),
+            'message': result.get('message', ''),
+        })
+        return context

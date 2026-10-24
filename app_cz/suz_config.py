@@ -33,6 +33,8 @@ class SUZUrls:
 
         # --- Эндпоинты СУЗ (suzgrid / suz.sandbox) ---
         self.order_milk = f"{self.DOMAIN_SUZ}/api/v3/order"
+        self.order_search = f"{self.DOMAIN_SUZ}/api/v3/orders/search"
+        self.order_list = f"{self.DOMAIN_SUZ}/api/v3/order/list"
         self.check_work_suz = f"{self.DOMAIN_SUZ}/api/v3/ping"
         self.check_order = f"{self.DOMAIN_SUZ}/api/v3/order/status"
         self.download_codes_from_order = f"{self.DOMAIN_SUZ}/api/v3/codes"

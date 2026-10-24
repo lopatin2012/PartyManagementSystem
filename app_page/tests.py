@@ -557,3 +557,97 @@ class StatusPanelLoadMessageTests(TestCase):
         self.assertContains(response, 'Нагрузка')
         self.assertContains(response, 'Высокая нагрузка')
         self.assertContains(response, '20000')
+
+
+@STATIC_OVERRIDE
+class SuzOrdersPageTests(TestCase):
+    """Страница «Заказы кодов в СУЗ» (/suz/)."""
+
+    def setUp(self):
+        for patcher in (
+            patch(
+                'config.context_processors.check_factories',
+                return_value={'is_ok': True, 'factories': []},
+            ),
+            patch(
+                'app_helper.service_helper.diagnose_service',
+                return_value={
+                    'is_available': True,
+                    'checks': {'summary': {'ok': True}},
+                },
+            ),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+        self.admin = User.objects.create_superuser(
+            username='admin', password='pass', email='a@a.a',
+        )
+        self.user = User.objects.create_user(username='user', password='pass')
+
+    def test_login_required(self):
+        response = self.client.get(reverse('suz_orders'))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/auth/login/', response.url)
+
+    def test_non_admin_forbidden(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse('suz_orders'))
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_nav_link_visible_for_admin_only(self):
+        self.client.force_login(self.admin)
+        self.assertContains(
+            self.client.get(reverse('home')), reverse('suz_orders'),
+        )
+
+        self.client.force_login(self.user)
+        self.assertNotContains(
+            self.client.get(reverse('home')), reverse('suz_orders'),
+        )
+
+    def test_admin_sees_orders(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.get_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'total_count': 1,
+            'orders': [{
+                'orderId': 'order-1',
+                'orderStatus': 'READY',
+                'createdTimestamp': 1737000000000,
+                'serviceProviderId': 'SRV1',
+                'productGroup': 'milk',
+                'buffers': [{
+                    'gtin': '04601751026019',
+                    'totalCodes': 100,
+                    'availableCodes': 90,
+                }],
+            }],
+            'page': 1,
+            'limit': 50,
+        }):
+            response = self.client.get(reverse('suz_orders'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'order-1')
+        self.assertContains(response, 'Доступен')
+        self.assertContains(response, '100')
+
+    def test_admin_sees_cz_error(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.get_suz_orders', return_value={
+            'is_error': True,
+            'message': 'Токен СУЗ истёк',
+            'total_count': 0,
+            'orders': [],
+            'page': 1,
+            'limit': 50,
+        }):
+            response = self.client.get(reverse('suz_orders'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Токен СУЗ истёк')

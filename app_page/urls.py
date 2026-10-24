@@ -12,4 +12,5 @@ urlpatterns = [
         view=views.ProductControlDetailView.as_view(),
         name='product_control_detail',
     ),
+    path('suz/', view=views.SuzOrdersView.as_view(), name='suz_orders'),
 ]

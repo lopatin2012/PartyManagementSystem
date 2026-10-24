@@ -39,7 +39,7 @@ from app_uip.models import (
     ProductionPartySyncStatusChoices,
     UIP,
 )
-from app_cz.models import CISCode
+from app_cz.models import CISCode, SUZAccount
 from app_cz.services import code_sync
 from app_cz.services import desync_resolution
 from app_cz.services import party_service
@@ -2415,3 +2415,114 @@ class AdminBypassesFactoryScopeTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         mock_reserve.assert_called()
+
+
+class SuzOrdersServiceTests(TestCase):
+    """Заказы кодов маркировки из СУЗ (POST /api/v3/orders/search)."""
+
+    def setUp(self):
+        self.account = SUZAccount.objects.create(
+            is_active=True,
+            certificate_name='Тестовый сертификат',
+            serial_number='SN-TEST-1',
+            inn='1234567890',
+            oms_id='cdf12109-10d3-11e6-8b6f-0050569977a1',
+            device_name='device',
+            connection_identifier='conn',
+            dynamic_token='token-123',
+        )
+
+    def _response(self, status_code=200, payload=None):
+        response = Mock()
+        response.status_code = status_code
+        response.json.return_value = payload or {}
+        return response
+
+    def test_parses_orders_and_sends_filters(self):
+        from app_cz.services import order_service
+
+        payload = {
+            'totalCount': 1,
+            'results': [{
+                'orderId': 'order-1',
+                'orderStatus': 'READY',
+                'createdTimestamp': 1737000000000,
+                'serviceProviderId': 'SRV1',
+                'productGroup': 'milk',
+                'buffers': [{
+                    'gtin': '04601751026019',
+                    'totalCodes': 100,
+                    'availableCodes': 90,
+                }],
+            }],
+        }
+        response = self._response(payload=payload)
+
+        with patch.object(
+            order_service.requests, 'post', return_value=response,
+        ) as post:
+            result = order_service.get_suz_orders(
+                page=2, limit=10, status='READY', order_id='order-1',
+            )
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['total_count'], 1)
+        self.assertEqual(result['orders'][0]['orderId'], 'order-1')
+
+        kwargs = post.call_args.kwargs
+        self.assertEqual(post.call_args.args[0], order_service.SUZ.order_search)
+        self.assertEqual(kwargs['params'], {'omsId': self.account.oms_id})
+        self.assertEqual(kwargs['headers']['clientToken'], 'token-123')
+        self.assertEqual(kwargs['json'], {
+            'filter': {
+                'orderStatuses': ['READY'],
+                'orderIds': ['order-1'],
+            },
+            'limit': 10,
+            'page': 2,
+        })
+
+    def test_requires_active_account(self):
+        from app_cz.services import order_service
+
+        SUZAccount.objects.update(is_active=False)
+        result = order_service.get_suz_orders()
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('не найдена', result['message'])
+
+    def test_requires_token(self):
+        from app_cz.services import order_service
+
+        self.account.dynamic_token = ''
+        self.account.save(update_fields=['dynamic_token'])
+        result = order_service.get_suz_orders()
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('токен', result['message'].lower())
+
+    def test_http_error_is_returned(self):
+        from app_cz.services import order_service
+
+        response = self._response(
+            status_code=401,
+            payload={'errorMessage': 'Токен не действителен'},
+        )
+        with patch.object(order_service.requests, 'post', return_value=response):
+            result = order_service.get_suz_orders()
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('401', result['message'])
+        self.assertIn('Токен не действителен', result['message'])
+
+    def test_network_error_is_returned(self):
+        from app_cz.services import order_service
+
+        with patch.object(
+            order_service.requests, 'post',
+            side_effect=order_service.requests.exceptions.ConnectionError('boom'),
+        ):
+            result = order_service.get_suz_orders()
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('соединения', result['message'])

@@ -52,7 +52,7 @@ pip install -e .   # generates config/_version.py from git tags (setuptools-scm)
 | `app_uip` | Core entities: `UIP`, `ProductionParty`, `UIPStatusLog`. All status changes go through `UIP.change_status()` |
 | `app_cz` | Chestny Znak integration: CIS codes, SUZ accounts, archive (`CISCodeArchive`), services (`suz_client`, `true_api_client`, `party_service`, `code_client`, `code_sync`, `code_status`, `code_archive`, `desync_resolution`, `nk_sync_state`, `reserve_monitor`, `national_catalog_client`, `rate_limit`) |
 | `app_scheduler` | Periodic tasks + management commands (`run_scheduler`, `run_tasks_worker`, `registry.py`, `progress.py`, `tasks.py`) |
-| `app_page` | Django-template UI: main, search, UIP list, product control (`/products/`) |
+| `app_page` | Django-template UI: main, search, UIP list, product control (`/products/`), SUZ orders (`/suz/`) |
 | `app_helper` | Shared utilities: `UUIDModel`, middleware, `access.py`, search/sign/user helpers, `load_tracker` |
 | `app_event` | Live event feed + observability: `EventLog` (`models.Model`, not UUIDModel) + `log_event()` (`utils.py`); `HealthCheck`, `NotificationRecipient`, `services/health.py` |
 | `app_wms` | Warehouse module (empty skeleton) |
@@ -60,6 +60,7 @@ pip install -e .   # generates config/_version.py from git tags (setuptools-scm)
 
 - **CZ admin API views live in `app_cz/views.py`**, not `app_page`: NK sync/progress/product views, UIP sync/generate, and Molvest task sync views were moved there (URL names kept, paths are now under `/cz/`). Only `MainPageView`/`SearchView`/`UIPListView` and the product-control views (`ProductControlView`/`ProductControlDetailView`) remain in `app_page`.
 - **URL ownership:** the `/uip/` and `/products/` HTML pages are routed by `app_page/urls.py`; `app_uip/urls.py` holds only the `/uip/api/v1/...` DRF routes (`search`, `reserve-uips`, `status_parties`).
+- **SUZ orders page (`/suz/`, nav «СУЗ» after «Продукция», admin-only).** `SuzOrdersView` (`app_page/views.py`) renders `templates/suz/main.html`; data comes from `app_cz/services/order_service.py::get_suz_orders` → `POST /api/v3/orders/search?omsId=...` with `clientToken` = the active `SUZAccount.dynamic_token`. Columns: `orderId`, дата создания (`createdTimestamp`, ms), количество товаров (buffers/GTIN), `serviceProviderId`, `totalCodes`/`availableCodes`, статус (`orderStatus` → `ORDER_STATUS_LABELS`). Filters `order_id`/`status`, page size 50 (max 100); no active account/token, HTTP and network errors render as a message, not a 500.
 - **Service layer pattern:** `app_cz`, `app_factory`, `app_uip` and `app_event` use `services/` subpackages (e.g. `app_uip/services/uip_reserve.py` — the multi-UIP reservation service covered by tests, `app_uip/services/reserve_accumulation.py`). Other apps keep logic in views/serializers. `app_helper/external.py::safe_external_call(func, ...)` wraps non-critical external calls, logs + writes an `EventLog`, and returns `(result, error)` instead of raising.
 
 ## Critical conventions
