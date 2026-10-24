@@ -23,11 +23,21 @@ COLORS = {
 }
 
 PROCESSES = [
-    ('web', ['uvicorn', 'config.asgi:application', '--host', LOCAL_IP, '--port', '8888']
+    ('web', ['uvicorn', 'config.asgi:application', '--host', LOCAL_IP, '--port', '8888',
+             '--timeout-graceful-shutdown', '10']
      + (['--reload'] if os.getenv('DEBUG', '1') == '1' else [])),
     ('scheduler', ['python', 'manage.py', 'run_scheduler']),
     ('worker', ['python', 'manage.py', 'run_tasks_worker']),
 ]
+
+_STOP_SIGNAL = None
+
+
+def _request_stop(signum, frame):
+    """SIGTERM/SIGINT → корректная остановка всех процессов (не падение)."""
+    global _STOP_SIGNAL
+    _STOP_SIGNAL = signal.Signals(signum).name
+    raise KeyboardInterrupt
 
 # Ширина префикса для выравнивания
 PREFIX_WIDTH = max(len(name) for name, _ in PROCESSES) + 2
@@ -58,6 +68,13 @@ def main():
     # Включаем поддержку ANSI на Windows
     if sys.platform == 'win32':
         os.system('')  # активирует ANSI escape sequences
+
+    # Корректная остановка по SIGTERM/SIGINT (docker stop, Ctrl+C, рестарт).
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _request_stop)
+        except (ValueError, OSError):
+            pass
 
     # Настройка виртуального окружения.
     env = os.environ.copy()
@@ -112,20 +129,31 @@ def main():
 
     except KeyboardInterrupt:
         print()
-        log_system('Завершение всех процессов...')
+        reason = _STOP_SIGNAL or 'SIGINT'
+        log_system(
+            f'Получен {reason} — останавливаем сервер и фоновые процессы...'
+        )
 
+        # Сначала просим все процессы завершиться (uvicorn — graceful shutdown,
+        # чтобы дообслужить in-flight запросы).
         for name, p in procs:
             if p.poll() is None:
-                log_system(f'Stopping {name} (pid={p.pid})')
+                log_system(f'Останавливаем {name} (pid={p.pid})...')
                 p.terminate()
 
-        # Даём время на graceful shutdown.
-        time.sleep(2)
+        # Даём время на корректное завершение, не убивая сразу.
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            if all(p.poll() is not None for _, p in procs):
+                break
+            time.sleep(0.2)
 
-        # Принудительно добиваем, если остались.
+        # Принудительно добиваем, если кто-то не завершился.
         for name, p in procs:
             if p.poll() is None:
-                log_system(f'Остановка {name} (pid={p.pid})')
+                log_system(
+                    f'{name} не завершился за 15 с — принудительная остановка.'
+                )
                 p.kill()
 
         # Ждём потоки вывода.
