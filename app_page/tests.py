@@ -753,6 +753,22 @@ class SuzOrdersPageTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, '/suz/?status=READY')
 
+    def test_page_size_is_ten(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.get_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'total_count': 0,
+            'orders': [],
+            'page': 1,
+            'limit': 10,
+        }) as mock_orders:
+            self.client.get(reverse('suz_orders'))
+
+        mock_orders.assert_called_once_with(
+            page=1, limit=10, status=None, order_id=None,
+        )
+
     def test_bulk_controls_rendered(self):
         self.client.force_login(self.admin)
         with patch('app_page.views.get_suz_orders', return_value={
