@@ -15,6 +15,7 @@ from django.views.generic import TemplateView
 from app_cz.models import CISCode, CISCodeArchive
 from app_cz.services.order_service import (
     ORDER_STATUS_LABELS,
+    close_suz_orders,
     get_suz_orders,
     order_status_label,
 )
@@ -528,7 +529,17 @@ class SuzOrdersView(AdminRequiredMixin, TemplateView):
             order['available_codes'] = sum(
                 _to_int(b.get('availableCodes'), 0) for b in buffers
             )
+            attributes = order.get('attributes') or {}
+            order['contact_person'] = (
+                order.get('contactPerson')
+                or attributes.get('contactPerson')
+                or ''
+            )
             order['status_label'] = order_status_label(order.get('orderStatus'))
+
+        has_contact_person = any(
+            order.get('contact_person') for order in orders
+        )
 
         total_count = _to_int(result.get('total_count'), 0)
         page_size = _to_int(result.get('limit'), self.page_size) or self.page_size
@@ -551,7 +562,38 @@ class SuzOrdersView(AdminRequiredMixin, TemplateView):
             'current_status': status,
             'current_order_id': order_id,
             'status_choices': list(ORDER_STATUS_LABELS.items()),
+            'has_contact_person': has_contact_person,
             'is_error': result.get('is_error', False),
             'message': result.get('message', ''),
         })
         return context
+
+
+class SuzOrderCloseView(AdminRequiredMixin, View):
+    """Закрытие одного или нескольких заказов кодов маркировки в СУЗ (POST)."""
+
+    def post(self, request):
+        result = close_suz_orders(request.POST.getlist('order_id'))
+        closed = result.get('closed') or []
+        failed = result.get('failed') or []
+
+        if result.get('is_error') and not closed:
+            messages.error(
+                request,
+                result.get('message') or 'Не удалось закрыть заказы в СУЗ.',
+            )
+        elif failed:
+            details = '; '.join(
+                f'{item["order_id"]}: {item["message"]}' for item in failed[:5]
+            )
+            messages.warning(
+                request,
+                f'Закрыто: {len(closed)}, не удалось: {len(failed)}. {details}',
+            )
+        else:
+            messages.success(request, f'Закрыто заказов: {len(closed)}.')
+
+        next_url = (request.POST.get('next') or '').strip()
+        if not next_url.startswith('/suz/'):
+            return redirect('suz_orders')
+        return redirect(next_url)

@@ -2526,3 +2526,80 @@ class SuzOrdersServiceTests(TestCase):
 
         self.assertTrue(result['is_error'])
         self.assertIn('соединения', result['message'])
+
+    def test_close_order_sends_signed_request(self):
+        from app_cz.services import order_service
+
+        response = self._response(payload={'omsId': self.account.oms_id})
+        with patch.object(
+            order_service, 'unpinned_signed_data',
+            return_value=(None, 'signature-b64'),
+        ) as signer, patch.object(
+            order_service.requests, 'post', return_value=response,
+        ) as post:
+            result = order_service.close_suz_order('order-1')
+
+        self.assertFalse(result['is_error'])
+        signer.assert_called_once_with('{"orderId":"order-1"}')
+
+        kwargs = post.call_args.kwargs
+        self.assertEqual(post.call_args.args[0], order_service.SUZ.order_close)
+        self.assertEqual(kwargs['params'], {'omsId': self.account.oms_id})
+        self.assertEqual(kwargs['headers']['clientToken'], 'token-123')
+        self.assertEqual(kwargs['headers']['X-Signature'], 'signature-b64')
+        self.assertEqual(kwargs['data'], '{"orderId":"order-1"}')
+
+    def test_close_order_requires_id(self):
+        from app_cz.services import order_service
+
+        result = order_service.close_suz_order('')
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('идентификатор', result['message'].lower())
+
+    def test_close_order_http_error(self):
+        from app_cz.services import order_service
+
+        response = self._response(
+            status_code=400, payload={'errorMessage': 'Нельзя закрыть'},
+        )
+        with patch.object(
+            order_service, 'unpinned_signed_data', return_value=(None, 'sig'),
+        ), patch.object(order_service.requests, 'post', return_value=response):
+            result = order_service.close_suz_order('order-1')
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('Нельзя закрыть', result['message'])
+
+    def test_close_many_orders_aggregates_results(self):
+        from app_cz.services import order_service
+
+        def fake_close(order_id):
+            if order_id == 'bad':
+                return {'is_error': True, 'message': 'нельзя'}
+            return {'is_error': False, 'message': ''}
+
+        with patch.object(
+            order_service, 'close_suz_order', side_effect=fake_close,
+        ) as close:
+            result = order_service.close_suz_orders(
+                ['order-1', 'bad', 'order-2', 'order-1'],
+            )
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['closed'], ['order-1', 'order-2'])
+        self.assertEqual(
+            result['failed'], [{'order_id': 'bad', 'message': 'нельзя'}],
+        )
+        self.assertEqual(
+            [call.args[0] for call in close.call_args_list],
+            ['order-1', 'bad', 'order-2'],
+        )
+
+    def test_close_many_requires_selection(self):
+        from app_cz.services import order_service
+
+        result = order_service.close_suz_orders([])
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('Не выбрано', result['message'])
