@@ -85,7 +85,7 @@
                 {% for order in orders %}
                     <tr>
                         <td class="suz-center">
-                            {% if order.orderStatus != 'CLOSED' and order.orderStatus != 'DECLINED' %}
+                            {% if order.can_close %}
                                 <input type="checkbox" name="order_id"
                                        value="{{ order.orderId }}"
                                        form="bulkCloseForm"
@@ -104,7 +104,7 @@
                         <td class="suz-center" title="{{ order.gtins|join:', ' }}">
                             {{ order.product_count }}
                         </td>
-                        <td>{{ order.serviceProviderId|default:"—" }}</td>
+                        <td>{{ order.provider_label|default:"—" }}</td>
                         {% if has_contact_person %}
                             <td>{{ order.contact_person|default:"—" }}</td>
                         {% endif %}
@@ -120,7 +120,7 @@
                             </span>
                         </td>
                         <td class="suz-center">
-                            {% if order.orderStatus != 'CLOSED' and order.orderStatus != 'DECLINED' %}
+                            {% if order.can_close %}
                                 <form method="post" action="{% url 'suz_order_close' %}"
                                       class="suz-close-form"
                                       onsubmit="return confirm('Закрыть заказ {{ order.orderId }}?');">
@@ -130,6 +130,9 @@
                                     <button type="submit" class="suz-close-btn"
                                             title="Закрыть заказ в СУЗ">✕</button>
                                 </form>
+                            {% elif order.has_service_provider %}
+                                <button type="button" class="suz-close-btn" disabled
+                                        title="Заказ создан через сервис-провайдера — закрытие недоступно">✕</button>
                             {% else %}
                                 <span class="suz-sub">—</span>
                             {% endif %}

@@ -17,6 +17,7 @@ from app_cz.services.order_service import (
     ORDER_STATUS_LABELS,
     close_suz_orders,
     get_suz_orders,
+    get_suz_providers,
     order_status_label,
 )
 from app_cz.services.party_service import get_available_products
@@ -517,6 +518,7 @@ class SuzOrdersView(AdminRequiredMixin, TemplateView):
         )
 
         orders = result.get('orders') or []
+        provider_labels = get_suz_providers()
         for order in orders:
             buffers = order.get('buffers') or []
             gtins = [b.get('gtin') for b in buffers if b.get('gtin')]
@@ -536,6 +538,15 @@ class SuzOrdersView(AdminRequiredMixin, TemplateView):
                 or ''
             )
             order['status_label'] = order_status_label(order.get('orderStatus'))
+            provider_id = str(order.get('serviceProviderId') or '').strip()
+            order['has_service_provider'] = bool(provider_id)
+            order['provider_label'] = provider_labels.get(
+                provider_id, provider_id,
+            )
+            order['can_close'] = (
+                not order['has_service_provider']
+                and order.get('orderStatus') not in ('CLOSED', 'DECLINED')
+            )
 
         has_contact_person = any(
             order.get('contact_person') for order in orders

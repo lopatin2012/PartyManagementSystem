@@ -36,6 +36,66 @@ def order_status_label(status: str) -> str:
     return ORDER_STATUS_LABELS.get(status, status or '—')
 
 
+def get_suz_providers() -> dict:
+    """
+    Список сервис-провайдеров СУЗ: ``GET /api/v3/providers`` (4.4.14).
+
+    :return: {serviceProviderId: 'Наименование / ИНН'} (или {}) — чтобы
+             показывать в таблице заказов имя вместо GUID.
+    """
+    from django.core.cache import cache
+
+    cached = cache.get('suz_providers')
+    if cached is not None:
+        return cached
+
+    account, error = _active_account()
+    if error:
+        logger.warning(f'СУЗ: сервис-провайдеры недоступны: {error}')
+        return {}
+
+    headers = {
+        'clientToken': account.dynamic_token,
+        'Accept': 'application/json',
+    }
+    try:
+        response = requests.get(
+            SUZ.providers,
+            params={'omsId': account.oms_id},
+            headers=headers,
+            timeout=30,
+        )
+    except requests.exceptions.RequestException as e:
+        logger.error(f'СУЗ: ошибка получения сервис-провайдеров: {e}')
+        return {}
+
+    if response.status_code != 200:
+        logger.warning(
+            f'СУЗ: сервис-провайдеры вернули {response.status_code}: '
+            f'{_extract_error(response)}'
+        )
+        return {}
+
+    try:
+        data = response.json()
+    except ValueError:
+        return {}
+
+    providers = {}
+    for item in data.get('providers') or []:
+        provider_id = str(item.get('serviceProviderId') or '').strip()
+        if not provider_id:
+            continue
+        name = str(item.get('providerName') or item.get('name') or '').strip()
+        inn = str(item.get('taxIdentificationNumber') or '').strip()
+        providers[provider_id] = (
+            f'{name} / {inn}' if name and inn else (name or inn or provider_id)
+        )
+
+    cache.set('suz_providers', providers, 60 * 60)
+    return providers
+
+
 def get_suz_orders(
         page: int = 1,
         limit: int = 50,

@@ -2629,6 +2629,37 @@ class SuzOrdersServiceTests(TestCase):
         self.assertTrue(result['is_error'])
         self.assertIn('Не выбрано', result['message'])
 
+    def test_providers_mapping(self):
+        from django.core.cache import cache
+
+        from app_cz.services import order_service
+
+        cache.delete('suz_providers')
+        response = self._response(payload={
+            'providers': [{
+                'serviceProviderId': 'SRV1',
+                'providerName': 'ООО "ПК ФЛЕКСО"',
+                'taxIdentificationNumber': '4725008621',
+            }],
+        })
+
+        with patch.object(
+            order_service.requests, 'get', return_value=response,
+        ) as get:
+            labels = order_service.get_suz_providers()
+
+        self.assertEqual(
+            labels, {'SRV1': 'ООО "ПК ФЛЕКСО" / 4725008621'},
+        )
+        self.assertEqual(get.call_args.args[0], order_service.SUZ.providers)
+        self.assertEqual(
+            get.call_args.kwargs['params'], {'omsId': self.account.oms_id},
+        )
+        self.assertEqual(
+            get.call_args.kwargs['headers']['clientToken'], 'token-123',
+        )
+        cache.delete('suz_providers')
+
 
 @override_settings(
     SUZ_ACTIVE_ORDERS_LIMIT=90,
