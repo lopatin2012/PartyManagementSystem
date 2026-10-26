@@ -303,6 +303,20 @@
     border-color: #d93025;
 }
 
+.suz-close-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.suz-close-btn:disabled:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.5);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
 /* Панель массовых действий и чекбоксы */
 .suz-toolbar {
     display: flex;
