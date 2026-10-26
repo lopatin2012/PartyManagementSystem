@@ -636,6 +636,7 @@ class SuzOrdersPageTests(TestCase):
         self.assertContains(response, 'order-1')
         self.assertContains(response, 'Доступен')
         self.assertContains(response, '100')
+        self.assertContains(response, 'Только активные')
 
     def test_admin_sees_cz_error(self):
         self.client.force_login(self.admin)

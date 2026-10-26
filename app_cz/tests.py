@@ -2482,6 +2482,31 @@ class SuzOrdersServiceTests(TestCase):
             'page': 2,
         })
 
+    def test_defaults_to_active_statuses(self):
+        from app_cz.services import order_service
+
+        response = self._response(payload={'totalCount': 0, 'results': []})
+        with patch.object(
+            order_service.requests, 'post', return_value=response,
+        ) as post:
+            order_service.get_suz_orders()
+
+        self.assertEqual(
+            post.call_args.kwargs['json']['filter'],
+            {'orderStatuses': list(order_service.ACTIVE_ORDER_STATUSES)},
+        )
+
+    def test_all_statuses_omits_filter(self):
+        from app_cz.services import order_service
+
+        response = self._response(payload={'totalCount': 0, 'results': []})
+        with patch.object(
+            order_service.requests, 'post', return_value=response,
+        ) as post:
+            order_service.get_suz_orders(status='all')
+
+        self.assertEqual(post.call_args.kwargs['json']['filter'], {})
+
     def test_requires_active_account(self):
         from app_cz.services import order_service
 
@@ -2603,3 +2628,114 @@ class SuzOrdersServiceTests(TestCase):
 
         self.assertTrue(result['is_error'])
         self.assertIn('Не выбрано', result['message'])
+
+
+@override_settings(
+    SUZ_ACTIVE_ORDERS_LIMIT=90,
+    SUZ_ORDERS_NOTIFICATION_EMAILS=['ops@test.local'],
+)
+class SuzOrdersNotificationTests(TestCase):
+    """Уведомление о превышении числа активных заказов СУЗ."""
+
+    def _orders_result(self, count, orders=None):
+        return {
+            'is_error': False,
+            'message': '',
+            'total_count': count,
+            'orders': orders or [],
+            'page': 1,
+            'limit': 1,
+        }
+
+    def test_no_email_at_or_below_limit(self):
+        from app_cz.services import order_service
+
+        with patch.object(
+            order_service, 'get_suz_orders',
+            return_value=self._orders_result(90),
+        ), patch('app_cz.services.reserve_monitor._notify') as notify:
+            result = order_service.check_suz_active_orders_and_notify()
+
+        self.assertFalse(result['is_error'])
+        self.assertFalse(result['notified'])
+        notify.assert_not_called()
+
+    def test_email_above_limit(self):
+        from app_cz.services import order_service
+
+        orders = [{
+            'orderId': 'order-1',
+            'orderStatus': 'READY',
+            'createdTimestamp': 1737000000000,
+            'buffers': [{'totalCodes': 1200}],
+        }]
+        with patch.object(
+            order_service, 'get_suz_orders',
+            return_value=self._orders_result(91, orders),
+        ), patch(
+            'app_cz.services.reserve_monitor._notify',
+            return_value={'sent': True},
+        ) as notify:
+            result = order_service.check_suz_active_orders_and_notify()
+
+        self.assertTrue(result['notified'])
+        self.assertFalse(result['is_error'])
+
+        args, kwargs = notify.call_args
+        subject, body, recipients = args
+        self.assertIn('91', subject)
+        self.assertIn('order-1', body)
+        self.assertEqual(recipients, ['ops@test.local'])
+        html = kwargs.get('html_message')
+        self.assertIn('<table', html)
+        self.assertIn('order-1', html)
+
+    def test_email_sent_on_every_check(self):
+        from app_cz.services import order_service
+
+        orders = [{'orderId': 'order-1', 'orderStatus': 'READY', 'buffers': []}]
+        with patch.object(
+            order_service, 'get_suz_orders',
+            return_value=self._orders_result(91, orders),
+        ), patch(
+            'app_cz.services.reserve_monitor._notify',
+            return_value={'sent': True},
+        ) as notify:
+            first = order_service.check_suz_active_orders_and_notify()
+            second = order_service.check_suz_active_orders_and_notify()
+
+        self.assertTrue(first['notified'])
+        self.assertTrue(second['notified'])
+        self.assertEqual(notify.call_count, 2)
+
+    def test_suz_error_returns_error_without_email(self):
+        from app_cz.services import order_service
+
+        with patch.object(
+            order_service, 'get_suz_orders',
+            return_value={
+                'is_error': True,
+                'message': 'нет токена',
+                'total_count': 0,
+                'orders': [],
+                'page': 1,
+                'limit': 1,
+            },
+        ), patch('app_cz.services.reserve_monitor._notify') as notify:
+            result = order_service.check_suz_active_orders_and_notify()
+
+        self.assertTrue(result['is_error'])
+        notify.assert_not_called()
+
+    def test_no_recipients_does_not_send(self):
+        from app_cz.services import order_service
+
+        with override_settings(SUZ_ORDERS_NOTIFICATION_EMAILS=[]), patch.object(
+            order_service, 'get_suz_orders',
+            return_value=self._orders_result(91, [{'orderId': 'o1'}]),
+        ):
+            result = order_service.check_suz_active_orders_and_notify()
+
+        self.assertFalse(result['notified'])
+        self.assertTrue(result['is_error'])
+        self.assertIn('Письмо отправлено: False', result['message'])

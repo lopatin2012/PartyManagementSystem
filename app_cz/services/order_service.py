@@ -26,6 +26,10 @@ ORDER_STATUS_LABELS = {
 MAX_PAGE_SIZE = 100
 MAX_BULK_CLOSE = 100
 
+# «Активные» заказы: ещё не закрыты и не отклонены. Используются как
+# фильтр по умолчанию для страницы /suz/ (метод поиска принимает orderStatuses).
+ACTIVE_ORDER_STATUSES = ('CREATED', 'PENDING', 'APPROVED', 'READY')
+
 
 def order_status_label(status: str) -> str:
     """Код статуса заказа СУЗ → читаемая подпись."""
@@ -54,8 +58,13 @@ def get_suz_orders(
         return _error(error, page, limit)
 
     order_filter = {}
-    if status in ORDER_STATUS_LABELS:
+    if status == 'all':
+        pass
+    elif status in ORDER_STATUS_LABELS:
         order_filter['orderStatuses'] = [status]
+    else:
+        # По умолчанию — только активные заказы (без закрытых/отклонённых).
+        order_filter['orderStatuses'] = list(ACTIVE_ORDER_STATUSES)
     if order_id:
         order_filter['orderIds'] = [order_id]
 
@@ -218,6 +227,171 @@ def close_suz_orders(order_ids) -> dict:
         'closed': closed,
         'failed': failed,
     }
+
+
+def check_suz_active_orders_and_notify() -> dict:
+    """
+    Проверяет число активных заказов кодов в СУЗ и уведомляет по почте
+    при превышении порога ``SUZ_ACTIVE_ORDERS_LIMIT`` (по умолчанию 90).
+
+    По аналогии с письмом о сгорании УИП: текст + HTML с таблицей,
+    получатели — ``SUZ_ORDERS_NOTIFICATION_EMAILS`` (fallback на
+    ``UIP_RESERVE_NOTIFICATION_EMAILS``), отправка через ``_notify``.
+    """
+    from django.conf import settings
+
+    limit = _as_int(getattr(settings, 'SUZ_ACTIVE_ORDERS_LIMIT', 90), 90)
+
+    result = get_suz_orders(page=1, limit=1)
+    if result.get('is_error'):
+        message = (
+            'СУЗ: не удалось проверить количество активных заказов: '
+            f'{result.get("message")}'
+        )
+        logger.warning(message)
+        return {
+            'is_error': True,
+            'count': 0,
+            'limit': limit,
+            'notified': False,
+            'message': message,
+        }
+
+    count = _as_int(result.get('total_count'), 0)
+    summary = {
+        'is_error': False,
+        'count': count,
+        'limit': limit,
+        'notified': False,
+        'message': '',
+    }
+
+    if count <= limit:
+        summary['message'] = (
+            f'Активных заказов СУЗ: {count} (порог {limit}) — норма.'
+        )
+        logger.info(summary['message'])
+        return summary
+
+    orders_result = get_suz_orders(page=1, limit=min(count, MAX_PAGE_SIZE))
+    orders = []
+    if not orders_result.get('is_error'):
+        orders = orders_result.get('orders') or []
+
+    recipients = getattr(settings, 'SUZ_ORDERS_NOTIFICATION_EMAILS', []) or []
+    subject = (
+        f'ВНИМАНИЕ: активных заказов кодов в СУЗ {count} '
+        f'(порог {limit})'
+    )
+    body, html_message = _build_orders_email(orders, count, limit)
+
+    from app_cz.services.reserve_monitor import _notify
+
+    sent = _notify(
+        subject, body, recipients, html_message=html_message,
+    )
+    summary['notified'] = bool(sent.get('sent'))
+    summary['is_error'] = not summary['notified']
+    summary['message'] = (
+        f'Активных заказов СУЗ: {count} > {limit}. '
+        f'Письмо отправлено: {summary["notified"]}.'
+    )
+    logger.info(summary['message'])
+    return summary
+
+
+def _build_orders_email(orders: list, count: int, limit: int) -> tuple[str, str]:
+    """Собирает (text, html) письма о превышении числа активных заказов."""
+    from html import escape
+
+    title = f'Активных заказов кодов в СУЗ: {count} (порог {limit}).'
+    note = (
+        'У СУЗ действует лимит 100 активных заказов. Закройте неиспользуемые '
+        'заказы в разделе «СУЗ», чтобы не упереться в лимит.'
+    )
+
+    # Текстовая версия — fallback для клиентов без HTML.
+    text_lines = [title, '', note, '']
+    for order in orders:
+        buffers = order.get('buffers') or []
+        total_codes = sum(_as_int(b.get('totalCodes'), 0) for b in buffers)
+        text_lines.append(
+            f'Заказ {order.get("orderId", "—")}'
+        )
+        text_lines.append(
+            f'  Создан: {_format_created(order.get("createdTimestamp"))} · '
+            f'Статус: {order_status_label(order.get("orderStatus"))} · '
+            f'КМ: {total_codes}'
+        )
+        text_lines.append('')
+    text_lines.append('Система управления партиями PartyManagementSystem')
+    text = '\n'.join(text_lines)
+
+    # HTML-версия.
+    text_color = '#202124'
+    muted = '#5f6368'
+    border = '#e0e0e0'
+    danger = '#d93025'
+
+    head_cells = ''.join(
+        f'<th style="padding:8px 12px;text-align:left;font-size:12px;'
+        f'text-transform:uppercase;letter-spacing:0.03em;color:{muted};'
+        f'border-bottom:2px solid {border}">{label}</th>'
+        for label in ('Заказ', 'Создан', 'Статус', 'КМ')
+    )
+    rows_html = ''.join(
+        '<tr>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid {border};'
+        f'font-family:Consolas,Menlo,monospace;font-size:12px;'
+        f'color:{text_color};word-break:break-all">'
+        f'{escape(str(order.get("orderId", "—")))}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid {border};'
+        f'font-size:13px;color:{muted};white-space:nowrap">'
+        f'{_format_created(order.get("createdTimestamp"))}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid {border};'
+        f'font-size:13px;color:{text_color};white-space:nowrap">'
+        f'{escape(order_status_label(order.get("orderStatus")))}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid {border};'
+        f'font-size:13px;color:{text_color};text-align:center">'
+        f'{sum(_as_int(b.get("totalCodes"), 0) for b in (order.get("buffers") or []))}'
+        f'</td>'
+        '</tr>'
+        for order in orders
+    )
+
+    html = (
+        f'<div style="font-family:Arial,Helvetica,sans-serif;'
+        f'color:{text_color};max-width:900px">'
+        f'<div style="background:{danger};color:#ffffff;padding:16px 20px;'
+        f'border-radius:8px 8px 0 0;font-size:18px;font-weight:700">'
+        f'&#9888; {escape(title)}</div>'
+        f'<div style="border:1px solid {border};border-top:none;'
+        f'border-radius:0 0 8px 8px;padding:16px 18px">'
+        f'<p style="margin:0 0 14px;font-size:14px;color:{muted}">'
+        f'{escape(note)}</p>'
+        f'<table style="border-collapse:collapse;width:100%">'
+        f'<thead><tr>{head_cells}</tr></thead>'
+        f'<tbody>{rows_html}</tbody></table>'
+        f'<p style="color:{muted};font-size:12px;margin:18px 0 0">'
+        f'Система управления партиями PartyManagementSystem</p>'
+        f'</div></div>'
+    )
+    return text, html
+
+
+def _format_created(timestamp_ms) -> str:
+    """Unix-время в миллисекундах → «дд.мм.гггг чч:мм» (или «—»)."""
+    from datetime import datetime
+
+    from django.utils import timezone
+
+    ms = _as_int(timestamp_ms, 0)
+    if not ms:
+        return '—'
+    moment = datetime.fromtimestamp(
+        ms / 1000, tz=timezone.get_current_timezone(),
+    )
+    return moment.strftime('%d.%m.%Y %H:%M')
 
 
 def _active_account():

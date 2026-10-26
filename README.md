@@ -185,6 +185,8 @@ python manage.py test app_uip.tests.ReserveAccumulationTests.test_generate_count
 | `HEALTH_CONFIRM_ATTEMPTS` | Сколько неудачных проверок **подряд** подтверждают сбой перед письмом (по умолчанию `3` → ~15 минут) |
 | `HEALTH_RETENTION_DAYS` | Сколько дней хранить историю `HealthCheck` (по умолчанию `28`) |
 | `ONEC_URL` | Адрес 1С для проверки в панели статусов |
+| `SUZ_ACTIVE_ORDERS_LIMIT` | Порог активных заказов СУЗ для email-уведомления (по умолчанию `90`) |
+| `SUZ_ORDERS_NOTIFICATION_EMAILS` | Получатели уведомлений о заказах СУЗ (если не заданы — `UIP_RESERVE_NOTIFICATION_EMAILS`) |
 
 ## Синхронизация с внешним сервисом (Молвест.Маркировка)
 
