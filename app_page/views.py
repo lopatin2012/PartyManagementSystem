@@ -499,7 +499,7 @@ class SuzOrdersView(AdminRequiredMixin, TemplateView):
     """Текущие заказы кодов маркировки в СУЗ."""
 
     template_name = 'suz/main.html'
-    page_size = 50
+    page_size = 10
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
