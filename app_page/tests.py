@@ -651,3 +651,151 @@ class SuzOrdersPageTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Токен СУЗ истёк')
+
+    def test_admin_closes_order(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.close_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'closed': ['order-1'],
+            'failed': [],
+        }) as close, patch('app_page.views.get_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'total_count': 0,
+            'orders': [],
+            'page': 1,
+            'limit': 50,
+        }):
+            response = self.client.post(
+                reverse('suz_order_close'),
+                {'order_id': 'order-1', 'next': '/suz/'},
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        close.assert_called_once_with(['order-1'])
+        self.assertContains(response, 'Закрыто заказов: 1.')
+
+    def test_admin_closes_several_orders(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.close_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'closed': ['order-1', 'order-2'],
+            'failed': [],
+        }) as close, patch('app_page.views.get_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'total_count': 0,
+            'orders': [],
+            'page': 1,
+            'limit': 50,
+        }):
+            response = self.client.post(
+                reverse('suz_order_close'),
+                {'order_id': ['order-1', 'order-2'], 'next': '/suz/'},
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        close.assert_called_once_with(['order-1', 'order-2'])
+        self.assertContains(response, 'Закрыто заказов: 2.')
+
+    def test_bulk_close_reports_partial_failure(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.close_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'closed': ['order-1'],
+            'failed': [{'order_id': 'order-2', 'message': 'Нельзя закрыть'}],
+        }), patch('app_page.views.get_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'total_count': 0,
+            'orders': [],
+            'page': 1,
+            'limit': 50,
+        }):
+            response = self.client.post(
+                reverse('suz_order_close'),
+                {'order_id': ['order-1', 'order-2'], 'next': '/suz/'},
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'не удалось: 1')
+        self.assertContains(response, 'Нельзя закрыть')
+
+    def test_non_admin_cannot_close_order(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            reverse('suz_order_close'), {'order_id': 'order-1'},
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_close_redirects_back_to_filters(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.close_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'closed': ['order-1'],
+            'failed': [],
+        }):
+            response = self.client.post(
+                reverse('suz_order_close'),
+                {'order_id': 'order-1', 'next': '/suz/?status=READY'},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, '/suz/?status=READY')
+
+    def test_bulk_controls_rendered(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.get_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'total_count': 1,
+            'orders': [{
+                'orderId': 'order-1',
+                'orderStatus': 'READY',
+                'createdTimestamp': 1737000000000,
+                'serviceProviderId': 'SRV1',
+                'productGroup': 'milk',
+                'buffers': [],
+            }],
+            'page': 1,
+            'limit': 50,
+        }):
+            response = self.client.get(reverse('suz_orders'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="suzSelectAll"')
+        self.assertContains(response, 'form="bulkCloseForm"')
+        self.assertContains(response, 'Закрыть выбранные')
+
+    def test_contact_person_rendered_when_present(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.get_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'total_count': 1,
+            'orders': [{
+                'orderId': 'order-1',
+                'orderStatus': 'READY',
+                'createdTimestamp': 1737000000000,
+                'serviceProviderId': 'SRV1',
+                'productGroup': 'milk',
+                'attributes': {'contactPerson': 'Иванов П.А.'},
+                'buffers': [],
+            }],
+            'page': 1,
+            'limit': 50,
+        }):
+            response = self.client.get(reverse('suz_orders'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Контактное лицо')
+        self.assertContains(response, 'Иванов П.А.')

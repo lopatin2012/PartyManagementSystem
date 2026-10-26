@@ -249,6 +249,94 @@
     color: rgba(255, 255, 255, 0.7);
 }
 
+/* Сообщения после действий */
+.suz-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.suz-message {
+    padding: 0.65rem 0.9rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+}
+
+.suz-message-success {
+    background: rgba(187, 207, 50, 0.15);
+    border: 1px solid rgba(187, 207, 50, 0.45);
+    color: var(--accent-green);
+}
+
+.suz-message-error {
+    background: rgba(224, 86, 86, 0.15);
+    border: 1px solid rgba(224, 86, 86, 0.45);
+    color: #ff8a8a;
+}
+
+/* Кнопка закрытия заказа */
+.suz-close-form {
+    display: inline;
+    margin: 0;
+}
+
+.suz-close-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid rgba(224, 86, 86, 0.5);
+    background: rgba(224, 86, 86, 0.12);
+    color: #ff8a8a;
+    font-size: 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+
+.suz-close-btn:hover {
+    background: #d93025;
+    color: #ffffff;
+    border-color: #d93025;
+}
+
+/* Панель массовых действий и чекбоксы */
+.suz-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    margin: 0.6rem 0 0.8rem;
+}
+
+.suz-btn-danger {
+    background: rgba(224, 86, 86, 0.9);
+    color: #ffffff;
+}
+
+.suz-btn-danger:hover:not(:disabled) {
+    background: #d93025;
+}
+
+.suz-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.suz-checkbox {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent-green);
+    cursor: pointer;
+}
+
+.suz-col-check {
+    width: 36px;
+    text-align: center;
+}
+
 @media (max-width: 768px) {
     .suz-page {
         padding: 1rem;
