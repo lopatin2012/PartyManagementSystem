@@ -397,6 +397,19 @@ def check_uip_burn_task() -> dict:
 
 
 @task(queue_name='default')
+def check_suz_orders_task() -> dict:
+    """
+    Проверка числа активных заказов кодов в СУЗ (раз в час).
+
+    Если активных заказов больше SUZ_ACTIVE_ORDERS_LIMIT (по умолчанию 90),
+    отправляется email-предупреждение (текст + HTML, как о сгорании УИП).
+    """
+    from app_cz.services.order_service import check_suz_active_orders_and_notify
+
+    return check_suz_active_orders_and_notify()
+
+
+@task(queue_name='default')
 def register_reserved_uips_task() -> dict:
     """
     Регистрация зарезервированных УИП через отчёт о нанесении (раз в сутки).

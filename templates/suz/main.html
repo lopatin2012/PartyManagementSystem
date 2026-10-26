@@ -24,7 +24,8 @@
         <input type="text" name="order_id" value="{{ current_order_id }}"
                placeholder="Идентификатор заказа" class="suz-input">
         <select name="status" class="suz-select">
-            <option value="">Все статусы</option>
+            <option value="" {% if not current_status %}selected{% endif %}>Только активные</option>
+            <option value="all" {% if current_status == 'all' %}selected{% endif %}>Все статусы</option>
             {% for value, label in status_choices %}
                 <option value="{{ value }}" {% if current_status == value %}selected{% endif %}>
                     {{ label }}

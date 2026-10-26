@@ -324,6 +324,22 @@ UIP_DRAFT_SHELF_LIFE_DAYS = int(os.getenv('UIP_DRAFT_SHELF_LIFE_DAYS', '40'))
 UIP_DRAFT_MODE = os.getenv('UIP_DRAFT_MODE', '1') == '1'
 
 # ==========================================
+# Уведомления о заказах кодов в СУЗ.
+# ==========================================
+# Порог активных заказов: при превышении отправляется email.
+SUZ_ACTIVE_ORDERS_LIMIT = int(os.getenv('SUZ_ACTIVE_ORDERS_LIMIT', '90'))
+# Получатели уведомлений; если не заданы — используются получатели
+# уведомлений о резерве УИП.
+SUZ_ORDERS_NOTIFICATION_EMAILS = [
+    email.strip()
+    for email in (
+        os.getenv('SUZ_ORDERS_NOTIFICATION_EMAILS')
+        or os.getenv('UIP_RESERVE_NOTIFICATION_EMAILS', '')
+    ).split(',')
+    if email.strip()
+]
+
+# ==========================================
 # Проверка доступности внешних сервисов.
 # ==========================================
 # Адрес сервиса 1С (например, http://192.168.1.10:8080) для проверки на странице статусов.
