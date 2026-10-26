@@ -576,6 +576,7 @@ class SuzOrdersPageTests(TestCase):
                     'checks': {'summary': {'ok': True}},
                 },
             ),
+            patch('app_page.views.get_suz_providers', return_value={}),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -768,6 +769,70 @@ class SuzOrdersPageTests(TestCase):
         mock_orders.assert_called_once_with(
             page=1, limit=10, status=None, order_id=None,
         )
+
+    def test_service_provider_name_resolved(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.get_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'total_count': 1,
+            'orders': [{
+                'orderId': 'order-1',
+                'orderStatus': 'READY',
+                'serviceProviderId': 'SRV1',
+                'createdTimestamp': 1737000000000,
+                'buffers': [],
+            }],
+            'page': 1,
+            'limit': 10,
+        }), patch('app_page.views.get_suz_providers', return_value={
+            'SRV1': 'ООО "ПК ФЛЕКСО" / 4725008621',
+        }):
+            response = self.client.get(reverse('suz_orders'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'ПК ФЛЕКСО')
+        self.assertContains(response, '4725008621')
+        self.assertNotContains(response, 'SRV1')
+
+    def test_service_provider_order_cannot_be_closed(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.get_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'total_count': 2,
+            'orders': [
+                {
+                    'orderId': 'provider-order',
+                    'orderStatus': 'READY',
+                    'serviceProviderId': 'SRV1',
+                    'createdTimestamp': 1737000000000,
+                    'buffers': [],
+                },
+                {
+                    'orderId': 'own-order',
+                    'orderStatus': 'READY',
+                    'serviceProviderId': '',
+                    'createdTimestamp': 1737000000000,
+                    'buffers': [],
+                },
+            ],
+            'page': 1,
+            'limit': 10,
+        }):
+            response = self.client.get(reverse('suz_orders'))
+
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        # Кнопка провайдерского заказа видна, но отключена.
+        self.assertIn(
+            'title="Заказ создан через сервис-провайдера — закрытие недоступно"',
+            html,
+        )
+        self.assertIn('class="suz-close-btn" disabled', html)
+        # Чекбокс/форма массового закрытия — только у своего заказа.
+        self.assertIn('value="own-order"', html)
+        self.assertNotIn('value="provider-order"', html)
 
     def test_bulk_controls_rendered(self):
         self.client.force_login(self.admin)
