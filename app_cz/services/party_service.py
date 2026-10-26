@@ -809,6 +809,26 @@ def _is_local_format_number(
     return bool(local_number) and local_number == party_number
 
 
+def _clear_draft_deleted_desync() -> int:
+    """
+    Снимает застарелый рассинхрон у `draft`/`deleted`.
+
+    Эти статусы не разбирает `resolve_desync_uips` (они в
+    `SKIPPED_STATUSES`), поэтому флаг, поставленный ранее, сам бы не снялся.
+    """
+    return (
+        UIP.objects
+        .filter(
+            status__in=[
+                PartyStatusChoices.DRAFT,
+                PartyStatusChoices.DELETED,
+            ],
+            is_desync=True,
+        )
+        .update(is_desync=False, updated_at=timezone.now())
+    )
+
+
 def sync_parties_from_cz() -> dict:
     """
     Синхронизирует список зарезервированных партий из ЧЗ с локальной базой.
@@ -834,6 +854,12 @@ def sync_parties_from_cz() -> dict:
         # В ЧЗ нет зарезервированных партий → все локальные reserved_*
         # помечаем рассинхроном.
         desync_count = _mark_local_reserved_not_in_cz(set())
+        cleared_skipped = _clear_draft_deleted_desync()
+        if cleared_skipped:
+            logger.info(
+                f'Снят устаревший рассинхрон у черновиков/удалённых: '
+                f'{cleared_skipped}.'
+            )
         return {
             'is_error': False,
             'message': 'В ЧЗ нет зарезервированных партий',
@@ -972,6 +998,17 @@ def sync_parties_from_cz() -> dict:
                     existing_uip.is_desync = False
                     existing_uip.save()  # updated_at зафиксирует момент синхронизации.
                     logger.info(f'Обновлён УИП: {party_number} (статус: {current_status})')
+                elif current_status in (
+                        PartyStatusChoices.DRAFT,
+                        PartyStatusChoices.DELETED,
+                ):
+                    # Авторазбор (resolve_desync_uips) эти статусы пропускает,
+                    # поэтому рассинхрон для них не ставим — иначе ⚠ висит вечно.
+                    logger.debug(
+                        f'УИП {party_number} в статусе '
+                        f'"{existing_uip.get_status_display()}" числится в резерве ЧЗ — '
+                        f'рассинхрон не ставим (статус не разбирается автоматически).'
+                    )
                 else:
                     # РАССИНХРОН: статус и данные НЕ меняем — только помечаем и логируем.
                     existing_uip.is_desync = True
@@ -991,6 +1028,15 @@ def sync_parties_from_cz() -> dict:
         # is_desync, статус и данные НЕ меняем — разбирается администратором.
         cz_numbers = {p.get('partyNumber') for p in lst_party_info}
         desync_count += _mark_local_reserved_not_in_cz(cz_numbers)
+
+        # Черновики/удалённые авторазбор пропускает, поэтому застарелый
+        # рассинхрон для них только шумит — снимаем.
+        cleared_skipped = _clear_draft_deleted_desync()
+        if cleared_skipped:
+            logger.info(
+                f'Снят устаревший рассинхрон у черновиков/удалённых: '
+                f'{cleared_skipped}.'
+            )
 
         message = (
             f'Синхронизация завершена. Создано: {created_count}, '
