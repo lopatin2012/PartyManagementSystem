@@ -39,6 +39,11 @@
                 </a>
             {% endif %}
             {% if is_admin %}
+                <a href="{% url 'suz_orders' %}" class="nav-link {% if request.resolver_match.url_name == 'suz_orders' %}nav-link-active{% endif %}">
+                    СУЗ
+                </a>
+            {% endif %}
+            {% if is_admin %}
                 <a href="{% url 'sync_tasks' %}" class="nav-link {% if request.resolver_match.url_name == 'sync_tasks' %}nav-link-active{% endif %}">
                     Синхронизация заданий
                 </a>

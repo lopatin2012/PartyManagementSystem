@@ -1,0 +1,105 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block head %}
+    <link rel="stylesheet" href="{% static 'css/suz.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="suz-page">
+    <div class="suz-header">
+        <h1>{{ page_name }}</h1>
+        <p class="subtitle">Текущие заказы на эмиссию кодов маркировки в СУЗ</p>
+    </div>
+
+    <form class="suz-filters" method="get">
+        <input type="text" name="order_id" value="{{ current_order_id }}"
+               placeholder="Идентификатор заказа" class="suz-input">
+        <select name="status" class="suz-select">
+            <option value="">Все статусы</option>
+            {% for value, label in status_choices %}
+                <option value="{{ value }}" {% if current_status == value %}selected{% endif %}>
+                    {{ label }}
+                </option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="suz-btn">Применить</button>
+        <a href="{% url 'suz_orders' %}" class="suz-btn suz-btn-secondary">Сбросить</a>
+    </form>
+
+    {% if is_error %}
+        <div class="suz-error">
+            <strong>Не удалось получить заказы из СУЗ.</strong>
+            <div>{{ message }}</div>
+        </div>
+    {% elif orders %}
+        <div class="suz-summary">
+            Найдено заказов: <strong>{{ total_count }}</strong>
+            <span class="suz-summary-sep">·</span>
+            страница {{ page }} из {{ total_pages }}
+        </div>
+
+        <div class="suz-table-wrap">
+            <table class="suz-table">
+                <thead>
+                <tr>
+                    <th>Идентификатор заказа</th>
+                    <th>Дата создания</th>
+                    <th>Количество товаров</th>
+                    <th>Сервис-провайдер</th>
+                    <th>Количество КМ</th>
+                    <th>Статус</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for order in orders %}
+                    <tr>
+                        <td class="suz-order-id">
+                            <span class="mono">{{ order.orderId }}</span>
+                            {% if order.productGroup %}
+                                <div class="suz-sub">Группа: {{ order.productGroup }}</div>
+                            {% endif %}
+                        </td>
+                        <td class="suz-nowrap">
+                            {{ order.created_at|date:"d.m.Y H:i"|default:"—" }}
+                        </td>
+                        <td class="suz-center" title="{{ order.gtins|join:', ' }}">
+                            {{ order.product_count }}
+                        </td>
+                        <td>{{ order.serviceProviderId|default:"—" }}</td>
+                        <td class="suz-center">
+                            <strong>{{ order.total_codes }}</strong>
+                            {% if order.available_codes %}
+                                <div class="suz-sub">доступно: {{ order.available_codes }}</div>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="suz-status suz-status-{{ order.orderStatus|lower }}">
+                                {{ order.status_label }}
+                            </span>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if has_previous or has_next %}
+            <div class="suz-pagination">
+                {% if has_previous %}
+                    <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page|add:'-1' }}">‹ Назад</a>
+                {% endif %}
+                <span>Страница {{ page }} из {{ total_pages }}</span>
+                {% if has_next %}
+                    <a href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page|add:'1' }}">Вперёд ›</a>
+                {% endif %}
+            </div>
+        {% endif %}
+    {% else %}
+        <div class="suz-empty">
+            <p>Заказов не найдено.</p>
+            <p class="suz-sub">Проверьте фильтры или обновите список.</p>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

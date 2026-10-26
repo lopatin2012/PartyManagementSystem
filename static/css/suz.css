@@ -1,0 +1,261 @@
+/* static/css/suz.css — страница заказов кодов в СУЗ. */
+
+.suz-page {
+    max-width: 1500px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.suz-header h1 {
+    font-size: 1.8rem;
+    font-weight: 600;
+}
+
+.suz-header .subtitle {
+    margin-top: 0.25rem;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.9rem;
+}
+
+/* Фильтры */
+.suz-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 1.5rem 0 1.2rem;
+}
+
+.suz-input,
+.suz-select {
+    padding: 0.55rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--input-border);
+    background: var(--input-bg);
+    color: var(--text-main);
+    font-size: 0.9rem;
+}
+
+.suz-input {
+    min-width: 320px;
+}
+
+.suz-select {
+    background: var(--bg-light);
+}
+
+.suz-select option {
+    background: #ffffff;
+    color: #111111;
+}
+
+.suz-input::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+}
+
+.suz-btn {
+    display: inline-block;
+    padding: 0.55rem 1.1rem;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent-green);
+    color: #111111;
+    font-weight: 600;
+    font-size: 0.9rem;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.suz-btn:hover {
+    background: #d4e84b;
+}
+
+.suz-btn-secondary {
+    background: transparent;
+    color: var(--text-main);
+    border: 1px solid var(--input-border);
+}
+
+.suz-btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* Сводка */
+.suz-summary {
+    margin-bottom: 0.75rem;
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 0.9rem;
+}
+
+.suz-summary-sep {
+    margin: 0 0.35rem;
+    opacity: 0.4;
+}
+
+/* Таблица */
+.suz-table-wrap {
+    overflow-x: auto;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--input-border);
+    border-radius: 12px;
+}
+
+.suz-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.suz-table thead {
+    background: rgba(0, 0, 0, 0.25);
+}
+
+.suz-table th {
+    padding: 0.9rem 1rem;
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: rgba(255, 255, 255, 0.6);
+    white-space: nowrap;
+    border-bottom: 1px solid var(--input-border);
+}
+
+.suz-table td {
+    padding: 0.8rem 1rem;
+    vertical-align: middle;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.suz-table tbody tr:hover {
+    background: rgba(187, 207, 50, 0.05);
+}
+
+.suz-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.suz-order-id .mono {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.82rem;
+    color: #ffffff;
+    word-break: break-all;
+}
+
+.suz-sub {
+    margin-top: 0.15rem;
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 0.75rem;
+}
+
+.suz-nowrap {
+    white-space: nowrap;
+}
+
+.suz-center {
+    text-align: center;
+}
+
+/* Статусы заказа */
+.suz-status {
+    display: inline-block;
+    padding: 0.25rem 0.6rem;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.suz-status-created {
+    background: rgba(100, 149, 237, 0.2);
+    color: #8fb3ff;
+}
+
+.suz-status-pending {
+    background: rgba(250, 187, 28, 0.2);
+    color: var(--accent-yellow);
+}
+
+.suz-status-declined {
+    background: rgba(224, 86, 86, 0.2);
+    color: #ff8a8a;
+}
+
+.suz-status-approved {
+    background: rgba(100, 149, 237, 0.2);
+    color: #8fb3ff;
+}
+
+.suz-status-ready {
+    background: rgba(187, 207, 50, 0.18);
+    color: var(--accent-green);
+}
+
+.suz-status-closed {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.6);
+}
+
+/* Ошибка / пусто */
+.suz-error {
+    padding: 1rem 1.2rem;
+    border-radius: 12px;
+    background: rgba(224, 86, 86, 0.12);
+    border: 1px solid rgba(224, 86, 86, 0.4);
+    color: #ffb3b3;
+}
+
+.suz-error strong {
+    display: block;
+    margin-bottom: 0.35rem;
+    color: #ff8a8a;
+}
+
+.suz-empty {
+    padding: 2.5rem;
+    text-align: center;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px dashed var(--input-border);
+    color: rgba(255, 255, 255, 0.7);
+}
+
+/* Пагинация */
+.suz-pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.suz-pagination a {
+    color: var(--accent-green);
+    text-decoration: none;
+    padding: 0.45rem 0.9rem;
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+}
+
+.suz-pagination a:hover {
+    background: var(--accent-green);
+    color: #111111;
+}
+
+.suz-pagination span {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+@media (max-width: 768px) {
+    .suz-page {
+        padding: 1rem;
+    }
+
+    .suz-input {
+        min-width: 0;
+        width: 100%;
+    }
+}

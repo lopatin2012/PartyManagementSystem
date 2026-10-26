@@ -109,3 +109,34 @@ class DiagnoseServiceTests(TestCase):
         for key, check in diagnosis['checks'].items():
             self.assertTrue(check.get('name'), key)
             self.assertTrue(check.get('message'), key)
+
+
+class AsgiCancelledErrorLoggingTests(SimpleTestCase):
+    """Отмена запроса при остановке сервера — INFO, а не traceback."""
+
+    def test_cancelled_error_logged_as_info(self):
+        import asyncio
+        from unittest.mock import Mock
+
+        from config.asgi import _handle_loop_exception
+
+        loop = Mock()
+        with self.assertLogs('uvicorn.error', level='INFO') as logs:
+            _handle_loop_exception(loop, {
+                'message': 'CancelledError exception in shielded future',
+                'exception': asyncio.CancelledError(),
+            })
+
+        loop.default_exception_handler.assert_not_called()
+        self.assertIn('Остановка сервера', logs.output[0])
+
+    def test_other_errors_go_to_default_handler(self):
+        from unittest.mock import Mock
+
+        from config.asgi import _handle_loop_exception
+
+        loop = Mock()
+        context = {'message': 'boom', 'exception': RuntimeError('boom')}
+        _handle_loop_exception(loop, context)
+
+        loop.default_exception_handler.assert_called_once_with(context)
