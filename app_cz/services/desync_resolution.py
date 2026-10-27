@@ -238,6 +238,7 @@ def resolve_desync_uips(fetch_external: bool = True, max_uips: int = MAX_UIPS_PE
         'is_error': False,
         'checked': 0,
         'registered': 0,
+        'reserved': 0,
         'desync_cleared': 0,
         'remaining': 0,
         'message': '',
@@ -260,25 +261,54 @@ def resolve_desync_uips(fetch_external: bool = True, max_uips: int = MAX_UIPS_PE
     codes_by_uip = _collect_codes(uips, fetch_external)
     applied = _applied_codes(codes_by_uip, uip_by_id)
 
+    # Для УИП без кодов статус определяем по списку резерва ЧЗ (как кнопка
+    # «Проверить в ЧЗ»): номер в резерве → зарезервирован, номера нет →
+    # регистрация уже состоялась. Список запрашиваем только при необходимости.
+    needs_reserve_fallback = any(
+        not codes_by_uip.get(uip.id) for uip in uips
+    )
+    reserved_numbers = None
+    if needs_reserve_fallback:
+        from app_cz.services.party_service import get_reserved_party_numbers
+
+        reserved_numbers = get_reserved_party_numbers()
+
     for uip in uips:
         summary['checked'] += 1
 
         codes = codes_by_uip.get(uip.id)
-        if not codes or not any(code in applied for code in codes):
-            # Отчёт не сформирован (или кода нет) — оставляем рассинхрон.
-            summary['remaining'] += 1
-            continue
-
-        # Код нанесён в ЧЗ → отчёт о нанесении сформирован.
         try:
-            status_changed, desync_cleared = _register_by_code(
-                uip, source='sync', note=REGISTERED_NOTE,
-            )
+            if codes and any(code in applied for code in codes):
+                # Код нанесён в ЧЗ → отчёт о нанесении сформирован.
+                status_changed, desync_cleared = _register_by_code(
+                    uip, source='sync', note=REGISTERED_NOTE,
+                )
+                summary['registered'] += int(status_changed)
+            elif codes:
+                # Коды есть, но ни один не нанесён — оставляем на ручной разбор.
+                summary['remaining'] += 1
+                continue
+            elif reserved_numbers is None:
+                # Нет кодов и список резерва ЧЗ недоступен — оставляем.
+                summary['remaining'] += 1
+                continue
+            elif uip.number in reserved_numbers:
+                # Номер числится в резерве ЧЗ.
+                status_changed, desync_cleared = set_desync_uip_reserved(
+                    uip, source='sync', note=RESERVED_NOTE,
+                )
+                summary['reserved'] += int(status_changed)
+            else:
+                # Номера нет в резерве ЧЗ — регистрация уже состоялась.
+                status_changed, desync_cleared = register_desync_uip(
+                    uip, source='sync', note=REGISTERED_NOTE,
+                )
+                summary['registered'] += int(status_changed)
+
             if not status_changed and not desync_cleared:
                 # Неожиданный статус — не трогаем, оставляем администратору.
                 summary['remaining'] += 1
                 continue
-            summary['registered'] += int(status_changed)
             summary['desync_cleared'] += int(desync_cleared)
         except Exception:
             logger.exception(
@@ -290,6 +320,7 @@ def resolve_desync_uips(fetch_external: bool = True, max_uips: int = MAX_UIPS_PE
     summary['message'] = (
         f'Разбор рассинхрона: проверено {summary["checked"]}, '
         f'зарегистрировано {summary["registered"]}, '
+        f'переведено в резерв {summary["reserved"]}, '
         f'снят флаг у {summary["desync_cleared"]}, '
         f'осталось {summary["remaining"]}'
     )

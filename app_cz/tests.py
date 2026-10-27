@@ -407,6 +407,35 @@ class SyncPartiesReserveReconciliationTests(TestCase):
             all(UIP.objects.values_list('is_desync', flat=True))
         )
 
+    def test_draft_and_deleted_in_cz_not_marked_desync(self):
+        draft = self._uip(self.number_in_cz, status=PartyStatusChoices.DRAFT)
+        deleted = self._uip(self.number_not_in_cz, status=PartyStatusChoices.DELETED)
+
+        self._sync([{
+            'partyNumber': self.number_in_cz,
+            'gtin': '04601751026019',
+        }])
+
+        draft.refresh_from_db()
+        deleted.refresh_from_db()
+        self.assertFalse(draft.is_desync)
+        self.assertFalse(deleted.is_desync)
+
+    def test_stale_desync_on_draft_and_deleted_cleared(self):
+        draft = self._uip(
+            self.number_in_cz, status=PartyStatusChoices.DRAFT, is_desync=True,
+        )
+        deleted = self._uip(
+            self.number_not_in_cz, status=PartyStatusChoices.DELETED, is_desync=True,
+        )
+
+        self._sync([])
+
+        draft.refresh_from_db()
+        deleted.refresh_from_db()
+        self.assertFalse(draft.is_desync)
+        self.assertFalse(deleted.is_desync)
+
 
 class MapCzStatusTests(SimpleTestCase):
     """Справочник «Статусы КИ» ЧЗ → внутренние статусы (code_status.map_cz_status)."""
@@ -529,10 +558,13 @@ class ResolveDesyncUipsTests(TestCase):
         )
         return party
 
-    def _resolve(self, statuses=None):
+    def _resolve(self, statuses=None, reserved=()):
         with patch(
             'app_cz.services.code_status.get_cises_statuses',
             return_value=statuses or {},
+        ), patch(
+            'app_cz.services.party_service.get_reserved_party_numbers',
+            return_value=None if reserved is None else set(reserved),
         ):
             return desync_resolution.resolve_desync_uips()
 
@@ -602,14 +634,34 @@ class ResolveDesyncUipsTests(TestCase):
         self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
         self.assertTrue(uip.is_desync)
 
-    def test_no_codes_keeps_desync(self):
+    def test_no_codes_and_list_unavailable_keeps_desync(self):
         uip = self._uip('04601751026019260101500320000000')
 
-        result = self._resolve()
+        result = self._resolve(reserved=None)
 
         self.assertEqual(result['remaining'], 1)
         uip.refresh_from_db()
         self.assertTrue(uip.is_desync)
+
+    def test_no_codes_in_reserve_clears_desync(self):
+        uip = self._uip('04601751026019260101500320000000')
+
+        result = self._resolve(reserved={uip.number})
+
+        self.assertEqual(result['desync_cleared'], 1)
+        uip.refresh_from_db()
+        self.assertFalse(uip.is_desync)
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+
+    def test_no_codes_absent_from_reserve_registers(self):
+        uip = self._uip('04601751026019260101500320000000')
+
+        result = self._resolve(reserved=())
+
+        self.assertEqual(result['registered'], 1)
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.REGISTERED)
+        self.assertFalse(uip.is_desync)
 
     def test_external_code_fetched_when_no_local_codes(self):
         uip = self._uip('04601751026019260101500320000000')
@@ -643,7 +695,10 @@ class ResolveDesyncUipsTests(TestCase):
             desync_resolution, 'MAX_EXTERNAL_FETCHES', 1,
         ), patch.object(
             desync_resolution, '_fetch_external_code', return_value=None,
-        ) as fetch:
+        ) as fetch, patch(
+            'app_cz.services.party_service.get_reserved_party_numbers',
+            return_value=None,
+        ):
             result = desync_resolution.resolve_desync_uips()
 
         self.assertEqual(fetch.call_count, 1)
