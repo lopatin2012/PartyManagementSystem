@@ -1662,6 +1662,129 @@ class ReservePartiesTokenFailureTests(TestCase):
 
 
 
+class CzErrorMessagesTests(TestCase):
+    """Ошибки ЧЗ/TrueAPI должны быть информативными (HTTP + тело/поля)."""
+
+    PARTY = '04601751028990261011134240000000'
+
+    def _resp(self, status_code, body=None, raw=None):
+        resp = Mock()
+        resp.status_code = status_code
+        if body is None:
+            resp.json.side_effect = ValueError
+        else:
+            resp.json.return_value = body
+        resp.text = (
+            raw if raw is not None
+            else json.dumps(body or {}, ensure_ascii=False)
+        )
+        return resp
+
+    def test_reserve_error_includes_http_status_and_fields(self):
+        resp = self._resp(400, {
+            'error_message': 'Ошибка при выполнении запроса',
+            'code': 400,
+        })
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={'token': 't'},
+        ), patch(
+            'app_cz.services.party_service.external_http.post',
+            return_value=resp,
+        ):
+            result = party_service.reserve_parties_honest_sign(
+                product_group='milk', party_numbers=[self.PARTY],
+            )
+
+        self.assertTrue(result['is_error'])
+        self.assertEqual(result['http_status'], 400)
+        self.assertIn('HTTP 400', result['message_error'])
+        self.assertIn('Ошибка при выполнении запроса', result['message_error'])
+        self.assertIn('код 400', result['message_error'])
+
+    def test_reserve_error_uses_raw_body_when_no_fields(self):
+        resp = self._resp(502, None, raw='Bad gateway from proxy')
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={'token': 't'},
+        ), patch(
+            'app_cz.services.party_service.external_http.post',
+            return_value=resp,
+        ):
+            result = party_service.reserve_parties_honest_sign(
+                product_group='milk', party_numbers=[self.PARTY],
+            )
+
+        self.assertIn('HTTP 502', result['message_error'])
+        self.assertIn('Bad gateway from proxy', result['message_error'])
+
+    def test_token_failure_is_marked_and_has_hint(self):
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={
+                'token': None,
+                'message': 'HTTP 400: Ошибка при выполнении запроса',
+            },
+        ):
+            result = party_service.reserve_parties_honest_sign(
+                product_group='milk', party_numbers=[self.PARTY],
+            )
+
+        self.assertEqual(result['error_kind'], 'token')
+        self.assertIn('HTTP 400', result['message_error'])
+        self.assertIn('Проверьте активную учётную запись', result['message_error'])
+
+    def test_generate_uip_reports_token_failure_separately(self):
+        sku = _create_sku()
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={
+                'token': None,
+                'message': 'HTTP 400: Ошибка при выполнении запроса',
+            },
+        ):
+            result = party_service.generate_uip(
+                sku, date(2026, 1, 1), 'local', skip_cz=False,
+            )
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('Не удалось получить токен СУЗ', result['message'])
+        self.assertNotIn('ЧЗ отклонил резервирование', result['message'])
+        self.assertIn('Проверьте активную учётную запись', result['message'])
+
+
+class TrueApiErrorExtractionTests(SimpleTestCase):
+    """_extract_true_api_error: поля description/code и фрагмент тела."""
+
+    def test_description_and_code(self):
+        from app_cz.services.suz_client import _extract_true_api_error
+
+        response = Mock(
+            status_code=400,
+            text='{"description": "Некорректный запрос", "code": 400}',
+        )
+        response.json.return_value = {
+            'description': 'Некорректный запрос', 'code': 400,
+        }
+
+        message = _extract_true_api_error(response)
+
+        self.assertIn('HTTP 400', message)
+        self.assertIn('Некорректный запрос', message)
+        self.assertIn('код 400', message)
+
+    def test_raw_body_fallback(self):
+        from app_cz.services.suz_client import _extract_true_api_error
+
+        response = Mock(status_code=502, text='Bad gateway')
+        response.json.side_effect = ValueError
+
+        message = _extract_true_api_error(response)
+
+        self.assertIn('HTTP 502', message)
+        self.assertIn('Bad gateway', message)
+
+
 class ReservePartiesDuplicatesTests(TestCase):
     """ЧЗ отклоняет весь батч при дубликатах — повторяем с остатком."""
 

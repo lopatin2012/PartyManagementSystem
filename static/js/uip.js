@@ -167,29 +167,6 @@ function buildProductDetailsHtml(product) {
     `;
 }
 
-/** Карточка выбранного продукта под списком. */
-function renderSelectedProduct() {
-    const box = document.getElementById('selectedProductInfo');
-    if (!box) return;
-
-    const product = getSelectedProduct();
-    if (!product) {
-        box.innerHTML = '';
-        box.classList.add('hidden');
-        return;
-    }
-
-    const type = product.type_label
-        || TYPE_FORMATION_LABELS[product.type_formation_uip]
-        || ('Тип ' + product.type_formation_uip);
-
-    box.innerHTML =
-        `<div class="sp-header"><span>Выбранный продукт</span>` +
-        `<span class="sp-type">${escapeHtml(type)}</span></div>` +
-        buildProductDetailsHtml(product);
-    box.classList.remove('hidden');
-}
-
 // ==========================================
 // Подсказка при наведении на продукт
 // ==========================================
@@ -329,7 +306,6 @@ function renderProductList() {
     if (!filteredProducts.length) {
         list.innerHTML = '<div class="empty-products">Ничего не найдено</div>';
         hideProductTooltip();
-        renderSelectedProduct();
         return;
     }
 
@@ -369,7 +345,6 @@ function renderProductList() {
         updateFormationType();
         updatePartyVisibility();
     }
-    renderSelectedProduct();
 }
 
 /** Счётчик найденного. */
@@ -407,7 +382,6 @@ function onProductSelect(radio) {
     updateFormationType();
     updatePartyVisibility();
     updateGenerateButtonState();
-    renderSelectedProduct();
 }
 
 /** ISO-неделя и день недели (как date.isocalendar() в Python). */

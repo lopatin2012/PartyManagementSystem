@@ -499,8 +499,8 @@
 
 /* === МОДАЛЬНОЕ ОКНО ГЕНЕРАЦИИ === */
 .generate-modal {
-    max-width: 900px;
-    width: 100%;
+    max-width: 1120px;
+    width: calc(100% - 1rem);
     padding: 1em;
     max-height: 92vh;
     overflow-y: auto;
@@ -657,15 +657,7 @@
     padding: 0 1px;
 }
 
-/* === КАРТОЧКА ВЫБРАННОГО ПРОДУКТА === */
-.selected-product {
-    margin-top: 0.6rem;
-    padding: 0.7rem 0.8rem;
-    border: 1px solid rgba(187, 207, 50, 0.35);
-    border-radius: 10px;
-    background: rgba(187, 207, 50, 0.06);
-}
-
+/* === КАРТОЧКА ПРОДУКТА (подсказка) === */
 .sp-header {
     display: flex;
     justify-content: space-between;
@@ -751,7 +743,7 @@
 .product-tooltip {
     position: fixed;
     z-index: 2000;
-    width: min(440px, calc(100vw - 24px));
+    width: min(520px, calc(100vw - 24px));
     padding: 0.8rem 0.9rem;
     border-radius: 12px;
     background: #262763;

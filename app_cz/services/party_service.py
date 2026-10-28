@@ -342,13 +342,11 @@ def generate_party_numbers(
     result_true_api_session_token = get_true_api_session_token()
     token = result_true_api_session_token.get('token')
     if not token:
-        return {
-            'is_error': True,
-            'message_error': (
-                result_true_api_session_token.get('message')
-                or 'Не удалось получить токен сессии TrueAPI. Проверьте настройки СУЗ.'
-            ),
-        }
+        logger.error(
+            'Не удалось получить токен СУЗ: %s',
+            result_true_api_session_token.get('message'),
+        )
+        return _token_error_result(result_true_api_session_token)
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -378,14 +376,20 @@ def generate_party_numbers(
 
         # Проверка ответа.
         if response.status_code != 200:
-            logger.error(f"Ошибка генерации партий {response.status_code}: {response.text}")
-            error_msg = (
-                    response.json().get('errorMessage')
-                    or response.json().get('error_message', 'Неизвестная ошибка ЧЗ')
+            logger.error(
+                f"Ошибка генерации партий {response.status_code}: "
+                f"{response.text[:500]}"
             )
+            try:
+                body = response.json()
+            except ValueError:
+                body = {}
             return {
                 'is_error': True,
-                'message_error': error_msg
+                'message_error': _extract_cz_error(
+                    body, response.status_code, response.text,
+                ),
+                'http_status': response.status_code,
             }
 
         response_data = response.json()
@@ -426,6 +430,75 @@ def _extract_already_reserved(body: dict) -> list[str]:
     if isinstance(numbers, str):
         return [numbers]
     return [n for n in numbers if isinstance(n, str)]
+
+
+def _stringify_cz_error(value) -> str:
+    """Строка из поля ошибки ЧЗ (строка/список/словарь)."""
+    if isinstance(value, (list, tuple)):
+        parts = [
+            _stringify_cz_error(item) for item in value if item
+        ]
+        return '; '.join(part for part in parts if part)
+    if isinstance(value, dict):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
+
+
+def _extract_cz_error(body, status_code: int, raw_text: str = '') -> str:
+    """
+    Человекочитаемая ошибка из ответа ЧЗ.
+
+    TrueAPI на 400/500 часто отдаёт generic «Ошибка при выполнении запроса»;
+    показываем HTTP-статус, все известные поля (errorMessage/error_message/
+    message/description/errors/code) и, если полей нет, фрагмент тела ответа.
+    """
+    detail = ''
+    if isinstance(body, dict):
+        for key in (
+            'errorMessage', 'error_message', 'message',
+            'error_description', 'description', 'error', 'errors',
+            'errorResult',
+        ):
+            value = body.get(key)
+            if value:
+                detail = _stringify_cz_error(value)
+                break
+        code = body.get('error_code') or body.get('code')
+        if code:
+            detail = (
+                f'{detail} (код {code})' if detail else f'код {code}'
+            )
+    if not detail and raw_text:
+        detail = raw_text.strip()[:300]
+    return f'HTTP {status_code}: {detail}' if detail else f'HTTP {status_code}'
+
+
+def _token_error_result(token_result: dict) -> dict:
+    """Ошибка получения токена СУЗ с подсказкой, что проверить."""
+    reason = str(token_result.get('message') or '').strip() or (
+        'не удалось получить токен сессии TrueAPI'
+    )
+    hint = (
+        'Проверьте активную учётную запись СУЗ, ИНН и идентификатор '
+        'соединения.'
+    )
+    message = f'{reason} {hint}' if reason.endswith('.') else f'{reason}. {hint}'
+    return {
+        'is_error': True,
+        'error_kind': 'token',
+        'message_error': message,
+    }
+
+
+def _reservation_error_message(reserve_result: dict, action: str) -> str:
+    """Понятное сообщение об ошибке резервирования (токен vs отказ ЧЗ)."""
+    detail = reserve_result.get('message_error') or 'неизвестная ошибка'
+    if reserve_result.get('error_kind') == 'token':
+        return f'Не удалось получить токен СУЗ: {detail}'
+    return f'{action}: {detail}'
 
 
 def reserve_parties_honest_sign(
@@ -472,13 +545,11 @@ def reserve_parties_honest_sign(
     result_true_api_session_token = get_true_api_session_token()
     token = result_true_api_session_token.get('token')
     if not token:
-        return {
-            'is_error': True,
-            'message_error': (
-                result_true_api_session_token.get('message')
-                or 'Не удалось получить токен сессии TrueAPI. Проверьте настройки СУЗ.'
-            ),
-        }
+        logger.error(
+            'Не удалось получить токен СУЗ: %s',
+            result_true_api_session_token.get('message'),
+        )
+        return _token_error_result(result_true_api_session_token)
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -546,14 +617,16 @@ def reserve_parties_honest_sign(
             to_reserve = [n for n in to_reserve if n not in duplicates]
             continue
 
-        logger.error(f"Ошибка резервирования {response.status_code}: {response.text}")
-        error_msg = (
-            body.get('errorMessage')
-            or body.get('error_message', 'Неизвестная ошибка ЧЗ')
+        logger.error(
+            f"Ошибка резервирования {response.status_code}: "
+            f"{response.text[:500]}"
         )
         return {
             'is_error': True,
-            'message_error': error_msg
+            'message_error': _extract_cz_error(
+                body, response.status_code, response.text,
+            ),
+            'http_status': response.status_code,
         }
 
     # Все номера оказались уже зарезервированы в ЧЗ.
@@ -595,13 +668,7 @@ def reserve_party_numbers_cz(
     token_result = get_true_api_session_token()
     token = token_result.get('token')
     if not token:
-        return {
-            'is_error': True,
-            'message_error': (
-                token_result.get('message')
-                or 'Не удалось получить токен сессии TrueAPI. Проверьте настройки СУЗ.'
-            ),
-        }
+        return _token_error_result(token_result)
 
     headers = {
         'Authorization': f'Bearer {token}',
@@ -628,12 +695,13 @@ def reserve_party_numbers_cz(
                 body = response.json()
             except ValueError:
                 body = {}
-            error_msg = (
-                body.get('errorMessage')
-                or body.get('error_message')
-                or f'ЧЗ вернул {response.status_code}'
-            )
-            return {'is_error': True, 'message_error': error_msg}
+            return {
+                'is_error': True,
+                'message_error': _extract_cz_error(
+                    body, response.status_code, response.text,
+                ),
+                'http_status': response.status_code,
+            }
 
         return {
             'is_error': False,
@@ -656,13 +724,11 @@ def get_all_reserved_parties() -> dict:
     result_true_api_session_token = get_true_api_session_token()
     token = result_true_api_session_token.get('token')
     if not token:
-        return {
-            'is_error': True,
-            'message_error': (
-                result_true_api_session_token.get('message')
-                or 'Не удалось получить токен сессии TrueAPI. Проверьте настройки СУЗ.'
-            ),
-        }
+        logger.error(
+            'Не удалось получить токен СУЗ: %s',
+            result_true_api_session_token.get('message'),
+        )
+        return _token_error_result(result_true_api_session_token)
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -680,14 +746,20 @@ def get_all_reserved_parties() -> dict:
         )
 
         if response.status_code != 200:
-            logger.error(f"Ошибка получения списка {response.status_code}: {response.text}")
-            error_msg = (
-                    response.json().get('errorMessage')
-                    or response.json().get('error_message', 'Неизвестная ошибка ЧЗ')
+            logger.error(
+                f"Ошибка получения списка {response.status_code}: "
+                f"{response.text[:500]}"
             )
+            try:
+                body = response.json()
+            except ValueError:
+                body = {}
             return {
                 'is_error': True,
-                'message_error': error_msg
+                'message_error': _extract_cz_error(
+                    body, response.status_code, response.text,
+                ),
+                'http_status': response.status_code,
             }
 
         response_data = response.json()
@@ -1364,10 +1436,10 @@ def _re_reserve_burned_uip(
     if reserve_result.get('is_error'):
         return {
             'is_error': True,
-            'message': (
+            'message': _reservation_error_message(
+                reserve_result,
                 f'Не удалось повторно зарезервировать сгоревший УИП '
-                f'{uip.number}: '
-                f'{reserve_result.get("message_error", "неизвестная ошибка")}'
+                f'{uip.number}',
             ),
         }
 
@@ -1506,10 +1578,10 @@ def _generate_local_uip(
         if reserve_result.get('is_error'):
             return {
                 'is_error': True,
-                'message': (
-                    f'ЧЗ отклонил резервирование номера: '
-                    f'{reserve_result.get("message_error", "неизвестная ошибка")}'
-                )
+                'message': _reservation_error_message(
+                    reserve_result,
+                    'ЧЗ отклонил резервирование номера',
+                ),
             }
 
     # 3. Сохраняем УИП локально.
@@ -1723,9 +1795,9 @@ def reserve_manual_uip(
     if reserve_result.get('is_error'):
         return {
             'is_error': True,
-            'message': (
-                f'ЧЗ отклонил резервирование номера: '
-                f'{reserve_result.get("message_error", "неизвестная ошибка")}'
+            'message': _reservation_error_message(
+                reserve_result,
+                'ЧЗ отклонил резервирование номера',
             ),
         }
 

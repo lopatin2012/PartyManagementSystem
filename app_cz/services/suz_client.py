@@ -1,5 +1,6 @@
 # app_cz/services/suz_client.py
 
+import json
 import logging
 from datetime import timedelta
 import uuid
@@ -34,8 +35,12 @@ def get_true_api_auth_key() -> dict:
         raise Exception("Сервис Честного Знака не отвечает. Попробуйте позже.")
 
     except requests.exceptions.HTTPError as e:
-        logger.error(f"HTTP ошибка при запросе auth_key: {e.response.status_code} - {e.response.text}")
-        raise Exception(f"Ошибка сервера Честного Знака: {e.response.status_code}")
+        detail = (
+            _extract_true_api_error(e.response)
+            if e.response is not None else str(e)
+        )
+        logger.error(f"HTTP ошибка при запросе auth_key: {detail}")
+        raise Exception(f"Не удалось получить ключ авторизации ЧЗ: {detail}")
 
     except requests.exceptions.RequestException as e:
         logger.error(f"Сетевая ошибка при запросе auth_key: {e}")
@@ -145,23 +150,52 @@ def get_true_api_session_token() -> dict:
     return {'uuid': row_uuid, 'token': token, 'message': 'Токен успешно получен.'}
 
 
+def _stringify_error_value(value) -> str:
+    """Строка из поля ошибки TrueAPI (строка/список/словарь)."""
+    if isinstance(value, (list, tuple)):
+        parts = [_stringify_error_value(item) for item in value if item]
+        return '; '.join(part for part in parts if part)
+    if isinstance(value, dict):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
+
+
 def _extract_true_api_error(response) -> str:
     """Человекочитаемое сообщение об ошибке из ответа TrueAPI."""
     text = (response.text or '').strip()
+    data = None
     if text:
         try:
             data = response.json()
         except ValueError:
             data = None
-        if isinstance(data, dict):
-            for key in ('error_message', 'errorMessage', 'message', 'error', 'description'):
-                value = data.get(key)
-                if value:
-                    text = str(value)
-                    break
-    if len(text) > 300:
-        text = text[:300]
-    return f'HTTP {response.status_code}: {text}' if text else f'HTTP {response.status_code}'
+
+    detail = ''
+    if isinstance(data, dict):
+        for key in (
+            'error_message', 'errorMessage', 'message',
+            'error_description', 'description', 'error', 'errors',
+            'errorResult',
+        ):
+            value = data.get(key)
+            if value:
+                detail = _stringify_error_value(value)
+                break
+        code = data.get('error_code') or data.get('code')
+        if code:
+            detail = (
+                f'{detail} (код {code})' if detail else f'код {code}'
+            )
+
+    if not detail:
+        detail = text[:300]
+    if len(detail) > 300:
+        detail = detail[:300]
+
+    return f'HTTP {response.status_code}: {detail}' if detail else f'HTTP {response.status_code}'
 
 
 def get_true_api_dynamic_token(row_uuid: str, signed_data: str) -> str:
