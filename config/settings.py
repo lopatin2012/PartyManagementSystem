@@ -358,6 +358,16 @@ HEALTH_CONFIRM_ATTEMPTS = int(os.getenv('HEALTH_CONFIRM_ATTEMPTS', '3'))
 # Сколько дней хранить историю HealthCheck.
 HEALTH_RETENTION_DAYS = int(os.getenv('HEALTH_RETENTION_DAYS', '28'))
 
+# Метрики HTTP-запросов (app_helper/metrics.py).
+# Как часто сбрасывать минутный аккумулятор в БД (секунды).
+REQUEST_METRICS_FLUSH_SECONDS = int(os.getenv('REQUEST_METRICS_FLUSH_SECONDS', '30'))
+# Сколько дней хранить минутные метрики запросов.
+REQUEST_METRICS_RETENTION_DAYS = int(os.getenv('REQUEST_METRICS_RETENTION_DAYS', '14'))
+# Порог p95 времени ответа для алерта «высокая нагрузка», мс.
+LOAD_P95_THRESHOLD_MS = int(os.getenv('LOAD_P95_THRESHOLD_MS', '1500'))
+# Порог доли ошибок 5xx для алерта «высокая нагрузка» (0.05 = 5%).
+LOAD_ERROR_RATE_THRESHOLD = float(os.getenv('LOAD_ERROR_RATE_THRESHOLD', '0.05'))
+
 # ==========================================
 # Лимиты запросов.
 # ==========================================

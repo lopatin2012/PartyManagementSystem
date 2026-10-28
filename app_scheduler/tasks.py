@@ -290,6 +290,14 @@ def cleanup_old_task_results_task() -> dict:
     return {'deleted': deleted_count}
 
 
+@task(queue_name='default')
+def prune_request_metrics_task() -> dict:
+    """Очистка метрик HTTP-запросов старше REQUEST_METRICS_RETENTION_DAYS."""
+    from app_helper.metrics import prune_old_metrics
+
+    return prune_old_metrics()
+
+
 # ==========================================
 # Синхронизация с внешним сервисом (Молвест.Маркировка).
 # ==========================================

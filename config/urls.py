@@ -20,6 +20,7 @@ urlpatterns = [
     path('uip/', include('app_uip.urls')), # Взаимодействие с УИП.
     path('helper/', include('app_helper.urls')), # Помощник сервиса.
     path('scheduler/', include('app_scheduler.urls')), # Периодические задачи.
+    path('monitoring/', include('app_event.urls')), # Наблюдаемость (метрики).
 
     # Документация API.
     # Ссылка на схему (JSON/YAML файл).

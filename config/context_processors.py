@@ -5,7 +5,7 @@ from django.utils import timezone
 from django.conf import settings
 
 from app_helper.user_helper import get_user_name
-from app_helper.load_tracker import get_requests_per_hour
+from app_helper.metrics import get_client_totals
 from app_helper.service_helper import check_factories
 from app_cz.models import SUZAccount
 from config.settings import SERVICE_MODE_TEXT, SERVICE_MODE_COLOR, SERVICE_VERSION, DEBUG
@@ -41,12 +41,14 @@ def global_footer_info(request):
     :param request:
     :return:
     """
-    # Реальное количество запросов за последний час (считает middleware).
-    requests_count = get_requests_per_hour()
+    # Запросы за последние 60 минут (без служебных опросов UI/мониторинга).
+    totals = get_client_totals()
 
     return {
         'service_version': getattr(settings, 'SERVICE_VERSION', SERVICE_VERSION),
-        'requests_count': requests_count,
+        'requests_count': totals['requests'],
+        'requests_peak': totals['peak'],
+        'requests_monitoring': totals['monitoring'],
         'service_mode_name': getattr(settings, 'SERVICE_MODE_TEXT', SERVICE_MODE_TEXT),
         'service_mode_color': getattr(settings, 'SERVICE_MODE_COLOR', SERVICE_MODE_COLOR),
     }

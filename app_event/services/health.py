@@ -270,7 +270,7 @@ def _diagnose() -> dict:
         check_factories, check_signatures, check_suz_token,
     )
     from django.db import connection
-    from app_helper.load_tracker import get_load_stats
+    from app_helper.metrics import get_load_stats
 
     checks = {}
 
@@ -366,9 +366,12 @@ def _diagnose() -> dict:
     }
 
     load = get_load_stats()
+    # Проверка идёт в воркере, где счётчиков web-процесса нет: не выдаём
+    # ложное «в норме: 0 запросов» — помечаем как «нет данных».
+    has_load_data = load.get('has_data', True)
     checks['load'] = {
         'name': 'Нагрузка',
-        'ok': not load['is_high_load'],
+        'ok': (not load['is_high_load']) if has_load_data else True,
         'message': load['message'],
         'details': load,
     }

@@ -1,37 +1,434 @@
+from datetime import timedelta
 from unittest.mock import patch
 
-from django.test import SimpleTestCase, TestCase
+from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
+from django.utils import timezone
 
-from app_helper import load_tracker, service_helper
+from app_event.models import RequestMetric
+from app_helper import load_tracker, metrics, middleware, service_helper
 
 
 class LoadStatsMessageTests(SimpleTestCase):
-    """Сводка нагрузки содержит числа и порог (для панели статусов)."""
+    """Сводка нагрузки для health/status API: пороги и сообщение."""
 
-    def test_high_load_message_has_numbers_and_threshold(self):
-        high = load_tracker.HIGH_LOAD_THRESHOLD + 5_000
-        with patch.object(
-            load_tracker, 'get_requests_per_hour', return_value=high,
-        ), patch.object(
-            load_tracker, 'get_requests_per_minute', return_value=250,
-        ):
-            stats = load_tracker.get_load_stats()
+    @staticmethod
+    def _stats(**overrides):
+        stats = {
+            'minutes': 60,
+            'start': None,
+            'end': None,
+            'total': 0,
+            'user': 0,
+            'bot': 0,
+            'monitoring': 0,
+            'errors': 0,
+            'error_rate': 0.0,
+            'p95_ms': 0,
+            'avg_ms': 0,
+            'max_ms': 0,
+            'avg_db_ms': 0,
+            'avg_db_queries': 0,
+            'slow_count': 0,
+            'peak_per_minute': 0,
+            'requests_per_minute': 0,
+            'has_data': True,
+            'source': 'db',
+        }
+        stats.update(overrides)
+        return stats
 
-        self.assertTrue(stats['is_high_load'])
-        self.assertIn(str(high), stats['message'])
-        self.assertIn('250', stats['message'])
-        self.assertIn(str(load_tracker.HIGH_LOAD_THRESHOLD), stats['message'])
+    def test_high_load_by_request_count(self):
+        high = metrics.HIGH_LOAD_THRESHOLD + 5_000
+        stats = self._stats(
+            user=high, peak_per_minute=250, requests_per_minute=250,
+        )
+        with patch.object(metrics, 'get_window_stats', return_value=stats):
+            result = metrics.get_load_stats()
+
+        self.assertTrue(result['is_high_load'])
+        self.assertIn(str(high), result['message'])
+        self.assertIn(str(metrics.HIGH_LOAD_THRESHOLD), result['message'])
+
+    def test_high_load_by_p95(self):
+        stats = self._stats(user=100, p95_ms=5000)
+        with patch.object(metrics, 'get_window_stats', return_value=stats):
+            result = metrics.get_load_stats()
+
+        self.assertTrue(result['is_high_load'])
+        self.assertIn('p95', result['message'])
+
+    def test_high_load_by_error_rate(self):
+        stats = self._stats(user=100, errors=10, error_rate=0.1)
+        with patch.object(metrics, 'get_window_stats', return_value=stats):
+            result = metrics.get_load_stats()
+
+        self.assertTrue(result['is_high_load'])
+        self.assertIn('ошибок', result['message'])
+
+    def test_single_error_does_not_trigger_error_rate(self):
+        # 1 ошибка из 10 запросов — ниже минимума для оценки доли ошибок.
+        stats = self._stats(user=10, errors=1, error_rate=0.1)
+        with patch.object(metrics, 'get_window_stats', return_value=stats):
+            result = metrics.get_load_stats()
+
+        self.assertFalse(result['is_high_load'])
 
     def test_normal_load_message_has_numbers(self):
-        with patch.object(
-            load_tracker, 'get_requests_per_hour', return_value=100,
-        ), patch.object(
-            load_tracker, 'get_requests_per_minute', return_value=2,
-        ):
-            stats = load_tracker.get_load_stats()
+        stats = self._stats(user=100, p95_ms=50)
+        with patch.object(metrics, 'get_window_stats', return_value=stats):
+            result = metrics.get_load_stats()
 
-        self.assertFalse(stats['is_high_load'])
-        self.assertIn('100', stats['message'])
+        self.assertFalse(result['is_high_load'])
+        self.assertIn('100', result['message'])
+        self.assertIn('50', result['message'])
+
+    def test_no_data_is_reported_honestly(self):
+        stats = self._stats(has_data=False)
+        with patch.object(metrics, 'get_window_stats', return_value=stats):
+            result = metrics.get_load_stats()
+
+        self.assertFalse(result['has_data'])
+        self.assertFalse(result['is_high_load'])
+        self.assertIn('нет данных', result['message'])
+        self.assertNotIn('Нагрузка в норме', result['message'])
+
+
+class LoadTrackerBufferTests(SimpleTestCase):
+    """Кольцевой буфер: классы трафика и пик (live-слой)."""
+
+    def setUp(self):
+        load_tracker.reset()
+
+    def tearDown(self):
+        load_tracker.reset()
+
+    def test_client_load_excludes_monitoring(self):
+        for _ in range(3):
+            load_tracker.record_request(load_tracker.TRAFFIC_USER)
+        for _ in range(2):
+            load_tracker.record_request(load_tracker.TRAFFIC_BOT)
+        for _ in range(4):
+            load_tracker.record_request(load_tracker.TRAFFIC_MONITORING)
+
+        self.assertEqual(load_tracker.get_requests_per_minute(), 5)
+        self.assertEqual(load_tracker.get_requests_per_hour(), 5)
+        self.assertEqual(
+            load_tracker.get_requests_per_hour(
+                (load_tracker.TRAFFIC_MONITORING,)
+            ),
+            4,
+        )
+        self.assertEqual(
+            load_tracker.get_traffic_breakdown(),
+            {
+                load_tracker.TRAFFIC_USER: 3,
+                load_tracker.TRAFFIC_BOT: 2,
+                load_tracker.TRAFFIC_MONITORING: 4,
+            },
+        )
+
+    def test_peak_per_minute(self):
+        for _ in range(3):
+            load_tracker.record_request()
+        load_tracker.record_request(load_tracker.TRAFFIC_BOT)
+
+        self.assertEqual(load_tracker.get_peak_per_minute(), 4)
+
+    def test_unknown_traffic_class_counts_as_user(self):
+        load_tracker.record_request('robot')
+
+        self.assertEqual(
+            load_tracker.get_traffic_breakdown()[load_tracker.TRAFFIC_USER], 1,
+        )
+
+    def test_data_appears_after_first_request(self):
+        self.assertFalse(load_tracker.has_data())
+        load_tracker.record_request()
+        self.assertTrue(load_tracker.has_data())
+
+
+class RequestClassificationTests(SimpleTestCase):
+    """Трафик делится на user / bot / monitoring."""
+
+    def setUp(self):
+        load_tracker.reset()
+        self.request_factory = RequestFactory()
+
+    def tearDown(self):
+        load_tracker.reset()
+
+    def _request(self, path, user_agent='Mozilla/5.0 (Windows NT 10.0)'):
+        return self.request_factory.get(
+            path, HTTP_USER_AGENT=user_agent,
+        )
+
+    def test_monitoring_paths_classified(self):
+        for path in middleware.MONITORING_PREFIXES:
+            self.assertEqual(
+                middleware.classify_request(self._request(path)),
+                load_tracker.TRAFFIC_MONITORING,
+                path,
+            )
+
+    def test_bot_user_agents_classified(self):
+        for user_agent in (
+            'Googlebot/2.1 (+http://www.google.com/bot.html)',
+            'curl/8.4.0',
+            'python-requests/2.31.0',
+        ):
+            self.assertEqual(
+                middleware.classify_request(
+                    self._request('/uip/', user_agent=user_agent)
+                ),
+                load_tracker.TRAFFIC_BOT,
+                user_agent,
+            )
+
+    def test_human_request_classified_as_user(self):
+        self.assertEqual(
+            middleware.classify_request(self._request('/uip/')),
+            load_tracker.TRAFFIC_USER,
+        )
+
+    def test_middleware_skips_static_and_counts_monitoring_separately(self):
+        response = object()
+        track = middleware.LoadTrackingMiddleware(lambda request: response)
+
+        self.assertIs(track(self._request('/static/js/main.js')), response)
+        self.assertEqual(load_tracker.get_requests_per_hour(None), 0)
+
+        track(self._request('/uip/'))
+        self.assertEqual(load_tracker.get_requests_per_minute(None), 1)
+        self.assertEqual(load_tracker.get_requests_per_minute(), 1)
+
+        track(self._request('/scheduler/status/'))
+        self.assertEqual(load_tracker.get_requests_per_minute(None), 2)
+        self.assertEqual(load_tracker.get_requests_per_minute(), 1)
+
+
+class RequestMetricsTests(TestCase):
+    """Минутные агрегаты запросов: запись, UPSERT, сводка, ряд, очистка."""
+
+    def setUp(self):
+        metrics.reset()
+        load_tracker.reset()
+        RequestMetric.objects.all().delete()
+
+    def tearDown(self):
+        metrics.reset()
+        load_tracker.reset()
+
+    def _record(self, **overrides):
+        params = {
+            'group': 'uip_list',
+            'method': 'GET',
+            'status_class': '2xx',
+            'traffic_class': load_tracker.TRAFFIC_USER,
+            'duration_ms': 100,
+        }
+        params.update(overrides)
+        metrics.record_request_metric(**params)
+
+    def _row(self, *, group='uip_list', minutes_ago=1, count=1,
+             traffic_class=load_tracker.TRAFFIC_USER, errors=0,
+             duration=100):
+        bucket = (
+            timezone.now().replace(second=0, microsecond=0)
+            - timedelta(minutes=minutes_ago)
+        )
+        values = {
+            'bucket_start': bucket,
+            'group': group,
+            'method': 'GET',
+            'status_class': '2xx',
+            'traffic_class': traffic_class,
+            'count': count,
+            'errors': errors,
+            'slow_count': 0,
+            'total_ms': duration * count,
+            'max_ms': duration,
+            'db_ms': 10 * count,
+            'db_queries': count,
+            'peak_inflight': 3,
+        }
+        values.update({field: 0 for field in metrics.HISTOGRAM_FIELDS})
+        values[metrics._histogram_field(duration)] = count
+        return RequestMetric.objects.create(**values)
+
+    def test_flush_writes_aggregated_row(self):
+        self._record(duration_ms=40, db_ms=10, db_queries=2)
+        self._record(duration_ms=300)
+
+        self.assertEqual(metrics.pending_count(), 1)
+        saved = metrics.flush_metrics()
+
+        self.assertEqual(saved, 1)
+        row = RequestMetric.objects.get()
+        self.assertEqual(row.count, 2)
+        self.assertEqual(row.total_ms, 340)
+        self.assertEqual(row.max_ms, 300)
+        self.assertEqual(row.db_ms, 10)
+        self.assertEqual(row.db_queries, 2)
+        self.assertEqual(row.h_lt50, 1)
+        self.assertEqual(row.h_lt500, 1)
+
+    def test_second_flush_increments_existing_row(self):
+        self._record()
+        metrics.flush_metrics()
+
+        self._record(duration_ms=1200)
+        metrics.flush_metrics()
+
+        row = RequestMetric.objects.get()
+        self.assertEqual(row.count, 2)
+        self.assertEqual(row.slow_count, 1)
+        self.assertEqual(row.max_ms, 1200)
+        self.assertEqual(row.h_lt2000, 1)
+
+    def test_5xx_increments_errors(self):
+        self._record(status_class='5xx', duration_ms=1500)
+        metrics.flush_metrics()
+
+        row = RequestMetric.objects.get()
+        self.assertEqual(row.errors, 1)
+        self.assertEqual(row.slow_count, 1)
+
+    def test_traffic_classes_are_separate_rows(self):
+        self._record()
+        self._record(
+            group='scheduler_status',
+            traffic_class=load_tracker.TRAFFIC_MONITORING,
+        )
+        metrics.flush_metrics()
+
+        self.assertEqual(RequestMetric.objects.count(), 2)
+        self.assertEqual(
+            RequestMetric.objects.filter(
+                traffic_class=load_tracker.TRAFFIC_MONITORING
+            ).count(),
+            1,
+        )
+
+    def test_window_stats_sums_traffic_and_errors(self):
+        self._row(count=3, duration=100)
+        self._row(count=2, traffic_class=load_tracker.TRAFFIC_BOT)
+        self._row(count=4, traffic_class=load_tracker.TRAFFIC_MONITORING)
+        self._row(count=1, errors=1, duration=5000, minutes_ago=2)
+
+        stats = metrics.get_window_stats(60)
+
+        self.assertEqual(stats['user'], 4)
+        self.assertEqual(stats['bot'], 2)
+        self.assertEqual(stats['monitoring'], 4)
+        self.assertEqual(stats['errors'], 1)
+        self.assertAlmostEqual(stats['error_rate'], 1 / 6)
+        self.assertEqual(stats['source'], 'db')
+        self.assertTrue(stats['has_data'])
+
+    def test_p95_from_histogram(self):
+        self._row(group='fast', count=94, duration=40)
+        self._row(group='slow', count=6, duration=5000)
+
+        stats = metrics.get_window_stats(60)
+
+        self.assertEqual(stats['p95_ms'], 5000)
+
+    def test_series_zero_fills_buckets(self):
+        self._row(count=2)
+
+        series = metrics.get_series('1h')
+
+        self.assertEqual(series['resolution'], 'minute')
+        self.assertEqual(len(series['points']), 61)
+        self.assertEqual(
+            sum(point['user'] for point in series['points']), 2,
+        )
+
+    def test_top_groups_sorted_by_count(self):
+        self._row(group='uip_list', count=5)
+        self._row(group='search', count=2)
+
+        top = metrics.get_top_groups('1h')
+
+        self.assertEqual(top['by_count'][0]['group'], 'uip_list')
+        self.assertEqual(top['by_count'][0]['count'], 5)
+
+    @override_settings(REQUEST_METRICS_RETENTION_DAYS=14)
+    def test_prune_removes_old_rows(self):
+        self._row(minutes_ago=60 * 24 * 20)
+        self._row(minutes_ago=1)
+
+        result = metrics.prune_old_metrics()
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['deleted'], 1)
+        self.assertEqual(RequestMetric.objects.count(), 1)
+
+    def test_falls_back_to_live_counters_without_table(self):
+        load_tracker.record_request()
+
+        with patch.object(metrics, '_safe_per_class', return_value=None):
+            stats = metrics.get_window_stats(60)
+
+        self.assertEqual(stats['source'], 'memory')
+        self.assertEqual(stats['user'], 1)
+        self.assertTrue(stats['has_data'])
+
+    def test_middleware_records_metric(self):
+        class _Response:
+            status_code = 200
+
+        track = middleware.LoadTrackingMiddleware(lambda request: _Response())
+        self.assertIsNotNone(
+            track(RequestFactory().get('/uip/', HTTP_USER_AGENT='Mozilla/5.0'))
+        )
+
+        self.assertEqual(metrics.pending_count(), 1)
+        metrics.flush_metrics()
+        row = RequestMetric.objects.get()
+        self.assertEqual(row.group, 'uip')
+        self.assertEqual(row.method, 'GET')
+        self.assertEqual(row.status_class, '2xx')
+        self.assertEqual(row.traffic_class, load_tracker.TRAFFIC_USER)
+
+    def test_middleware_records_500_on_exception(self):
+        def _boom(request):
+            raise RuntimeError('boom')
+
+        track = middleware.LoadTrackingMiddleware(_boom)
+        with self.assertRaises(RuntimeError):
+            track(RequestFactory().get('/uip/'))
+
+        metrics.flush_metrics()
+        row = RequestMetric.objects.get()
+        self.assertEqual(row.status_class, '5xx')
+        self.assertEqual(row.errors, 1)
+
+    def test_middleware_maps_http_exceptions_to_4xx(self):
+        from django.core.exceptions import PermissionDenied
+        from django.http import Http404
+
+        def _not_found(request):
+            raise Http404('нет')
+
+        def _denied(request):
+            raise PermissionDenied('нельзя')
+
+        cases = (
+            (_not_found, Http404, '404'),
+            (_denied, PermissionDenied, '403'),
+        )
+        for handler, exception, label in cases:
+            with self.subTest(label):
+                metrics.reset()
+                RequestMetric.objects.all().delete()
+                track = middleware.LoadTrackingMiddleware(handler)
+                with self.assertRaises(exception):
+                    track(RequestFactory().get('/uip/'))
+                metrics.flush_metrics()
+                row = RequestMetric.objects.get()
+                self.assertEqual(row.status_class, '4xx')
+                self.assertEqual(row.errors, 0)
 
 
 class SessionCookieNameTests(SimpleTestCase):
@@ -102,6 +499,34 @@ class DiagnoseServiceTests(TestCase):
 
         summary = diagnosis['checks']['summary']
         self.assertIn('Нагрузка', summary['message'])
+
+    def test_load_without_data_is_not_a_failure(self):
+        with patch.object(
+            service_helper, 'check_suz_token',
+            return_value={'is_ok': True, 'message': 'Токен действителен'},
+        ), patch.object(
+            service_helper, 'check_signatures',
+            return_value={'is_ok': True, 'message': 'HTTP 200'},
+        ), patch.object(
+            service_helper, 'check_factories',
+            return_value={'is_ok': True, 'factories': []},
+        ), patch.object(
+            service_helper, 'get_load_stats',
+            return_value={
+                'requests_per_minute': 0,
+                'requests_per_hour': 0,
+                'threshold_per_hour': 50_000,
+                'is_high_load': False,
+                'has_data': False,
+                'message': 'Нагрузка: нет данных — счётчики в web-процессе',
+            },
+        ):
+            diagnosis = service_helper.diagnose_service()
+
+        load = diagnosis['checks']['load']
+        self.assertTrue(load['ok'])
+        self.assertFalse(load['has_data'])
+        self.assertIn('нет данных', load['message'])
 
     def test_every_check_has_name_and_message(self):
         diagnosis = self._diagnose()

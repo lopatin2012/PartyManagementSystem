@@ -20,6 +20,11 @@ services:
         condition: service_healthy
     volumes:
       - .:/app:rw
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   db:
     image: postgres:15
@@ -35,6 +40,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   postgres_data:

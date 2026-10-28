@@ -7,11 +7,19 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from app_event.models import HealthCheck, NotificationRecipient
+from app_event.models import HealthCheck, NotificationRecipient, RequestMetric
 from app_event.services import health as health_service
+from app_helper import load_tracker, metrics
+
+STATIC_OVERRIDE = override_settings(STORAGES={
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {
+        'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'
+    },
+})
 
 User = get_user_model()
 
@@ -203,3 +211,102 @@ class HealthEndpointTests(TestCase):
             response = self.client.get('/health/')
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()['status'], 'fail')
+
+
+@STATIC_OVERRIDE
+class MonitoringDashboardTests(TestCase):
+    """Дашборд нагрузки /monitoring/ и его JSON-API."""
+
+    def setUp(self):
+        metrics.reset()
+        load_tracker.reset()
+        RequestMetric.objects.all().delete()
+        self.admin = User.objects.create_superuser(
+            username='mon-admin', password='pass', email='mon@test.local',
+        )
+        self.viewer = User.objects.create_user(
+            username='mon-viewer', password='pass',
+        )
+
+    def tearDown(self):
+        metrics.reset()
+        load_tracker.reset()
+
+    def _status_patches(self):
+        return (
+            patch(
+                'config.context_processors.check_factories',
+                return_value={'is_ok': True, 'factories': []},
+            ),
+            patch(
+                'app_helper.service_helper.diagnose_service',
+                return_value={
+                    'is_available': True,
+                    'checks': {
+                        'load': {'name': 'Нагрузка', 'ok': True, 'message': 'ok'},
+                        'summary': {'name': 'Общая сводка', 'ok': True},
+                        'factories': {'ok': True, 'items': []},
+                    },
+                },
+            ),
+        )
+
+    def _get_page(self, user):
+        self.client.force_login(user)
+        factories_patch, diagnose_patch = self._status_patches()
+        with factories_patch, diagnose_patch:
+            return self.client.get('/monitoring/')
+
+    def test_page_requires_login(self):
+        response = self.client.get('/monitoring/')
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/auth/login/', response['Location'])
+
+    def test_page_forbidden_for_non_admin(self):
+        response = self._get_page(self.viewer)
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_page_renders_for_admin(self):
+        response = self._get_page(self.admin)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Мониторинг нагрузки')
+        self.assertContains(response, 'monRequestsChart')
+
+    def test_api_returns_series_and_summary(self):
+        metrics.record_request_metric(
+            group='uip_list', method='GET', status_class='2xx',
+            traffic_class=load_tracker.TRAFFIC_USER, duration_ms=50,
+        )
+        metrics.flush_metrics()
+        self.client.force_login(self.admin)
+
+        response = self.client.get('/monitoring/api/metrics/?range=1h')
+        data = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(data['is_error'])
+        self.assertEqual(data['range'], '1h')
+        self.assertEqual(data['resolution'], 'minute')
+        self.assertEqual(
+            sum(point['user'] for point in data['series']), 1,
+        )
+        self.assertEqual(data['summary']['source'], 'db')
+
+    def test_api_rejects_invalid_range_with_default(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.get('/monitoring/api/metrics/?range=bad')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['range'], metrics.DEFAULT_RANGE)
+
+    def test_api_forbidden_for_non_admin(self):
+        self.client.force_login(self.viewer)
+
+        response = self.client.get('/monitoring/api/metrics/')
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(response.json()['is_error'])

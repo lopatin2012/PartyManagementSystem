@@ -7,7 +7,7 @@ from django.core.cache import cache
 from django.utils import timezone
 from django.db import connection
 
-from app_helper.load_tracker import get_load_stats
+from app_helper.metrics import get_load_stats
 
 logger = logging.getLogger(__name__)
 
@@ -212,10 +212,13 @@ def diagnose_service() -> dict:
     }
 
     # 5. Нагрузка.
+    # Счётчики живут в памяти web-процесса, поэтому в воркере данных нет.
+    # Это не сбой, но и не «в норме» — честно показываем «нет данных».
     load = get_load_stats()
+    has_load_data = load.get('has_data', True)
     checks['load'] = {
         'name': 'Нагрузка',
-        'ok': not load['is_high_load'],
+        'ok': (not load['is_high_load']) if has_load_data else True,
         **load,
     }
 

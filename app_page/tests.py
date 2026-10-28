@@ -530,7 +530,7 @@ class ProductDetailFactoryScopeTests(TestCase):
 class StatusPanelLoadMessageTests(TestCase):
     """Панель «Сервис» показывает читаемую причину высокой нагрузки."""
 
-    def test_load_failure_message_rendered(self):
+    def _get_home(self):
         with patch(
             'config.context_processors.check_factories',
             return_value={'is_ok': True, 'factories': []},
@@ -551,12 +551,21 @@ class StatusPanelLoadMessageTests(TestCase):
                 },
             },
         ):
-            response = self.client.get(reverse('home'))
+            return self.client.get(reverse('home'))
+
+    def test_load_failure_message_rendered(self):
+        response = self._get_home()
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Нагрузка')
         self.assertContains(response, 'Высокая нагрузка')
         self.assertContains(response, '20000')
+
+    def test_footer_shows_rolling_hour_and_peak(self):
+        response = self._get_home()
+
+        self.assertContains(response, 'Запросов за 60 мин')
+        self.assertContains(response, 'Пик, запросов/мин')
 
 
 @STATIC_OVERRIDE
