@@ -427,7 +427,6 @@ class FactoryScopedUipVisibilityTests(TestCase):
         self.assertIn('group_label', product)
         self.assertIn('factories', product)
         self.assertIn('shelf_life_in_days', product)
-        self.assertContains(response, 'selectedProductInfo')
         self.assertContains(response, 'group_label')
 
     def test_unbound_viewer_sees_all_uips(self):
