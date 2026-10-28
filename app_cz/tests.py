@@ -52,7 +52,7 @@ class FetchExternalTasksChangedSinceTests(TestCase):
 
     def test_returns_none_on_network_error(self):
         with patch(
-            'app_cz.services.code_sync.requests.get',
+            'app_cz.services.code_sync.external_http.get',
             side_effect=code_sync.requests.exceptions.ConnectionError('boom'),
         ):
             result = code_sync._fetch_external_tasks_changed_since(
@@ -64,7 +64,7 @@ class FetchExternalTasksChangedSinceTests(TestCase):
         response = Mock()
         response.raise_for_status.return_value = None
         response.json.return_value = {'is_error': True, 'message': 'недоступно'}
-        with patch('app_cz.services.code_sync.requests.get', return_value=response):
+        with patch('app_cz.services.code_sync.external_http.get', return_value=response):
             result = code_sync._fetch_external_tasks_changed_since(
                 'http://127.0.0.1:8000', timezone.now()
             )
@@ -76,7 +76,7 @@ class FetchExternalTasksChangedSinceTests(TestCase):
         response.json.return_value = {
             'is_error': False, 'count': 1, 'result': [{'uuid_str': 'abc'}],
         }
-        with patch('app_cz.services.code_sync.requests.get', return_value=response):
+        with patch('app_cz.services.code_sync.external_http.get', return_value=response):
             result = code_sync._fetch_external_tasks_changed_since(
                 'http://127.0.0.1:8000', timezone.now()
             )
@@ -86,7 +86,7 @@ class FetchExternalTasksChangedSinceTests(TestCase):
         response = Mock()
         response.raise_for_status.return_value = None
         response.json.return_value = {'is_error': False, 'count': 0, 'result': []}
-        with patch('app_cz.services.code_sync.requests.get', return_value=response):
+        with patch('app_cz.services.code_sync.external_http.get', return_value=response):
             result = code_sync._fetch_external_tasks_changed_since(
                 'http://127.0.0.1:8000', timezone.now()
             )
@@ -258,7 +258,7 @@ class SyncCodesErrorDetailsTests(TestCase):
         response.json.return_value = {
             'is_error': False, 'sntins_camera': [], 'sntins_printer': [],
         }
-        with patch('app_cz.services.code_sync.requests.get', return_value=response):
+        with patch('app_cz.services.code_sync.external_http.get', return_value=response):
             result = code_sync.sync_codes_task(
                 url='http://127.0.0.1:8010',
                 task_id='task-1',
@@ -536,7 +536,7 @@ class GetCisesStatusesTests(SimpleTestCase):
         with patch.object(code_status, 'CISES_INFO_PAUSE_SECONDS', 0), patch(
             'app_cz.services.suz_client.get_true_api_session_token',
             return_value={'token': 'TEST-TOKEN', 'message': 'ok'},
-        ), patch.object(code_status.requests, 'post', return_value=response) as post:
+        ), patch.object(code_status.external_http, 'post', return_value=response) as post:
             result = code_status.get_cises_statuses([stored_code], 'milk')
 
         # Статус возвращается по исходному (полному) коду.
@@ -544,7 +544,7 @@ class GetCisesStatusesTests(SimpleTestCase):
         _, kwargs = post.call_args
         self.assertEqual(kwargs['headers']['Authorization'], 'Bearer TEST-TOKEN')
         self.assertNotIn('clientToken', kwargs['headers'])
-        self.assertEqual(post.call_args.args[0], SUZ.cises_info)
+        self.assertEqual(post.call_args.args[1], SUZ.cises_info)
         self.assertEqual(kwargs['params'], {'pg': 'milk'})
         self.assertEqual(kwargs['json'], ['010460175102601921CODE00'])
 
@@ -1574,7 +1574,7 @@ class TrueApiSessionTokenTests(TestCase):
            return_value=('data', 'SIGNED'))
     @patch('app_cz.services.suz_client.get_true_api_auth_key',
            return_value={'uuid': 'u-1', 'data': 'data'})
-    @patch('app_cz.services.suz_client.requests.post')
+    @patch('app_cz.services.suz_client.external_http.post')
     def test_returns_uuid_token_when_united_token(self, mock_post, *_):
         """При unitedToken читаем uuidToken (как в «Молвест.Маркировка»)."""
         from app_cz.services.suz_client import get_true_api_session_token
@@ -1590,7 +1590,7 @@ class TrueApiSessionTokenTests(TestCase):
            return_value=('data', 'SIGNED'))
     @patch('app_cz.services.suz_client.get_true_api_auth_key',
            return_value={'uuid': 'u-1', 'data': 'data'})
-    @patch('app_cz.services.suz_client.requests.post')
+    @patch('app_cz.services.suz_client.external_http.post')
     def test_falls_back_to_token_field(self, mock_post, *_):
         from app_cz.services.suz_client import get_true_api_session_token
 
@@ -1626,7 +1626,7 @@ class TrueApiSessionTokenTests(TestCase):
            return_value=('data', 'SIGNED'))
     @patch('app_cz.services.suz_client.get_true_api_auth_key',
            return_value={'uuid': 'u-1', 'data': 'data'})
-    @patch('app_cz.services.suz_client.requests.post')
+    @patch('app_cz.services.suz_client.external_http.post')
     def test_http_error_returns_message(self, mock_post, *_):
         from app_cz.services.suz_client import get_true_api_session_token
 
@@ -1685,7 +1685,7 @@ class ReservePartiesDuplicatesTests(TestCase):
             party_service, 'get_true_api_session_token',
             return_value={'uuid': 'u', 'token': 't'},
         ), patch(
-            'app_cz.services.party_service.requests.post',
+            'app_cz.services.party_service.external_http.post',
             side_effect=[first, second],
         ) as mock_post:
             result = party_service.reserve_parties_honest_sign(
@@ -1709,7 +1709,7 @@ class ReservePartiesDuplicatesTests(TestCase):
             party_service, 'get_true_api_session_token',
             return_value={'uuid': 'u', 'token': 't'},
         ), patch(
-            'app_cz.services.party_service.requests.post',
+            'app_cz.services.party_service.external_http.post',
             return_value=resp,
         ):
             result = party_service.reserve_parties_honest_sign(
@@ -1845,7 +1845,7 @@ class GenerateCzUipFormatTests(TestCase):
             party_service, 'get_true_api_session_token',
             return_value={'uuid': 'u', 'token': 'T', 'message': 'ok'},
         ), patch(
-            'app_cz.services.party_service.requests.post', return_value=response,
+            'app_cz.services.party_service.external_http.post', return_value=response,
         ) as mock_post:
             result = party_service.generate_party_numbers(
                 party_info_list=[{
@@ -2556,7 +2556,7 @@ class SuzOrdersServiceTests(TestCase):
         response = self._response(payload=payload)
 
         with patch.object(
-            order_service.requests, 'post', return_value=response,
+            order_service.external_http, 'post', return_value=response,
         ) as post:
             result = order_service.get_suz_orders(
                 page=2, limit=10, status='READY', order_id='order-1',
@@ -2567,7 +2567,7 @@ class SuzOrdersServiceTests(TestCase):
         self.assertEqual(result['orders'][0]['orderId'], 'order-1')
 
         kwargs = post.call_args.kwargs
-        self.assertEqual(post.call_args.args[0], order_service.SUZ.order_search)
+        self.assertEqual(post.call_args.args[1], order_service.SUZ.order_search)
         self.assertEqual(kwargs['params'], {'omsId': self.account.oms_id})
         self.assertEqual(kwargs['headers']['clientToken'], 'token-123')
         self.assertEqual(kwargs['json'], {
@@ -2584,7 +2584,7 @@ class SuzOrdersServiceTests(TestCase):
 
         response = self._response(payload={'totalCount': 0, 'results': []})
         with patch.object(
-            order_service.requests, 'post', return_value=response,
+            order_service.external_http, 'post', return_value=response,
         ) as post:
             order_service.get_suz_orders()
 
@@ -2598,7 +2598,7 @@ class SuzOrdersServiceTests(TestCase):
 
         response = self._response(payload={'totalCount': 0, 'results': []})
         with patch.object(
-            order_service.requests, 'post', return_value=response,
+            order_service.external_http, 'post', return_value=response,
         ) as post:
             order_service.get_suz_orders(status='all')
 
@@ -2630,7 +2630,7 @@ class SuzOrdersServiceTests(TestCase):
             status_code=401,
             payload={'errorMessage': 'Токен не действителен'},
         )
-        with patch.object(order_service.requests, 'post', return_value=response):
+        with patch.object(order_service.external_http, 'post', return_value=response):
             result = order_service.get_suz_orders()
 
         self.assertTrue(result['is_error'])
@@ -2641,7 +2641,7 @@ class SuzOrdersServiceTests(TestCase):
         from app_cz.services import order_service
 
         with patch.object(
-            order_service.requests, 'post',
+            order_service.external_http, 'post',
             side_effect=order_service.requests.exceptions.ConnectionError('boom'),
         ):
             result = order_service.get_suz_orders()
@@ -2657,7 +2657,7 @@ class SuzOrdersServiceTests(TestCase):
             order_service, 'unpinned_signed_data',
             return_value=(None, 'signature-b64'),
         ) as signer, patch.object(
-            order_service.requests, 'post', return_value=response,
+            order_service.external_http, 'post', return_value=response,
         ) as post:
             result = order_service.close_suz_order('order-1')
 
@@ -2665,7 +2665,7 @@ class SuzOrdersServiceTests(TestCase):
         signer.assert_called_once_with('{"orderId":"order-1"}')
 
         kwargs = post.call_args.kwargs
-        self.assertEqual(post.call_args.args[0], order_service.SUZ.order_close)
+        self.assertEqual(post.call_args.args[1], order_service.SUZ.order_close)
         self.assertEqual(kwargs['params'], {'omsId': self.account.oms_id})
         self.assertEqual(kwargs['headers']['clientToken'], 'token-123')
         self.assertEqual(kwargs['headers']['X-Signature'], 'signature-b64')
@@ -2687,7 +2687,7 @@ class SuzOrdersServiceTests(TestCase):
         )
         with patch.object(
             order_service, 'unpinned_signed_data', return_value=(None, 'sig'),
-        ), patch.object(order_service.requests, 'post', return_value=response):
+        ), patch.object(order_service.external_http, 'post', return_value=response):
             result = order_service.close_suz_order('order-1')
 
         self.assertTrue(result['is_error'])
@@ -2741,14 +2741,14 @@ class SuzOrdersServiceTests(TestCase):
         })
 
         with patch.object(
-            order_service.requests, 'get', return_value=response,
+            order_service.external_http, 'get', return_value=response,
         ) as get:
             labels = order_service.get_suz_providers()
 
         self.assertEqual(
             labels, {'SRV1': 'ООО "ПК ФЛЕКСО" / 4725008621'},
         )
-        self.assertEqual(get.call_args.args[0], order_service.SUZ.providers)
+        self.assertEqual(get.call_args.args[1], order_service.SUZ.providers)
         self.assertEqual(
             get.call_args.kwargs['params'], {'omsId': self.account.oms_id},
         )

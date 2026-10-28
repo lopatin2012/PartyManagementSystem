@@ -5,6 +5,8 @@ import re
 from datetime import datetime, date
 
 import requests
+
+from app_helper import external_http
 from uuid_utils import uuid7
 from django.utils import timezone
 from django.db.models import ObjectDoesNotExist
@@ -312,7 +314,8 @@ def generate_party_numbers(
     try:
         logger.info(f"Запрос генерации партий в ЧЗ (группа: {product_group})")
 
-        response = requests.post(
+        response = external_http.post(
+            'cz',
             SUZ.generation_party,
             headers=headers,
             params=params,
@@ -446,7 +449,8 @@ def reserve_parties_honest_sign(
 
         try:
             logger.info(f"Запрос резервирования {len(to_reserve)} партий в ЧЗ.")
-            response = requests.post(
+            response = external_http.post(
+                'cz',
                 SUZ.reservation_party,
                 headers=headers,
                 params=params,
@@ -555,7 +559,8 @@ def reserve_party_numbers_cz(
     json_dumps_data = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
 
     try:
-        response = requests.post(
+        response = external_http.post(
+            'cz',
             SUZ.reservation_party,
             headers=headers,
             data=json_dumps_data,
@@ -614,7 +619,8 @@ def get_all_reserved_parties() -> dict:
 
     try:
         logger.info("Запрос списка зарезервированных партий из ЧЗ.")
-        response = requests.get(
+        response = external_http.get(
+            'cz',
             SUZ.get_all_reserved_party,
             headers=headers,
             timeout=15

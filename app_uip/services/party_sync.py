@@ -12,6 +12,8 @@ from django.utils.dateparse import parse_datetime, parse_date
 
 import requests
 
+from app_helper import external_http
+
 from app_factory.models import Line
 
 from app_uip.models import UIP, ProductionParty, ProductionPartyStatusChoices
@@ -99,7 +101,7 @@ def fetch_production_parties() -> dict:
         }
 
     try:
-        response = requests.get(url, timeout=30)
+        response = external_http.get('factory', url, timeout=30)
         if response.status_code != 200:
             return {
                 'is_error': True,

@@ -264,30 +264,40 @@ def archive_stale_closed_uips_task() -> dict:
 
 @task(queue_name='default')
 def cleanup_old_logs_task() -> dict:
-    """Очистка логов статусов УИП старше 700 дней."""
-    from app_uip.models import UIPStatusLog
+    """Очистка логов статусов УИП (UIP_STATUS_LOG_RETENTION_DAYS)."""
+    from app_event.services.retention import cleanup_old_uip_status_logs
 
-    threshold = timezone.now() - timedelta(days=700)
-    deleted_count, _ = UIPStatusLog.objects.filter(
-        created_at__lt=threshold
-    ).delete()
+    result = cleanup_old_uip_status_logs()
+    logger.info(result['message'])
+    return result
 
-    logger.info(f'Удалено старых логов: {deleted_count}')
-    return {'deleted': deleted_count}
+
+@task(queue_name='default')
+def cleanup_event_logs_task() -> dict:
+    """Очистка событий EventLog (EVENT_LOG_RETENTION_DAYS)."""
+    from app_event.services.retention import cleanup_old_events
+
+    result = cleanup_old_events()
+    logger.info(result['message'])
+    return result
 
 
 @task(queue_name='default')
 def cleanup_old_task_results_task() -> dict:
-    """Очистка записей dbtaskresult, завершённых более полугода назад."""
-    from django_tasks_db.models import DBTaskResult
+    """Очистка завершённых DBTaskResult (TASK_RESULT_RETENTION_DAYS)."""
+    from app_event.services.retention import cleanup_old_task_results
 
-    threshold = timezone.now() - timedelta(days=182)
-    deleted_count, _ = DBTaskResult.objects.filter(
-        finished_at__lt=threshold,
-    ).delete()
+    result = cleanup_old_task_results()
+    logger.info(result['message'])
+    return result
 
-    logger.info(f'Удалено устаревших записей dbtaskresult: {deleted_count}')
-    return {'deleted': deleted_count}
+
+@task(queue_name='default')
+def prune_request_metrics_task() -> dict:
+    """Очистка метрик HTTP-запросов старше REQUEST_METRICS_RETENTION_DAYS."""
+    from app_helper.metrics import prune_old_metrics
+
+    return prune_old_metrics()
 
 
 # ==========================================

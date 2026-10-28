@@ -356,7 +356,34 @@ SYSTEM_ALERTS_ENABLED = os.getenv('SYSTEM_ALERTS_ENABLED', '1') == '1'
 # (защита от одиночных сетевых «миганий»). Проверки идут каждые 5 минут.
 HEALTH_CONFIRM_ATTEMPTS = int(os.getenv('HEALTH_CONFIRM_ATTEMPTS', '3'))
 # Сколько дней хранить историю HealthCheck.
-HEALTH_RETENTION_DAYS = int(os.getenv('HEALTH_RETENTION_DAYS', '28'))
+HEALTH_RETENTION_DAYS = int(os.getenv('HEALTH_RETENTION_DAYS', '14'))
+# Сколько дней хранить события EventLog (живая лента).
+EVENT_LOG_RETENTION_DAYS = int(os.getenv('EVENT_LOG_RETENTION_DAYS', '90'))
+# Сколько дней хранить историю статусов УИП (аудит).
+UIP_STATUS_LOG_RETENTION_DAYS = int(os.getenv('UIP_STATUS_LOG_RETENTION_DAYS', '365'))
+# Сколько дней хранить завершённые записи django-tasks (DBTaskResult).
+TASK_RESULT_RETENTION_DAYS = int(os.getenv('TASK_RESULT_RETENTION_DAYS', '30'))
+
+# Метрики HTTP-запросов (app_helper/metrics.py).
+# Как часто сбрасывать минутный аккумулятор в БД (секунды).
+REQUEST_METRICS_FLUSH_SECONDS = int(os.getenv('REQUEST_METRICS_FLUSH_SECONDS', '30'))
+# Сколько дней хранить минутные метрики запросов.
+REQUEST_METRICS_RETENTION_DAYS = int(os.getenv('REQUEST_METRICS_RETENTION_DAYS', '14'))
+# Порог p95 времени ответа для алерта «высокая нагрузка», мс.
+LOAD_P95_THRESHOLD_MS = int(os.getenv('LOAD_P95_THRESHOLD_MS', '1500'))
+# Порог доли ошибок 5xx для алерта «высокая нагрузка» (0.05 = 5%).
+LOAD_ERROR_RATE_THRESHOLD = float(os.getenv('LOAD_ERROR_RATE_THRESHOLD', '0.05'))
+# Доля ошибок исходящих вызовов для health-чека «Внешние API» (0.2 = 20%).
+EXTERNAL_ERROR_RATE_THRESHOLD = float(os.getenv('EXTERNAL_ERROR_RATE_THRESHOLD', '0.2'))
+# Минимум вызовов к сервису, чтобы оценивать долю ошибок.
+EXTERNAL_MIN_CALLS = int(os.getenv('EXTERNAL_MIN_CALLS', '5'))
+# Очередь задач: порог количества готовых задач и возраста старейшей (сек).
+QUEUE_MAX_READY = int(os.getenv('QUEUE_MAX_READY', '20'))
+QUEUE_MAX_READY_AGE_SECONDS = int(os.getenv('QUEUE_MAX_READY_AGE_SECONDS', '600'))
+# Ошибок фоновых задач за час, после которого health-чек «Очередь» срабатывает.
+QUEUE_MAX_FAILED_PER_HOUR = int(os.getenv('QUEUE_MAX_FAILED_PER_HOUR', '5'))
+# Доля занятых соединений Postgres, после которой health-чек «БД» срабатывает.
+DB_CONNECTIONS_THRESHOLD = float(os.getenv('DB_CONNECTIONS_THRESHOLD', '0.8'))
 
 # ==========================================
 # Лимиты запросов.

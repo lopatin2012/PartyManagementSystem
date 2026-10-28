@@ -1,0 +1,97 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block head %}
+    <link rel="stylesheet" href="{% static 'css/monitoring.css' %}" type="text/css">
+{% endblock %}
+
+{% block content %}
+<div class="mon-page">
+    <div class="mon-head">
+        <div>
+            <h1 class="mon-title">Мониторинг нагрузки</h1>
+            <p class="mon-sub">
+                Минутные агрегаты HTTP-запросов: количество, время ответа,
+                ошибки и время в БД. Служебные опросы (health, статус,
+                прогресс НК) учитываются отдельно от пользовательской нагрузки.
+                История хранится {{ retention_days }} дн.
+            </p>
+        </div>
+        <div class="mon-controls">
+            <div class="mon-ranges" id="monRanges">
+                <button type="button" data-range="1h" class="active">1 час</button>
+                <button type="button" data-range="24h">24 часа</button>
+                <button type="button" data-range="7d">7 дней</button>
+            </div>
+            <button type="button" class="mon-refresh" id="monRefresh" title="Обновить">↻</button>
+        </div>
+    </div>
+
+    <div class="mon-error hidden" id="monError"></div>
+
+    <div class="mon-cards" id="monCards"></div>
+    <div class="mon-cards" id="monOpsCards"></div>
+
+    <div class="mon-chart-block">
+        <div class="mon-chart-head">
+            <h2>Запросы</h2>
+            <span id="monSeriesInfo"></span>
+        </div>
+        <div class="mon-legend">
+            <span><span class="mon-dot" style="background:#BBCF32"></span>Пользователи</span>
+            <span><span class="mon-dot" style="background:#FABB1C"></span>Боты</span>
+            <span><span class="mon-dot" style="background:rgba(255,255,255,0.55)"></span>Служебные</span>
+        </div>
+        <div class="mon-chart" id="monRequestsChart"></div>
+    </div>
+
+    <div class="mon-chart-block">
+        <div class="mon-chart-head">
+            <h2>Время ответа, p95</h2>
+            <span>по гистограмме, мс</span>
+        </div>
+        <div class="mon-legend">
+            <span><span class="mon-dot" style="background:#8fb3ff"></span>p95 пользовательских запросов</span>
+        </div>
+        <div class="mon-chart" id="monLatencyChart"></div>
+    </div>
+
+    <div class="mon-chart-block hidden" id="monResourcesBlock">
+        <div class="mon-chart-head">
+            <h2>Ресурсы</h2>
+            <span>CPU и RAM, % (максимум за интервал)</span>
+        </div>
+        <div class="mon-legend">
+            <span><span class="mon-dot" style="background:#BBCF32"></span>CPU</span>
+            <span><span class="mon-dot" style="background:#8fb3ff"></span>RAM</span>
+        </div>
+        <div class="mon-chart" id="monResourcesChart"></div>
+    </div>
+
+    <div class="mon-tables">
+        <div class="mon-table-block">
+            <h2>Топ по количеству</h2>
+            <table class="mon-table" id="monTopCount"></table>
+            <p class="mon-note">Endpoint — url_name / view_name; пользователи и боты.</p>
+        </div>
+        <div class="mon-table-block">
+            <h2>Топ по p95</h2>
+            <table class="mon-table" id="monTopSlow"></table>
+            <p class="mon-note">Только endpoint'ы с 10+ запросами за период.</p>
+        </div>
+    </div>
+
+    <div class="mon-table-block">
+        <h2>Внешние API</h2>
+        <table class="mon-table" id="monExternal"></table>
+        <p class="mon-note">
+            Исходящие HTTP-вызовы: ЧЗ, Национальный каталог, СУЗ, подписи,
+            заводы, ожидание лимита ЧЗ. Ошибки — 4xx/5xx, таймауты и сетевые сбои.
+        </p>
+    </div>
+</div>
+{% endblock %}
+
+{% block js %}
+    <script src="{% static 'js/monitoring.js' %}"></script>
+{% endblock %}

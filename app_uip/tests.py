@@ -1524,7 +1524,7 @@ class ReserveAccumulationTests(TestCase):
 
         state = {'first': True}
 
-        def fake_post(url=None, headers=None, params=None, data=None, timeout=None):
+        def fake_post(service, url=None, headers=None, params=None, data=None, timeout=None):
             numbers = json.loads(data)['partyNumber']
             response = Mock()
             if state['first']:
@@ -1549,7 +1549,7 @@ class ReserveAccumulationTests(TestCase):
             'app_cz.services.party_service.get_true_api_session_token',
             return_value={'uuid': 'u', 'token': 't'},
         ), patch(
-            'app_cz.services.party_service.requests.post',
+            'app_cz.services.party_service.external_http.post',
             side_effect=fake_post,
         ):
             result = accumulate_short_shelf_life_reserve(pause_seconds=0)

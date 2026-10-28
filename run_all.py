@@ -22,10 +22,20 @@ COLORS = {
     'reset': '\033[0m',
 }
 
+def _uvicorn_flags() -> list:
+    """Флаги uvicorn из окружения (reload и access-log)."""
+    flags = []
+    if os.getenv('DEBUG', '1') == '1':
+        flags.append('--reload')
+    if os.getenv('UVICORN_ACCESS_LOG', '1') != '1':
+        # При высокой нагрузке access-log дублирует метрики и забивает логи.
+        flags.append('--no-access-log')
+    return flags
+
+
 PROCESSES = [
     ('web', ['uvicorn', 'config.asgi:application', '--host', LOCAL_IP, '--port', '8888',
-             '--timeout-graceful-shutdown', '10']
-     + (['--reload'] if os.getenv('DEBUG', '1') == '1' else [])),
+             '--timeout-graceful-shutdown', '10'] + _uvicorn_flags()),
     ('scheduler', ['python', 'manage.py', 'run_scheduler']),
     ('worker', ['python', 'manage.py', 'run_tasks_worker']),
 ]

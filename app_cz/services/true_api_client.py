@@ -16,6 +16,8 @@ import logging
 
 import requests
 
+from app_helper import external_http
+
 from app_cz.models import SUZAccount
 from app_cz.suz_config import SUZ
 from app_helper.sign_helper import attached_signed_data
@@ -42,7 +44,7 @@ class TrueAPIClient:
 
         # 1. Получаем ключи для подписи.
         url_key = f'{self.base_url}/auth/key'
-        response_key = requests.get(url_key, timeout=15)
+        response_key = external_http.get('cz', url_key, timeout=15)
         response_key.raise_for_status()
         auth_data = response_key.json()
         row_uuid = auth_data['uuid']
@@ -68,7 +70,7 @@ class TrueAPIClient:
             'Accept': 'application/json',
         }
 
-        response = requests.post(url_sign_in, json=payload, headers=headers, timeout=15)
+        response = external_http.post('cz', url_sign_in, json=payload, headers=headers, timeout=15)
         response.raise_for_status()
 
         result = response.json()

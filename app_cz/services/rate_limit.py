@@ -84,5 +84,19 @@ def wait_nk_endpoint(endpoint: str, on_wait: Optional[Callable[[float], None]] =
         limit, window = NK_PRODUCT_LIMIT
     else:
         limit, window = NK_OTHER_LIMIT
+    started = time.perf_counter()
     true_api_limiter.wait(f'nk:{endpoint}', limit, window, on_wait=on_wait)
     true_api_limiter.wait('true_api:global', *TRUE_API_GLOBAL_LIMIT, on_wait=on_wait)
+
+    # Ожидание лимита — часть реальной нагрузки: видно в /monitoring/
+    # отдельным сервисом cz_rate_limit.
+    waited_ms = (time.perf_counter() - started) * 1000
+    if waited_ms >= 1:
+        from app_helper import metrics
+
+        metrics.record_external_call(
+            service='cz_rate_limit',
+            method='WAIT',
+            outcome='ok',
+            duration_ms=waited_ms,
+        )

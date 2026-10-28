@@ -50,6 +50,9 @@
                 <a href="{% url 'national_catalog' %}" class="nav-link {% if request.resolver_match.url_name == 'national_catalog' %}nav-link-active{% endif %}">
                     Национальный каталог
                 </a>
+                <a href="{% url 'monitoring' %}" class="nav-link {% if request.resolver_match.url_name == 'monitoring' %}nav-link-active{% endif %}">
+                    Мониторинг
+                </a>
             {% endif %}
             {% if debug %}
                 <a href="/api/docs/" class="nav-link" target="_blank" rel="noopener">
@@ -240,9 +243,14 @@
             <span class="stat-value">{{ service_version|default:"v1.0.0" }}</span>
         </div>
 
-        <div class="stat-item">
-            <span>Запросов за час:</span>
+        <div class="stat-item" title="Пользователи и боты за последние 60 минут. Служебные опросы (health, /scheduler/status/, прогресс НК) не учитываются: {{ requests_monitoring|default:0 }}">
+            <span>Запросов за 60 мин:</span>
             <span class="stat-value stat-value-highlight">{{ requests_count|default:"0" }}</span>
+        </div>
+
+        <div class="stat-item" title="Пик запросов в минуту за последние 60 минут">
+            <span>Пик, запросов/мин:</span>
+            <span class="stat-value">{{ requests_peak|default:"0" }}</span>
         </div>
 
         <div class="stat-item">
