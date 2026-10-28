@@ -1822,6 +1822,84 @@ class CodeSyncFilterTests(TestCase):
 
 
 
+class AvailableProductsInfoTests(TestCase):
+    """Список продуктов для генерации УИП: полная карточка без N+1."""
+
+    GTIN_UNIT = '04601751026061'
+    GTIN_GROUP = '04601751026062'
+
+    def setUp(self):
+        self.factory = Factory.objects.create(name='Калач')
+        workshop = Workshop.objects.create(factory=self.factory, name='Цех 1')
+        line = Line.objects.create(workshop=workshop, name='Линия 1')
+        product = Product.objects.create(
+            group=ProductGroupChoices.MILK,
+            name='Сыр Natura "Сливочный" 400 г',
+            shelf_life_in_days=45,
+            item_condition=StateConditionChoices.READY_ORDER_KM,
+            card_status=CardStateChoices.PUBLISHED,
+        )
+        ProductPackaging.objects.create(
+            product=product, level=PackagingLevelChoices.UNIT,
+            gtin=self.GTIN_UNIT, quantity_inside=1,
+        )
+        ProductPackaging.objects.create(
+            product=product, level=PackagingLevelChoices.GROUP,
+            gtin=self.GTIN_GROUP, quantity_inside=10,
+        )
+        self.sku = ProductSKU.objects.create(
+            product=product, article='91307',
+            type_formation_uip=TypeFormationUIP.general,
+        )
+        ProductProductionLocation.objects.create(
+            product_sku=self.sku, line=line,
+        )
+
+    def test_full_product_info(self):
+        products = party_service.get_available_products()
+
+        self.assertEqual(len(products), 1)
+        item = products[0]
+        self.assertEqual(item['sku_id'], str(self.sku.id))
+        self.assertEqual(item['product_id'], str(self.sku.product_id))
+        self.assertEqual(item['name'], 'Сыр Natura "Сливочный" 400 г')
+        self.assertEqual(item['article'], '91307')
+        self.assertEqual(item['gtin'], self.GTIN_UNIT)
+        self.assertEqual(item['group_label'], 'Молочная продукция')
+        self.assertEqual(item['type_label'], 'Обычный')
+        self.assertEqual(item['shelf_life_in_days'], 45)
+        self.assertEqual(item['factories'], ['Калач'])
+        self.assertEqual(
+            {packing['level'] for packing in item['packagings']},
+            {PackagingLevelChoices.UNIT, PackagingLevelChoices.GROUP},
+        )
+
+    def test_no_n_plus_one_queries(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        # Пять продуктов: с prefetch число запросов не должно расти.
+        for index in range(4):
+            product = Product.objects.create(
+                group=ProductGroupChoices.MILK,
+                name=f'Продукт {index}',
+                shelf_life_in_days=14,
+                item_condition=StateConditionChoices.READY_ORDER_KM,
+                card_status=CardStateChoices.PUBLISHED,
+            )
+            ProductPackaging.objects.create(
+                product=product, level=PackagingLevelChoices.UNIT,
+                gtin=f'0460175102607{index}', quantity_inside=1,
+            )
+            ProductSKU.objects.create(product=product, article=f'P{index}')
+
+        with CaptureQueriesContext(connection) as context:
+            products = party_service.get_available_products()
+
+        self.assertEqual(len(products), 5)
+        self.assertLessEqual(len(context.captured_queries), 6)
+
+
 class GenerateCzUipFormatTests(TestCase):
     """Генерация через ЧЗ отправляет productionDate полным ISO 8601 (…Z)."""
 

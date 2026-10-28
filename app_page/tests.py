@@ -413,6 +413,19 @@ class FactoryScopedUipVisibilityTests(TestCase):
         articles = {p['article'] for p in response.context['available_products']}
         self.assertEqual(articles, {'A-1'})
 
+    def test_generation_modal_exposes_full_product_info(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.get(reverse('uip_list'))
+
+        product = response.context['available_products'][0]
+        self.assertIn('packagings', product)
+        self.assertIn('group_label', product)
+        self.assertIn('factories', product)
+        self.assertIn('shelf_life_in_days', product)
+        self.assertContains(response, 'selectedProductInfo')
+        self.assertContains(response, 'group_label')
+
     def test_unbound_viewer_sees_all_uips(self):
         viewer = User.objects.create_user(username='viewer', password='pass')
         viewer.groups.add(self.view_group)

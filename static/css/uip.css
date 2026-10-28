@@ -502,6 +502,8 @@
     max-width: 900px;
     width: 100%;
     padding: 1em;
+    max-height: 92vh;
+    overflow-y: auto;
 }
 
 /* === ДВУХКОЛОНОЧНАЯ СЕТКА В МОДАЛЬНОМ ОКНЕ === */
@@ -653,6 +655,114 @@
     color: var(--accent-green);
     border-radius: 2px;
     padding: 0 1px;
+}
+
+/* === КАРТОЧКА ВЫБРАННОГО ПРОДУКТА === */
+.selected-product {
+    margin-top: 0.6rem;
+    padding: 0.7rem 0.8rem;
+    border: 1px solid rgba(187, 207, 50, 0.35);
+    border-radius: 10px;
+    background: rgba(187, 207, 50, 0.06);
+}
+
+.sp-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.35rem;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.sp-type {
+    color: var(--accent-green);
+    text-align: right;
+}
+
+.sp-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+    line-height: 1.35;
+    margin-bottom: 0.45rem;
+    overflow-wrap: anywhere;
+}
+
+.sp-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+    gap: 0.35rem 0.8rem;
+    margin-bottom: 0.45rem;
+}
+
+.sp-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.05rem;
+    font-size: 0.78rem;
+    min-width: 0;
+}
+
+.sp-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: rgba(255, 255, 255, 0.45);
+}
+
+.sp-value {
+    color: rgba(255, 255, 255, 0.9);
+    overflow-wrap: anywhere;
+}
+
+.sp-value.mono {
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.sp-section {
+    margin-top: 0.4rem;
+}
+
+.sp-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-top: 0.2rem;
+}
+
+.sp-chip {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.08);
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.sp-muted {
+    font-size: 0.72rem;
+    color: rgba(255, 255, 255, 0.4);
+}
+
+/* === ПОДСКАЗКА ПРИ НАВЕДЕНИИ === */
+.product-tooltip {
+    position: fixed;
+    z-index: 2000;
+    width: min(440px, calc(100vw - 24px));
+    padding: 0.8rem 0.9rem;
+    border-radius: 12px;
+    background: #262763;
+    border: 1px solid rgba(187, 207, 50, 0.45);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+    pointer-events: none;
+    color: var(--text-main);
+}
+
+.product-tooltip .sp-name {
+    font-size: 0.88rem;
 }
 
 /* Переключатель режима */

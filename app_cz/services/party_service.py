@@ -9,7 +9,7 @@ import requests
 from app_helper import external_http
 from uuid_utils import uuid7
 from django.utils import timezone
-from django.db.models import ObjectDoesNotExist
+from django.db.models import ObjectDoesNotExist, Prefetch
 from django.db import transaction
 from django.utils.dateparse import parse_datetime, parse_date
 
@@ -20,7 +20,8 @@ from app_cz.services.suz_client import get_true_api_session_token
 from app_cz.services.code_client import send_application_report
 
 from app_factory.models import (
-    ProductSKU, Product, PackagingLevelChoices, TypeFormationUIP
+    ProductSKU, Product, PackagingLevelChoices, TypeFormationUIP,
+    ProductPackaging, ProductProductionLocation,
 )
 from app_factory.selectors import prefer_linked_skus
 
@@ -232,30 +233,82 @@ def get_available_products(factory=None) -> list[dict]:
     """
     Список продуктов, доступных для генерации УИП (с GTIN и артикулом).
 
+    Для карточки/подсказки отдаём полную информацию: полное название,
+    товарную группу, срок годности, тип формирования, все упаковки (GTIN)
+    и заводы, где продукт производится.
+
+    Все связанные данные подгружаются prefetch'ем — без N+1 на 400+ SKU.
+
     :param factory: если задан — только SKU, производимые на этом заводе.
     """
     products = []
     skus = (
         ProductSKU.objects.filter(is_active=True)
         .select_related('product')
+        .prefetch_related(
+            Prefetch(
+                'product__packagings',
+                queryset=ProductPackaging.objects.order_by('level', 'gtin'),
+            ),
+            Prefetch(
+                'product_production_locations',
+                queryset=(
+                    ProductProductionLocation.objects
+                    .select_related('line__workshop__factory')
+                    .order_by('line__name')
+                ),
+            ),
+        )
     )
     if factory is not None:
         skus = skus.filter(
             product_production_locations__line__workshop__factory=factory
         ).distinct()
     skus = skus.order_by('product__name', 'article')
+
     for sku in skus:
-        gtin = sku.product.consumer_gtin
-        if not gtin:
+        packagings = list(sku.product.packagings.all())
+        unit = next(
+            (
+                packing for packing in packagings
+                if packing.level == PackagingLevelChoices.UNIT
+            ),
+            None,
+        )
+        if unit is None:
             # пропускаем продукты без GTIN потребительской упаковки.
             continue
+
+        factories = []
+        for location in sku.product_production_locations.all():
+            if not location.is_active:
+                continue
+            factory_obj = location.line.workshop.factory
+            if factory_obj and factory_obj.name not in factories:
+                factories.append(factory_obj.name)
+
         products.append({
             'sku_id': str(sku.id),
+            'product_id': str(sku.product_id),
             'name': sku.product.name,
             'article': sku.article,
-            'gtin': gtin,
+            'gtin': unit.gtin,
             'group': sku.product.group,
+            'group_label': sku.product.get_group_display(),
             'type_formation_uip': sku.type_formation_uip,
+            'type_label': sku.get_type_formation_uip_display(),
+            'shelf_life_in_days': sku.product.shelf_life_in_days,
+            'packagings': [
+                {
+                    'level': packing.level,
+                    'level_label': packing.get_level_display(),
+                    'gtin': packing.gtin,
+                    'quantity_inside': packing.quantity_inside,
+                    'is_active': packing.is_active,
+                }
+                for packing in packagings
+            ],
+            'factories': sorted(factories),
         })
     return products
 
