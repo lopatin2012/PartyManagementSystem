@@ -89,7 +89,6 @@ def _latest_health_checks() -> dict:
 
 def service_status_info(request):
     """Статусы внешних сервисов."""
-    from app_helper.access import is_admin
 
     # 1. Статус СУЗ (живой срок токена — только БД, без внешних запросов).
     suz_account = SUZAccount.objects.filter(is_active=True).first()
@@ -97,7 +96,7 @@ def service_status_info(request):
         'is_active': bool(suz_account),
         'token_valid': False,
         'expires_in_seconds': 0,
-        'can_manage': is_admin(request.user),
+        'can_manage': bool(request.user.is_superuser),
     }
 
     if suz_account and suz_account.is_token_valid:

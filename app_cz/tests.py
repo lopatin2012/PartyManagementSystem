@@ -1822,6 +1822,180 @@ class CodeSyncFilterTests(TestCase):
 
 
 
+class AvailableProductsInfoTests(TestCase):
+    """Список продуктов для генерации УИП: полная карточка без N+1."""
+
+    GTIN_UNIT = '04601751026061'
+    GTIN_GROUP = '04601751026062'
+
+    def setUp(self):
+        self.factory = Factory.objects.create(name='Калач')
+        workshop = Workshop.objects.create(factory=self.factory, name='Цех 1')
+        line = Line.objects.create(workshop=workshop, name='Линия 1')
+        product = Product.objects.create(
+            group=ProductGroupChoices.MILK,
+            name='Сыр Natura "Сливочный" 400 г',
+            shelf_life_in_days=45,
+            item_condition=StateConditionChoices.READY_ORDER_KM,
+            card_status=CardStateChoices.PUBLISHED,
+        )
+        ProductPackaging.objects.create(
+            product=product, level=PackagingLevelChoices.UNIT,
+            gtin=self.GTIN_UNIT, quantity_inside=1,
+        )
+        ProductPackaging.objects.create(
+            product=product, level=PackagingLevelChoices.GROUP,
+            gtin=self.GTIN_GROUP, quantity_inside=10,
+        )
+        self.sku = ProductSKU.objects.create(
+            product=product, article='91307',
+            type_formation_uip=TypeFormationUIP.general,
+        )
+        ProductProductionLocation.objects.create(
+            product_sku=self.sku, line=line,
+        )
+
+    def test_full_product_info(self):
+        products = party_service.get_available_products()
+
+        self.assertEqual(len(products), 1)
+        item = products[0]
+        self.assertEqual(item['sku_id'], str(self.sku.id))
+        self.assertEqual(item['product_id'], str(self.sku.product_id))
+        self.assertEqual(item['name'], 'Сыр Natura "Сливочный" 400 г')
+        self.assertEqual(item['article'], '91307')
+        self.assertEqual(item['gtin'], self.GTIN_UNIT)
+        self.assertEqual(item['group_label'], 'Молочная продукция')
+        self.assertEqual(item['type_label'], 'Обычный')
+        self.assertEqual(item['shelf_life_in_days'], 45)
+        self.assertEqual(item['factories'], ['Калач'])
+        self.assertEqual(
+            {packing['level'] for packing in item['packagings']},
+            {PackagingLevelChoices.UNIT, PackagingLevelChoices.GROUP},
+        )
+
+    def test_no_n_plus_one_queries(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        # Пять продуктов: с prefetch число запросов не должно расти.
+        for index in range(4):
+            product = Product.objects.create(
+                group=ProductGroupChoices.MILK,
+                name=f'Продукт {index}',
+                shelf_life_in_days=14,
+                item_condition=StateConditionChoices.READY_ORDER_KM,
+                card_status=CardStateChoices.PUBLISHED,
+            )
+            ProductPackaging.objects.create(
+                product=product, level=PackagingLevelChoices.UNIT,
+                gtin=f'0460175102607{index}', quantity_inside=1,
+            )
+            ProductSKU.objects.create(product=product, article=f'P{index}')
+
+        with CaptureQueriesContext(connection) as context:
+            products = party_service.get_available_products()
+
+        self.assertEqual(len(products), 5)
+        self.assertLessEqual(len(context.captured_queries), 6)
+
+
+class SuzManagementPermissionsTests(TestCase):
+    """Управление СУЗ доступно только суперпользователю."""
+
+    def setUp(self):
+        self.account = SUZAccount.objects.create(
+            is_active=True,
+            certificate_name='Сертификат',
+            serial_number='SN-SUZ-PERM',
+            inn='1234567890',
+            oms_id='oms',
+            device_name='device',
+            connection_identifier='conn',
+            dynamic_token='token',
+            token_expires_at=timezone.now() + timedelta(hours=2),
+        )
+        self.staff = User.objects.create_user(
+            username='suz-perm-staff', password='pass', is_staff=True,
+        )
+        self.superuser = User.objects.create_superuser(
+            username='suz-perm-root', password='pass', email='root@test.local',
+        )
+
+    def test_certificates_require_superuser(self):
+        self.client.force_login(self.staff)
+
+        response = self.client.get('/cz/api/get-suz-certificates/')
+
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_setup_requires_superuser(self):
+        self.client.force_login(self.staff)
+
+        with patch('app_cz.views.get_list_certificates') as certs:
+            response = self.client.post(
+                '/cz/api/setup-suz-account/',
+                data={'serial_number': 'SN-SUZ-PERM'},
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 403)
+        certs.assert_not_called()
+
+    def test_reset_requires_superuser(self):
+        self.client.force_login(self.staff)
+
+        response = self.client.post('/cz/api/reset-suz-account/')
+
+        self.assertEqual(response.status_code, 403)
+        self.account.refresh_from_db()
+        self.assertTrue(self.account.is_active)
+
+    def test_reset_works_for_superuser(self):
+        self.client.force_login(self.superuser)
+
+        response = self.client.post('/cz/api/reset-suz-account/')
+
+        self.assertEqual(response.status_code, 200)
+        self.account.refresh_from_db()
+        self.assertFalse(self.account.is_active)
+
+    def test_auth_key_requires_superuser(self):
+        self.client.force_login(self.staff)
+
+        response = self.client.get('/cz/api/get-auth-key/')
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_refresh_requires_superuser(self):
+        self.client.force_login(self.staff)
+
+        with patch('app_cz.views.refresh_suz_dynamic_token') as refresh:
+            response = self.client.post('/cz/api/refresh-suz-token/')
+
+        self.assertEqual(response.status_code, 403)
+        refresh.assert_not_called()
+
+    def test_refresh_works_for_superuser(self):
+        self.client.force_login(self.superuser)
+
+        with patch(
+            'app_cz.views.refresh_suz_dynamic_token', return_value=True,
+        ):
+            response = self.client.post('/cz/api/refresh-suz-token/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['success'])
+
+    def test_anonymous_denied(self):
+        for url in (
+            '/cz/api/get-suz-certificates/',
+            '/cz/api/get-auth-key/',
+        ):
+            response = self.client.get(url)
+            self.assertIn(response.status_code, (401, 403), url)
+
+
 class GenerateCzUipFormatTests(TestCase):
     """Генерация через ЧЗ отправляет productionDate полным ISO 8601 (…Z)."""
 

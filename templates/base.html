@@ -96,7 +96,9 @@
                 {% if is_admin %}
                     {% if not status_suz.is_active %}
                         <p class="status-text">Требуется первичная настройка</p>
-                        <button class="btn-status-action" onclick="openSuzModal()">Настроить СУЗ</button>
+                        {% if status_suz.can_manage %}
+                            <button class="btn-status-action" onclick="openSuzModal()">Настроить СУЗ</button>
+                        {% endif %}
                     {% elif not status_suz.token_valid %}
                         <p class="status-text">Токен истёк или отсутствует</p>
                         {% if status_suz.can_manage %}

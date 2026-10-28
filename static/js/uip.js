@@ -102,6 +102,149 @@ function getSelectedProduct() {
     return availableProducts.find(p => String(p.sku_id) === String(skuId)) || null;
 }
 
+/** Продукт по sku_id (для подсказки). */
+function findProduct(skuId) {
+    return availableProducts.find(p => String(p.sku_id) === String(skuId)) || null;
+}
+
+/**
+ * Полная карточка продукта: название, GTIN, артикул, группа, срок годности,
+ * тип формирования, все упаковки и заводы.
+ */
+function buildProductDetailsHtml(product) {
+    if (!product) return '';
+
+    const type = product.type_label
+        || TYPE_FORMATION_LABELS[product.type_formation_uip]
+        || ('Тип ' + product.type_formation_uip);
+
+    const packagings = (product.packagings || []).map(p => {
+        const inactive = p.is_active === false ? ' · неактивна' : '';
+        return `<span class="sp-chip" title="${escapeHtml(p.level_label)} · ${escapeHtml(p.gtin)}${inactive}">` +
+            `${escapeHtml(p.level_label)}: ${escapeHtml(p.gtin)}${inactive}</span>`;
+    }).join('');
+
+    const factories = (product.factories && product.factories.length)
+        ? product.factories.map(f => `<span class="sp-chip">${escapeHtml(f)}</span>`).join('')
+        : '<span class="sp-muted">не указаны</span>';
+
+    const shelf = product.shelf_life_in_days != null
+        ? `${product.shelf_life_in_days} дн.`
+        : '—';
+
+    return `
+        <div class="sp-name">${escapeHtml(product.name)}</div>
+        <div class="sp-grid">
+            <div class="sp-field">
+                <span class="sp-label">GTIN</span>
+                <span class="sp-value mono">${escapeHtml(product.gtin)}</span>
+            </div>
+            <div class="sp-field">
+                <span class="sp-label">Артикул</span>
+                <span class="sp-value mono">${escapeHtml(product.article)}</span>
+            </div>
+            <div class="sp-field">
+                <span class="sp-label">Товарная группа</span>
+                <span class="sp-value">${escapeHtml(product.group_label || '—')}</span>
+            </div>
+            <div class="sp-field">
+                <span class="sp-label">Срок годности</span>
+                <span class="sp-value">${escapeHtml(shelf)}</span>
+            </div>
+            <div class="sp-field">
+                <span class="sp-label">Тип формирования</span>
+                <span class="sp-value">${escapeHtml(type)}</span>
+            </div>
+        </div>
+        <div class="sp-section">
+            <span class="sp-label">Упаковки</span>
+            <div class="sp-chips">${packagings || '<span class="sp-muted">нет</span>'}</div>
+        </div>
+        <div class="sp-section">
+            <span class="sp-label">Заводы</span>
+            <div class="sp-chips">${factories}</div>
+        </div>
+    `;
+}
+
+/** Карточка выбранного продукта под списком. */
+function renderSelectedProduct() {
+    const box = document.getElementById('selectedProductInfo');
+    if (!box) return;
+
+    const product = getSelectedProduct();
+    if (!product) {
+        box.innerHTML = '';
+        box.classList.add('hidden');
+        return;
+    }
+
+    const type = product.type_label
+        || TYPE_FORMATION_LABELS[product.type_formation_uip]
+        || ('Тип ' + product.type_formation_uip);
+
+    box.innerHTML =
+        `<div class="sp-header"><span>Выбранный продукт</span>` +
+        `<span class="sp-type">${escapeHtml(type)}</span></div>` +
+        buildProductDetailsHtml(product);
+    box.classList.remove('hidden');
+}
+
+// ==========================================
+// Подсказка при наведении на продукт
+// ==========================================
+let productTooltipEl = null;
+
+function ensureProductTooltip() {
+    if (productTooltipEl) return productTooltipEl;
+    productTooltipEl = document.createElement('div');
+    productTooltipEl.className = 'product-tooltip hidden';
+    productTooltipEl.id = 'productTooltip';
+    document.body.appendChild(productTooltipEl);
+    return productTooltipEl;
+}
+
+function showProductTooltip(skuId) {
+    const product = findProduct(skuId);
+    if (!product) return;
+
+    const type = product.type_label
+        || TYPE_FORMATION_LABELS[product.type_formation_uip]
+        || ('Тип ' + product.type_formation_uip);
+
+    const tooltip = ensureProductTooltip();
+    tooltip.innerHTML =
+        `<div class="sp-header"><span>${escapeHtml(product.article)}</span>` +
+        `<span class="sp-type">${escapeHtml(type)}</span></div>` +
+        buildProductDetailsHtml(product);
+    tooltip.classList.remove('hidden');
+}
+
+function moveProductTooltip(event) {
+    if (!productTooltipEl || productTooltipEl.classList.contains('hidden')) return;
+
+    const margin = 14;
+    const rect = productTooltipEl.getBoundingClientRect();
+    let x = event.clientX + margin;
+    let y = event.clientY + margin;
+
+    if (x + rect.width > window.innerWidth - 8) {
+        x = event.clientX - rect.width - margin;
+    }
+    if (y + rect.height > window.innerHeight - 8) {
+        y = event.clientY - rect.height - margin;
+    }
+
+    productTooltipEl.style.left = Math.max(8, x) + 'px';
+    productTooltipEl.style.top = Math.max(8, y) + 'px';
+}
+
+function hideProductTooltip() {
+    if (productTooltipEl) {
+        productTooltipEl.classList.add('hidden');
+    }
+}
+
 /** Показывает тип формирования УИП выбранного продукта. */
 function updateFormationType() {
     const el = document.getElementById('formationType');
@@ -185,6 +328,8 @@ function renderProductList() {
 
     if (!filteredProducts.length) {
         list.innerHTML = '<div class="empty-products">Ничего не найдено</div>';
+        hideProductTooltip();
+        renderSelectedProduct();
         return;
     }
 
@@ -195,7 +340,7 @@ function renderProductList() {
     if (checkedIndex === -1) checkedIndex = 0;
 
     list.innerHTML = visible.map((p, i) => `
-        <label class="product-item">
+        <label class="product-item" data-sku-id="${p.sku_id}">
             <input type="radio" name="product" value="${p.sku_id}"
                    data-gtin="${p.gtin}" data-article="${escapeHtml(p.article)}"
                    data-type="${p.type_formation_uip}"
@@ -208,6 +353,15 @@ function renderProductList() {
         </label>
     `).join('');
 
+    // Подсказка с полной карточкой при наведении.
+    hideProductTooltip();
+    list.querySelectorAll('.product-item').forEach(item => {
+        const skuId = item.dataset.skuId;
+        item.addEventListener('mouseenter', () => showProductTooltip(skuId));
+        item.addEventListener('mousemove', moveProductTooltip);
+        item.addEventListener('mouseleave', hideProductTooltip);
+    });
+
     const checked = list.querySelector('input[type=radio]:checked');
     if (checked) {
         selectedSkuId = checked.value;
@@ -215,6 +369,7 @@ function renderProductList() {
         updateFormationType();
         updatePartyVisibility();
     }
+    renderSelectedProduct();
 }
 
 /** Счётчик найденного. */
@@ -252,6 +407,7 @@ function onProductSelect(radio) {
     updateFormationType();
     updatePartyVisibility();
     updateGenerateButtonState();
+    renderSelectedProduct();
 }
 
 /** ISO-неделя и день недели (как date.isocalendar() в Python). */
@@ -488,6 +644,7 @@ function openGenerateModal() {
 }
 
 function closeGenerateModal() {
+    hideProductTooltip();
     document.getElementById('generateModal').classList.add('hidden');
 }
 

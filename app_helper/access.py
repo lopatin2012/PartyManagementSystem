@@ -228,6 +228,23 @@ class IsAppAdmin(BasePermission):
         return is_admin(request.user)
 
 
+class IsSuperUser(BasePermission):
+    """
+    Только суперпользователь.
+
+    Используется для управления учётной записью СУЗ (настройка, сброс,
+    обновление токена, список сертификатов): это чувствительные операции,
+    которые не должны быть доступны обычным администраторам.
+    """
+    message = 'Доступ только для суперпользователя.'
+
+    def has_permission(self, request, view) -> bool:
+        user = request.user
+        return bool(
+            user and user.is_authenticated and user.is_superuser
+        )
+
+
 class CanGenerateUip(BasePermission):
     """Право на генерацию/резервирование УИП."""
     message = 'Нет права на генерацию УИП.'
