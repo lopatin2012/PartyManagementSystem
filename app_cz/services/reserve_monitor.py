@@ -23,6 +23,8 @@ import logging
 from datetime import timedelta
 
 import requests
+
+from app_helper import external_http
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
@@ -144,7 +146,8 @@ def _fetch_code_by_gtin(uip: UIP) -> str:
     api_url = f"{url.rstrip('/')}/codes/api/get_code_by_gtin/"
     try:
         logger.info(f'Запрос кода по GTIN {gtin} у внешнего сервиса ({url})')
-        response = requests.get(
+        response = external_http.get(
+            'factory',
             api_url,
             params={'gtin': gtin},
             headers={'Accept': 'application/json'},
@@ -195,7 +198,8 @@ def _fetch_code_for_task(uip: UIP, task_uuid: str) -> str:
     api_url = f"{url.rstrip('/')}/codes/api/get_any_code_for_task/{task_uuid}/"
     try:
         logger.info(f'Запрос кода из задания {task_uuid} у внешнего сервиса ({url})')
-        response = requests.get(
+        response = external_http.get(
+            'factory',
             api_url,
             headers={'Accept': 'application/json'},
             timeout=30,

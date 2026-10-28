@@ -5,6 +5,7 @@ from datetime import timedelta
 
 import requests
 
+from app_helper import external_http
 from django.utils import timezone
 
 from app_factory.models import (
@@ -42,7 +43,8 @@ PRODUCT_SET_UIP_TYPE_PATH = 'workshop/api/v1/product-set-uip-type/'
 def _http_get(url: str, path: str):
     """GET с обработкой ошибок. Возвращает список или None."""
     try:
-        response = requests.get(
+        response = external_http.get(
+            'factory',
             f'{url.rstrip("/")}/{path}',
             headers={'Accept': 'application/json'},
             timeout=REQUEST_TIMEOUT,
@@ -65,7 +67,8 @@ def _http_get(url: str, path: str):
 def _push_uuid(url: str, path: str, payload: dict) -> bool:
     """Отправляет uuid СУП во внешний сервис. Возвращает True при успехе."""
     try:
-        response = requests.post(
+        response = external_http.post(
+            'factory',
             f'{url.rstrip("/")}/{path}',
             json=payload,
             headers={'Accept': 'application/json'},

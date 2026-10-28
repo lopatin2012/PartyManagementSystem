@@ -33,13 +33,13 @@ import time
 from datetime import timedelta
 
 from django.conf import settings
-from django.db import OperationalError, ProgrammingError, connection
-from django.db.models import Max, Sum
+from django.db import OperationalError, ProgrammingError, connection, transaction
+from django.db.models import Count, Max, Sum
 from django.db.models.functions import TruncHour, TruncMinute
 from django.utils import timezone
 
-from app_event.models import RequestMetric
-from app_helper import load_tracker
+from app_event.models import ExternalCallMetric, RequestMetric, SystemMetric
+from app_helper import load_tracker, system_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,35 @@ KEY_COLUMNS = (
     'bucket_start', 'group', 'method', 'status_class', 'traffic_class',
 )
 
+# Исходящие вызовы: отдельная таблица и ключ.
+EXTERNAL_COLUMNS = (
+    'bucket_start', 'service', 'method', 'outcome',
+    'count', 'errors', 'total_ms', 'max_ms',
+    *HISTOGRAM_FIELDS,
+)
+EXTERNAL_KEY_COLUMNS = ('bucket_start', 'service', 'method', 'outcome')
+
+# Метрики инфраструктуры (CPU/RAM/Postgres).
+SYSTEM_COLUMNS = ('bucket_start', 'metric', 'kind', 'value', 'max_value')
+SYSTEM_KEY_COLUMNS = ('bucket_start', 'metric', 'kind')
+
+SYSTEM_UNITS = {
+    'cpu_percent': '%',
+    'mem_percent': '%',
+    'load1': '',
+    'load5': '',
+    'web_rss_mb': 'МБ',
+    'db_active_connections': '',
+    'db_idle_in_tx': '',
+    'db_connections': '',
+    'db_max_connections': '',
+    'db_size_mb': 'МБ',
+    'db_xact_commit': '/мин',
+    'db_xact_rollback': '/мин',
+    'db_blks_read': '/мин',
+    'db_temp_bytes': 'МБ/мин',
+}
+
 RANGE_CONFIG = {
     '1h': {'minutes': 60, 'resolution': 'minute', 'label': '1 час'},
     '24h': {'minutes': 24 * 60, 'resolution': 'hour', 'label': '24 часа'},
@@ -87,6 +116,8 @@ DEFAULT_RANGE = '1h'
 
 _lock = threading.Lock()
 _rows: dict[tuple, dict] = {}
+_external_rows: dict[tuple, dict] = {}
+_system_rows: dict[tuple, dict] = {}
 _inflight = 0
 _inflight_peaks: dict = {}
 _last_flush = time.monotonic()
@@ -177,6 +208,8 @@ def reset() -> None:
     global _inflight, _disabled, _last_flush
     with _lock:
         _rows.clear()
+        _external_rows.clear()
+        _system_rows.clear()
         _inflight_peaks.clear()
         _inflight = 0
         _disabled = False
@@ -261,6 +294,69 @@ def pending_count() -> int:
         return len(_rows)
 
 
+def pending_external_count() -> int:
+    """Сколько записей о внешних вызовах ждёт записи в БД."""
+    with _lock:
+        return len(_external_rows)
+
+
+def record_external_call(*, service: str, method: str, outcome: str,
+                         duration_ms: float) -> None:
+    """Добавить один исходящий HTTP-вызов в минутный аккумулятор."""
+    if _disabled:
+        return
+
+    minute = _minute_start()
+    service = (service or 'other')[:30]
+    method = (method or 'GET')[:10].upper()
+    outcome = (outcome or 'ok')[:10]
+    duration = max(0, int(round(duration_ms)))
+    histogram = _histogram_field(duration)
+    key = (minute, service, method, outcome)
+
+    with _lock:
+        row = _external_rows.get(key)
+        if row is None:
+            if len(_external_rows) >= MAX_PENDING_ROWS:
+                return
+            row = {
+                'bucket_start': minute,
+                'service': service,
+                'method': method,
+                'outcome': outcome,
+                'count': 0,
+                'errors': 0,
+                'total_ms': 0,
+                'max_ms': 0,
+                **{field: 0 for field in HISTOGRAM_FIELDS},
+            }
+            _external_rows[key] = row
+
+        row['count'] += 1
+        if outcome != 'ok':
+            row['errors'] += 1
+        row['total_ms'] += duration
+        if duration > row['max_ms']:
+            row['max_ms'] = duration
+        row[histogram] += 1
+
+    _maybe_flush()
+
+
+def _merge_external_row(item: dict) -> None:
+    """Вернуть несохранённый внешний вызов в аккумулятор (под _lock)."""
+    key = tuple(item[column] for column in EXTERNAL_KEY_COLUMNS)
+    target = _external_rows.get(key)
+    if target is None:
+        _external_rows[key] = dict(item)
+        return
+    for field in ('count', 'errors', 'total_ms'):
+        target[field] += item.get(field) or 0
+    target['max_ms'] = max(target['max_ms'], item.get('max_ms') or 0)
+    for field in HISTOGRAM_FIELDS:
+        target[field] += item.get(field) or 0
+
+
 def _merge_row(item: dict) -> None:
     """Вернуть несохранённую строку в аккумулятор (вызывать под _lock)."""
     key = tuple(item[column] for column in KEY_COLUMNS)
@@ -285,23 +381,66 @@ def _maybe_flush() -> None:
     """Пишем в БД не чаще, чем раз в `REQUEST_METRICS_FLUSH_SECONDS`."""
     global _last_flush
     with _lock:
-        if not _rows:
-            return
         if time.monotonic() - _last_flush < _flush_interval():
             return
         _last_flush = time.monotonic()
     flush_metrics()
 
 
+def _apply_system_samples(samples: dict) -> None:
+    """Добавить сэмплы инфраструктуры в минутный аккумулятор (под _lock)."""
+    minute = _minute_start()
+    for metric, payload in samples.items():
+        kind, value = payload
+        key = (minute, metric, kind)
+        row = _system_rows.get(key)
+        if row is None:
+            row = {
+                'bucket_start': minute,
+                'metric': metric,
+                'kind': kind,
+                'value': 0.0,
+                'max_value': 0.0,
+            }
+            _system_rows[key] = row
+        if kind == 'counter':
+            row['value'] += value
+        elif value > row['value']:
+            row['value'] = value
+        if value > row['max_value']:
+            row['max_value'] = value
+
+
+def _merge_system_row(item: dict) -> None:
+    """Вернуть несохранённый сэмпл в аккумулятор (под _lock)."""
+    key = tuple(item[column] for column in SYSTEM_KEY_COLUMNS)
+    target = _system_rows.get(key)
+    if target is None:
+        _system_rows[key] = dict(item)
+        return
+    if item['kind'] == 'counter':
+        target['value'] += item['value']
+    else:
+        target['value'] = max(target['value'], item['value'])
+    target['max_value'] = max(target['max_value'], item['max_value'])
+
+
 def flush_metrics() -> int:
-    """Записать аккумулятор в БД. Возвращает число сохранённых строк."""
+    """Записать аккумуляторы в БД. Возвращает число строк запросов."""
     global _disabled, _inflight_peaks
 
+    samples = system_metrics.collect_samples()
+
     with _lock:
-        if not _rows:
+        _apply_system_samples(samples)
+        if not _rows and not _external_rows and not _system_rows:
             return 0
         snapshot = list(_rows.values())
         _rows.clear()
+        external_snapshot = list(_external_rows.values())
+        _external_rows.clear()
+        system_snapshot = list(_system_rows.values())
+        _system_rows.clear()
         peaks = dict(_inflight_peaks)
         cutoff = _minute_start() - timedelta(hours=1)
         _inflight_peaks = {
@@ -318,14 +457,23 @@ def flush_metrics() -> int:
             peaks.get(item['bucket_start'], 0),
         )
         rows.append(item)
+    external_rows = [dict(row) for row in external_snapshot]
+    system_rows = [dict(row) for row in system_snapshot]
 
     try:
-        _write_rows(rows)
+        with transaction.atomic():
+            _write_rows(rows)
+            _write_external_rows(external_rows)
+            _write_system_rows(system_rows)
     except Exception as exc:  # noqa: BLE001 — метрики не должны ломать запрос
         logger.exception(f'Не удалось сохранить метрики запросов: {exc}')
         with _lock:
             for item in rows:
                 _merge_row(item)
+            for item in external_rows:
+                _merge_external_row(item)
+            for item in system_rows:
+                _merge_system_row(item)
         _disable_on_error(exc)
         return 0
 
@@ -350,6 +498,8 @@ def _disable_on_error(exc) -> None:
         _disabled = True
         with _lock:
             _rows.clear()
+            _external_rows.clear()
+            _system_rows.clear()
         return
     logger.warning(f'Метрики запросов временно недоступны: {exc}')
 
@@ -391,6 +541,70 @@ def _write_rows(rows: list) -> None:
         return
     sql = _upsert_sql()
     params = [tuple(item[column] for column in COLUMNS) for item in rows]
+    with connection.cursor() as cursor:
+        cursor.executemany(sql, params)
+
+
+def _external_upsert_sql() -> str:
+    placeholders = ', '.join(['%s'] * len(EXTERNAL_COLUMNS))
+    updates = []
+    for column in EXTERNAL_COLUMNS:
+        if column in EXTERNAL_KEY_COLUMNS:
+            continue
+        if column == 'max_ms':
+            updates.append(
+                'max_ms = GREATEST('
+                'app_event_externalcallmetric.max_ms, EXCLUDED.max_ms)'
+            )
+        else:
+            updates.append(
+                f'{column} = app_event_externalcallmetric.{column} '
+                f'+ EXCLUDED.{column}'
+            )
+    columns = ', '.join(EXTERNAL_COLUMNS)
+    return (
+        f'INSERT INTO app_event_externalcallmetric ({columns}) '
+        f'VALUES ({placeholders}) '
+        f'ON CONFLICT (bucket_start, service, method, outcome) '
+        f'DO UPDATE SET {", ".join(updates)}'
+    )
+
+
+def _write_external_rows(rows: list) -> None:
+    """UPSERT пачки внешних вызовов одним executemany."""
+    if not rows:
+        return
+    sql = _external_upsert_sql()
+    params = [
+        tuple(item[column] for column in EXTERNAL_COLUMNS) for item in rows
+    ]
+    with connection.cursor() as cursor:
+        cursor.executemany(sql, params)
+
+
+def _system_upsert_sql() -> str:
+    placeholders = ', '.join(['%s'] * len(SYSTEM_COLUMNS))
+    columns = ', '.join(SYSTEM_COLUMNS)
+    return (
+        f'INSERT INTO app_event_systemmetric ({columns}) '
+        f'VALUES ({placeholders}) '
+        f'ON CONFLICT (bucket_start, metric, kind) DO UPDATE SET '
+        f'value = CASE WHEN EXCLUDED.kind = \'counter\' '
+        f'THEN app_event_systemmetric.value + EXCLUDED.value '
+        f'ELSE GREATEST(app_event_systemmetric.value, EXCLUDED.value) END, '
+        f'max_value = GREATEST('
+        f'app_event_systemmetric.max_value, EXCLUDED.max_value)'
+    )
+
+
+def _write_system_rows(rows: list) -> None:
+    """UPSERT пачки сэмплов инфраструктуры."""
+    if not rows:
+        return
+    sql = _system_upsert_sql()
+    params = [
+        tuple(item[column] for column in SYSTEM_COLUMNS) for item in rows
+    ]
     with connection.cursor() as cursor:
         cursor.executemany(sql, params)
 
@@ -857,17 +1071,477 @@ def get_top_groups(range_key: str = DEFAULT_RANGE, limit: int = 10) -> dict:
     }
 
 
+SERVICE_LABELS = {
+    'cz': 'Честный Знак (True API)',
+    'nk': 'Национальный каталог',
+    'suz': 'СУЗ-Облако',
+    'sign': 'Сервис подписей',
+    'factory': 'Серверы заводов',
+    '1c': '1С',
+    'cz_rate_limit': 'Ожидание лимита ЧЗ',
+    'probe': 'Проверки доступности',
+}
+
+
+def _empty_external() -> dict:
+    totals = {'count': 0, 'errors': 0, 'total_ms': 0, 'max_ms': 0}
+    totals.update({field: 0 for field in HISTOGRAM_FIELDS})
+    return totals
+
+
+def _add_external(target: dict, source: dict) -> None:
+    for field in ('count', 'errors', 'total_ms'):
+        target[field] += source.get(field) or 0
+    target['max_ms'] = max(target['max_ms'], source.get('max_ms') or 0)
+    for field in HISTOGRAM_FIELDS:
+        target[field] += source.get(field) or 0
+
+
+def _safe_external(start):
+    if _disabled:
+        return None
+    try:
+        return list(
+            ExternalCallMetric.objects
+            .filter(bucket_start__gte=start)
+            .values('service')
+            .annotate(
+                count=Sum('count'),
+                errors=Sum('errors'),
+                total_ms=Sum('total_ms'),
+                max_ms=Max('max_ms'),
+                **{field: Sum(field) for field in HISTOGRAM_FIELDS},
+            )
+        )
+    except (ProgrammingError, OperationalError) as exc:
+        _disable_on_error(exc)
+        return None
+
+
+def get_external_stats(minutes: int = 60) -> dict:
+    """Сводка исходящих HTTP-вызовов по сервисам за окно."""
+    minutes = max(1, int(minutes))
+    end = timezone.now()
+    start = _minute_start(end - timedelta(minutes=minutes))
+
+    rows = _safe_external(start)
+    source = 'db'
+    if rows is None:
+        rows = []
+        source = 'memory'
+
+    by_service: dict = {}
+    for row in rows:
+        _add_external(
+            by_service.setdefault(row['service'], _empty_external()), row,
+        )
+
+    with _lock:
+        pending = [
+            dict(row) for row in _external_rows.values()
+            if row['bucket_start'] >= start
+        ]
+    for row in pending:
+        _add_external(
+            by_service.setdefault(row['service'], _empty_external()), row,
+        )
+
+    services = []
+    for service, totals in by_service.items():
+        count = totals['count']
+        services.append({
+            'service': service,
+            'label': SERVICE_LABELS.get(service, service),
+            'count': count,
+            'errors': totals['errors'],
+            'error_rate': (totals['errors'] / count) if count else 0.0,
+            'avg_ms': round(totals['total_ms'] / count, 1) if count else 0,
+            'max_ms': totals['max_ms'],
+            'p95_ms': _p95_ms(
+                {field: totals[field] for field in HISTOGRAM_FIELDS},
+                count,
+                totals['max_ms'],
+            ),
+        })
+    services.sort(key=lambda item: item['count'], reverse=True)
+
+    return {
+        'minutes': minutes,
+        'start': start,
+        'end': end,
+        'services': services,
+        'total': sum(item['count'] for item in services),
+        'errors': sum(item['errors'] for item in services),
+        'has_data': bool(services),
+        'source': source,
+    }
+
+
+def external_error_threshold() -> float:
+    try:
+        return float(getattr(settings, 'EXTERNAL_ERROR_RATE_THRESHOLD', 0.2))
+    except (TypeError, ValueError):
+        return 0.2
+
+
+def external_min_calls() -> int:
+    try:
+        return max(1, int(getattr(settings, 'EXTERNAL_MIN_CALLS', 5)))
+    except (TypeError, ValueError):
+        return 5
+
+
+def external_check(minutes: int = 60) -> dict:
+    """Проверка «Внешние API» для health/status: доля ошибок по сервисам."""
+    stats = get_external_stats(minutes)
+    services = stats['services']
+    threshold = external_error_threshold()
+    minimum = external_min_calls()
+
+    problems = [
+        item for item in services
+        # Проверки доступности не считаем бизнес-ошибками: для них есть
+        # отдельный чек «Заводы/подписи».
+        if item['service'] != 'probe'
+        and item['count'] >= minimum
+        and item['error_rate'] > threshold
+    ]
+
+    if not services:
+        message = 'Нет данных о внешних вызовах'
+        ok = True
+    elif problems:
+        ok = False
+        message = 'Ошибки внешних API: ' + '; '.join(
+            f'{item["label"]} {item["error_rate"]:.1%} '
+            f'({item["errors"]}/{item["count"]})'
+            for item in problems
+        )
+    else:
+        ok = True
+        message = (
+            f'Внешние API: {stats["total"]} вызовов, '
+            f'ошибок {stats["errors"]}'
+        )
+
+    return {
+        'name': 'Внешние API',
+        'ok': ok,
+        'message': message,
+        'details': {
+            'services': services,
+            'problems': [item['service'] for item in problems],
+            'threshold': threshold,
+            'min_calls': minimum,
+            'has_data': stats['has_data'],
+            'source': stats['source'],
+        },
+    }
+
+
+def queue_max_ready() -> int:
+    try:
+        return max(1, int(getattr(settings, 'QUEUE_MAX_READY', 20)))
+    except (TypeError, ValueError):
+        return 20
+
+
+def queue_max_ready_age_seconds() -> int:
+    try:
+        return max(30, int(getattr(settings, 'QUEUE_MAX_READY_AGE_SECONDS', 600)))
+    except (TypeError, ValueError):
+        return 600
+
+
+def queue_max_failed_per_hour() -> int:
+    try:
+        return max(1, int(getattr(settings, 'QUEUE_MAX_FAILED_PER_HOUR', 5)))
+    except (TypeError, ValueError):
+        return 5
+
+
+def get_queue_stats(hours: int = 1) -> dict:
+    """Состояние очереди django-tasks-db и длительности задач за `hours`."""
+    from django_tasks.base import TaskResultStatus
+    from django_tasks_db.models import DBTaskResult
+
+    now = timezone.now()
+    since = now - timedelta(hours=max(1, int(hours)))
+    try:
+        by_status = {
+            str(row['status']): row['count']
+            for row in DBTaskResult.objects
+            .values('status')
+            .annotate(count=Count('id'))
+        }
+        ready_qs = DBTaskResult.objects.filter(status=TaskResultStatus.READY)
+        oldest = (
+            ready_qs.order_by('enqueued_at')
+            .values_list('enqueued_at', flat=True)
+            .first()
+        )
+        finished_qs = DBTaskResult.objects.filter(
+            status__in=[
+                TaskResultStatus.SUCCESSFUL, TaskResultStatus.FAILED,
+            ],
+            finished_at__gte=since,
+        )
+        durations = []
+        for started, finished in finished_qs.values_list(
+                'started_at', 'finished_at')[:1000]:
+            if started and finished:
+                durations.append((finished - started).total_seconds() * 1000)
+        failures = DBTaskResult.objects.filter(
+            status=TaskResultStatus.FAILED,
+            finished_at__gte=since,
+        ).count()
+    except (ProgrammingError, OperationalError) as exc:
+        logger.warning(f'Статистика очереди недоступна: {exc}')
+        return {
+            'available': False,
+            'ready': 0,
+            'running': 0,
+            'oldest_ready_age_seconds': 0,
+            'finished_hour': 0,
+            'failed_hour': 0,
+            'p95_duration_ms': 0,
+            'max_duration_ms': 0,
+            'has_data': False,
+        }
+
+    durations.sort()
+    p95 = 0
+    if durations:
+        index = min(len(durations) - 1, int(len(durations) * 0.95))
+        p95 = round(durations[index], 1)
+
+    return {
+        'available': True,
+        'ready': int(by_status.get(str(TaskResultStatus.READY), 0)),
+        'running': int(by_status.get(str(TaskResultStatus.RUNNING), 0)),
+        'successful': int(by_status.get(str(TaskResultStatus.SUCCESSFUL), 0)),
+        'failed': int(by_status.get(str(TaskResultStatus.FAILED), 0)),
+        'oldest_ready_age_seconds': (
+            int((now - oldest).total_seconds()) if oldest else 0
+        ),
+        'finished_hour': len(durations),
+        'failed_hour': failures,
+        'p95_duration_ms': p95,
+        'max_duration_ms': round(durations[-1], 1) if durations else 0,
+        'has_data': bool(by_status),
+    }
+
+
+def queue_check() -> dict:
+    """Проверка «Очередь задач» для health/status."""
+    stats = get_queue_stats()
+    max_ready = queue_max_ready()
+    max_age = queue_max_ready_age_seconds()
+    max_failed = queue_max_failed_per_hour()
+
+    if not stats['available']:
+        ok = True
+        message = 'Очередь задач недоступна (нет таблицы dbtaskresult)'
+    elif stats['oldest_ready_age_seconds'] > max_age:
+        ok = False
+        message = (
+            f'Старейшая задача в очереди ждёт '
+            f'{stats["oldest_ready_age_seconds"] // 60} мин '
+            f'(порог {max_age // 60} мин)'
+        )
+    elif stats['ready'] > max_ready:
+        ok = False
+        message = (
+            f'В очереди {stats["ready"]} задач '
+            f'(порог {max_ready}), выполняется {stats["running"]}'
+        )
+    elif stats['failed_hour'] > max_failed:
+        ok = False
+        message = (
+            f'Ошибок фоновых задач за час: {stats["failed_hour"]} '
+            f'(порог {max_failed})'
+        )
+    else:
+        ok = True
+        message = (
+            f'Очередь в норме: готовы {stats["ready"]}, '
+            f'выполняются {stats["running"]}, '
+            f'ошибок за час {stats["failed_hour"]}'
+        )
+
+    return {
+        'name': 'Очередь задач',
+        'ok': ok,
+        'message': message,
+        'details': {
+            **stats,
+            'max_ready': max_ready,
+            'max_ready_age_seconds': max_age,
+            'max_failed_per_hour': max_failed,
+        },
+    }
+
+
+def _safe_system(start):
+    if _disabled:
+        return None
+    try:
+        return list(
+            SystemMetric.objects
+            .filter(bucket_start__gte=start)
+            .values('bucket_start', 'metric', 'kind', 'value', 'max_value')
+            .order_by('bucket_start')
+        )
+    except (ProgrammingError, OperationalError) as exc:
+        _disable_on_error(exc)
+        return None
+
+
+def get_system_stats(minutes: int = 60) -> dict:
+    """Последние значения инфраструктуры за окно."""
+    minutes = max(1, int(minutes))
+    end = timezone.now()
+    start = _minute_start(end - timedelta(minutes=minutes))
+
+    rows = _safe_system(start)
+    source = 'db'
+    if rows is None:
+        rows = []
+        source = 'memory'
+
+    with _lock:
+        pending = [
+            {
+                'bucket_start': row['bucket_start'],
+                'metric': row['metric'],
+                'kind': row['kind'],
+                'value': row['value'],
+                'max_value': row['max_value'],
+            }
+            for row in _system_rows.values()
+            if row['bucket_start'] >= start
+        ]
+
+    grouped = {}
+    for row in list(rows) + pending:
+        item = grouped.setdefault(
+            row['metric'],
+            {'kind': row['kind'], 'value': 0.0, 'max_value': 0.0},
+        )
+        if row['kind'] == 'counter':
+            item['value'] += row['value']
+        else:
+            item['value'] = row['value']  # строки по возрастанию минуты
+        item['max_value'] = max(item['max_value'], row['max_value'])
+
+    metrics = []
+    for name, item in grouped.items():
+        value = item['value']
+        if name == 'db_temp_bytes':
+            value = value / 1024 / 1024
+        metrics.append({
+            'metric': name,
+            'kind': item['kind'],
+            'value': round(value, 2),
+            'max': round(item['max_value'], 2),
+            'unit': SYSTEM_UNITS.get(name, ''),
+        })
+    metrics.sort(key=lambda item: item['metric'])
+
+    return {
+        'minutes': minutes,
+        'start': start,
+        'end': end,
+        'metrics': metrics,
+        'has_data': bool(metrics),
+        'has_host': any(
+            item['metric'] in ('cpu_percent', 'mem_percent', 'load1')
+            for item in metrics
+        ),
+        'source': source,
+    }
+
+
+def get_system_series(range_key: str = DEFAULT_RANGE) -> dict:
+    """Ряд CPU/RAM (%) для графика (часовые/минутные бакеты)."""
+    key, cfg = _range_settings(range_key)
+    end = timezone.now()
+    start = _minute_start(end - timedelta(minutes=cfg['minutes']))
+    if cfg['resolution'] == 'hour':
+        start = _hour_start(start)
+        trunc = TruncHour
+        step = timedelta(hours=1)
+    else:
+        trunc = TruncMinute
+        step = timedelta(minutes=1)
+
+    rows = []
+    if not _disabled:
+        try:
+            rows = list(
+                SystemMetric.objects
+                .filter(
+                    bucket_start__gte=start,
+                    kind='gauge',
+                    metric__in=('cpu_percent', 'mem_percent'),
+                )
+                .annotate(bucket=trunc('bucket_start'))
+                .values('bucket', 'metric')
+                .annotate(value=Max('value'))
+                .order_by('bucket')
+            )
+        except (ProgrammingError, OperationalError) as exc:
+            _disable_on_error(exc)
+
+    per_bucket = {}
+    for row in rows:
+        point = per_bucket.setdefault(
+            row['bucket'], {'cpu_percent': None, 'mem_percent': None},
+        )
+        point[row['metric']] = round(row['value'], 1)
+
+    points = []
+    bucket = start if cfg['resolution'] == 'hour' else _minute_start(start)
+    last = _hour_start(end) if cfg['resolution'] == 'hour' else _minute_start(end)
+    while bucket <= last:
+        point = per_bucket.get(bucket)
+        if point is not None:
+            points.append({
+                'bucket': bucket.isoformat(),
+                'cpu_percent': point['cpu_percent'],
+                'mem_percent': point['mem_percent'],
+            })
+        bucket += step
+
+    return {
+        'range': key,
+        'resolution': cfg['resolution'],
+        'available': bool(points),
+        'points': points,
+    }
+
+
 def get_dashboard_data(range_key: str = DEFAULT_RANGE) -> dict:
-    """Всё для дашборда: ряд, сводка, топы, пороги."""
+    """Всё для дашборда: ряд, сводка, топы, внешние вызовы, пороги."""
     key, cfg = _range_settings(range_key)
     series = get_series(key)
     summary = get_window_stats(cfg['minutes'])
     top = get_top_groups(key)
+    external = get_external_stats(cfg['minutes'])
+    system = get_system_stats(cfg['minutes'])
+    system_series = get_system_series(key)
+    queue = get_queue_stats()
 
     summary = dict(summary)
     for field in ('start', 'end'):
         if summary.get(field) is not None:
             summary[field] = summary[field].isoformat()
+    for field in ('start', 'end'):
+        if external.get(field) is not None:
+            external[field] = external[field].isoformat()
+    for field in ('start', 'end'):
+        if system.get(field) is not None:
+            system[field] = system[field].isoformat()
 
     return {
         'range': key,
@@ -878,6 +1552,10 @@ def get_dashboard_data(range_key: str = DEFAULT_RANGE) -> dict:
         'summary': summary,
         'top_groups': top['by_count'],
         'top_slow': top['by_p95'],
+        'external': external,
+        'system': system,
+        'system_series': system_series,
+        'queue': queue,
         'retention_days': retention_days(),
         'generated_at': timezone.now().isoformat(),
         'thresholds': {
@@ -907,6 +1585,14 @@ def prune_old_metrics() -> dict:
         deleted, _details = (
             RequestMetric.objects.filter(bucket_start__lt=cutoff).delete()
         )
+        deleted_external, _details = (
+            ExternalCallMetric.objects.filter(bucket_start__lt=cutoff).delete()
+        )
+        deleted += deleted_external
+        deleted_system, _details = (
+            SystemMetric.objects.filter(bucket_start__lt=cutoff).delete()
+        )
+        deleted += deleted_system
     except (ProgrammingError, OperationalError) as exc:
         _disable_on_error(exc)
         return {
@@ -915,7 +1601,10 @@ def prune_old_metrics() -> dict:
             'days': days,
             'message': f'Метрики запросов недоступны: {exc}',
         }
-    message = f'Удалено метрик запросов: {deleted} (старше {days} дн.)'
+    message = (
+        f'Удалено метрик запросов и внешних вызовов: {deleted} '
+        f'(старше {days} дн.)'
+    )
     logger.info(message)
     return {'is_error': False, 'deleted': deleted, 'days': days,
             'message': message}
@@ -929,7 +1618,7 @@ def _flush_at_exit() -> None:
     if 'test' in sys.argv:
         return
     try:
-        if _rows:
+        if _rows or _external_rows or _system_rows:
             flush_metrics()
     except Exception:  # noqa: BLE001 — на выходе уже нечего чинить
         pass

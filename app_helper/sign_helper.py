@@ -6,6 +6,8 @@ import os
 from datetime import datetime
 
 import requests
+
+from app_helper import external_http
 from django.core.exceptions import ObjectDoesNotExist
 
 from app_cz.models import SUZAccount
@@ -70,7 +72,8 @@ def _post_sign(endpoint: str, data: str, serial_number: str) -> str:
     }
 
     try:
-        response = requests.post(
+        response = external_http.post(
+            'sign',
             f'{base_url}{endpoint}',
             json=payload,
             timeout=SIGN_TIMEOUT,
@@ -103,7 +106,7 @@ def get_list_certificates() -> list:
     base_url = _get_signature_service_url()
 
     try:
-        response = requests.get(f'{base_url}/api/certificates/', timeout=SIGN_TIMEOUT)
+        response = external_http.get('sign', f'{base_url}/api/certificates/', timeout=SIGN_TIMEOUT)
     except requests.exceptions.RequestException as e:
         logger.error(f'Сетевая ошибка при обращении к сервису подписей ({base_url}/api/certificates/): {e}')
         return []

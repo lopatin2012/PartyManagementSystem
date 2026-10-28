@@ -53,7 +53,7 @@
         });
     }
 
-    function renderChart(container, points, series, resolution, formatValue) {
+    function renderChart(container, points, series, resolution, formatValue, forcedMax) {
         const width = 800;
         const height = 220;
         const padLeft = 60;
@@ -76,6 +76,9 @@
             });
         });
         max = Math.max(1, max);
+        if (forcedMax) {
+            max = Math.max(max, forcedMax);
+        }
 
         const stepX = count > 1 ? innerWidth / (count - 1) : 0;
         const x = function (index) {
@@ -156,6 +159,38 @@
         container.innerHTML = parts.join('');
     }
 
+    function renderExternalTable(tableId, services) {
+        const table = el(tableId);
+        if (!services || !services.length) {
+            table.innerHTML = '<tbody><tr><td class="mon-empty">' +
+                'Нет данных о внешних вызовах</td></tr></tbody>';
+            return;
+        }
+        const head = ['Сервис', 'Вызовов', 'Ошибок', 'Среднее', 'p95', 'Макс'];
+        const html = ['<thead><tr>'];
+        head.forEach(function (title, index) {
+            html.push('<th class="' + (index ? 'num' : '') + '">' +
+                title + '</th>');
+        });
+        html.push('</tr></thead><tbody>');
+        services.forEach(function (row) {
+            const label = row.label || row.service;
+            html.push('<tr>');
+            html.push('<td title="' + esc(row.service) + '">' + esc(label) + '</td>');
+            html.push('<td class="num">' + fmt(row.count) + '</td>');
+            html.push(
+                '<td class="num">' + fmt(row.errors) +
+                ' (' + fmtPct(row.error_rate) + ')</td>'
+            );
+            html.push('<td class="num">' + fmt(row.avg_ms) + ' мс</td>');
+            html.push('<td class="num">' + fmt(row.p95_ms) + ' мс</td>');
+            html.push('<td class="num">' + fmt(row.max_ms) + ' мс</td>');
+            html.push('</tr>');
+        });
+        html.push('</tbody>');
+        table.innerHTML = html.join('');
+    }
+
     function renderTable(tableId, rows, emptyText) {
         const table = el(tableId);
         if (!rows || !rows.length) {
@@ -186,6 +221,119 @@
         });
         html.push('</tbody>');
         table.innerHTML = html.join('');
+    }
+
+    function metricValue(system, name) {
+        const items = (system && system.metrics) || [];
+        for (let index = 0; index < items.length; index += 1) {
+            if (items[index].metric === name) {
+                return items[index];
+            }
+        }
+        return null;
+    }
+
+    function renderOps(data) {
+        const cards = [];
+        const system = data.system || {};
+        const queue = data.queue || {};
+
+        const cpu = metricValue(system, 'cpu_percent');
+        const mem = metricValue(system, 'mem_percent');
+        const load = metricValue(system, 'load1');
+        const rss = metricValue(system, 'web_rss_mb');
+        const active = metricValue(system, 'db_active_connections');
+        const idleTx = metricValue(system, 'db_idle_in_tx');
+        const maxConn = metricValue(system, 'db_max_connections');
+        const dbSize = metricValue(system, 'db_size_mb');
+        const commits = metricValue(system, 'db_xact_commit');
+        const rollbacks = metricValue(system, 'db_xact_rollback');
+        const temp = metricValue(system, 'db_temp_bytes');
+
+        if (cpu) {
+            cards.push(card(
+                'CPU', fmt(cpu.value) + ' %',
+                'макс ' + fmt(cpu.max) + ' %',
+                cpu.max >= 90 ? 'bad' : ''
+            ));
+        }
+        if (mem) {
+            cards.push(card(
+                'RAM', fmt(mem.value) + ' %',
+                'макс ' + fmt(mem.max) + ' %',
+                mem.max >= 90 ? 'bad' : ''
+            ));
+        }
+        if (load) {
+            cards.push(card(
+                'Load average (1м)', String(load.value), 'макс ' + load.max
+            ));
+        }
+        if (rss) {
+            cards.push(card('RSS web-процесса', fmt(rss.value) + ' МБ', ''));
+        }
+        if (active) {
+            cards.push(card(
+                'PG активных', fmt(active.value),
+                'idle in tx: ' + fmt(idleTx ? idleTx.value : 0) +
+                ' / max ' + fmt(maxConn ? maxConn.value : 0)
+            ));
+        }
+        if (dbSize) {
+            cards.push(card('Размер БД', fmt(dbSize.value) + ' МБ', ''));
+        }
+        if (commits) {
+            cards.push(card(
+                'Транзакций/мин', fmt(commits.value),
+                'откатов: ' + fmt(rollbacks ? rollbacks.value : 0)
+            ));
+        }
+        if (temp) {
+            cards.push(card('Temp, МБ/мин', String(temp.value), ''));
+        }
+
+        if (queue.available) {
+            cards.push(card(
+                'Очередь: готовы', fmt(queue.ready),
+                'выполняются: ' + fmt(queue.running),
+                queue.ready > 20 ? 'warn' : ''
+            ));
+            cards.push(card(
+                'Старейшая задача',
+                fmt(Math.round((queue.oldest_ready_age_seconds || 0) / 60)) + ' мин',
+                'порог 10 мин',
+                (queue.oldest_ready_age_seconds || 0) > 600 ? 'bad' : ''
+            ));
+            cards.push(card(
+                'Задачи за час', fmt(queue.finished_hour),
+                'ошибок: ' + fmt(queue.failed_hour),
+                (queue.failed_hour || 0) > 0 ? 'warn' : ''
+            ));
+            cards.push(card(
+                'p95 задачи', fmt(queue.p95_duration_ms) + ' мс',
+                'макс ' + fmt(queue.max_duration_ms) + ' мс'
+            ));
+        }
+
+        el('monOpsCards').innerHTML = cards.join('');
+
+        const resources = data.system_series || {};
+        const block = el('monResourcesBlock');
+        if (resources.available) {
+            block.classList.remove('hidden');
+            renderChart(
+                el('monResourcesChart'), resources.points,
+                [
+                    {key: 'cpu_percent', label: 'CPU', color: '#BBCF32'},
+                    {key: 'mem_percent', label: 'RAM', color: '#8fb3ff'},
+                ],
+                resources.resolution,
+                function (value) { return fmt(value) + ' %'; },
+                100
+            );
+        } else {
+            block.classList.add('hidden');
+        }
     }
 
     function render(data) {
@@ -234,6 +382,16 @@
             'Время в БД', fmt(summary.avg_db_ms) + ' мс',
             'запросов к БД: ' + (Number(summary.avg_db_queries) || 0).toFixed(2)
         ));
+
+        const external = data.external || {};
+        if (external.total) {
+            const externalErrors = external.errors || 0;
+            cards.push(card(
+                'Внешние API', fmt(external.total),
+                'ошибок: ' + fmt(externalErrors) + ' (' +
+                fmtPct(external.total ? externalErrors / external.total : 0) + ')'
+            ));
+        }
         el('monCards').innerHTML = cards.join('');
 
         renderChart(
@@ -262,6 +420,10 @@
             'monTopSlow', data.top_slow,
             'Недостаточно запросов для p95'
         );
+
+        renderExternalTable('monExternal', (data.external || {}).services);
+
+        renderOps(data);
 
         const info = el('monSeriesInfo');
         if (info) {

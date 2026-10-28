@@ -569,6 +569,85 @@ class StatusPanelLoadMessageTests(TestCase):
 
 
 @STATIC_OVERRIDE
+class StatusPanelSnapshotTests(TestCase):
+    """Панель статусов читает снимок HealthCheck, не дергая сервисы на рендере."""
+
+    def test_panel_uses_snapshot_without_live_checks(self):
+        from app_event.models import HealthCheck
+
+        HealthCheck.objects.create(
+            service='factories',
+            name='Заводы (Молвест.Маркировка)',
+            is_ok=True,
+            details={
+                'items': [
+                    {
+                        'id': '1', 'name': 'Калач',
+                        'is_ok': True, 'message': 'HTTP 200',
+                    },
+                ],
+            },
+        )
+        HealthCheck.objects.create(
+            service='summary', name='Общая сводка', is_ok=True,
+            message='Все проверки пройдены',
+        )
+        admin = User.objects.create_superuser(
+            username='snapshot-admin', password='pass', email='a@a.a',
+        )
+        self.client.force_login(admin)
+
+        with patch(
+            'config.context_processors.check_factories',
+        ) as factories, patch(
+            'app_helper.service_helper.diagnose_service',
+        ) as diagnose:
+            response = self.client.get(reverse('home'))
+
+        self.assertEqual(response.status_code, 200)
+        factories.assert_not_called()
+        diagnose.assert_not_called()
+        self.assertContains(response, 'Калач')
+
+    def test_stale_snapshot_falls_back_to_live_checks(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from app_event.models import HealthCheck
+
+        row = HealthCheck.objects.create(
+            service='factories', name='Заводы', is_ok=True,
+            details={'items': []},
+        )
+        HealthCheck.objects.filter(pk=row.pk).update(
+            checked_at=timezone.now() - timedelta(hours=2),
+        )
+        admin = User.objects.create_superuser(
+            username='stale-admin', password='pass', email='a@a.a',
+        )
+        self.client.force_login(admin)
+
+        with patch(
+            'config.context_processors.check_factories',
+            return_value={'is_ok': True, 'factories': []},
+        ) as factories, patch(
+            'app_helper.service_helper.diagnose_service',
+            return_value={
+                'is_available': True,
+                'checks': {
+                    'summary': {'name': 'Сводка', 'ok': True},
+                },
+            },
+        ) as diagnose:
+            response = self.client.get(reverse('home'))
+
+        self.assertEqual(response.status_code, 200)
+        factories.assert_called_once()
+        diagnose.assert_called_once()
+
+
+@STATIC_OVERRIDE
 class SuzOrdersPageTests(TestCase):
     """Страница «Заказы кодов в СУЗ» (/suz/)."""
 

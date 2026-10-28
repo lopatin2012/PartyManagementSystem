@@ -41,7 +41,7 @@ def _alerts_enabled() -> bool:
 
 
 def _retention_days() -> int:
-    return int(getattr(settings, 'HEALTH_RETENTION_DAYS', 28) or 28)
+    return max(1, int(getattr(settings, 'HEALTH_RETENTION_DAYS', 14) or 14))
 
 
 def get_alert_recipients() -> list:
@@ -267,10 +267,12 @@ def _build_alert_content(
 def _diagnose() -> dict:
     """Возвращает {service: {'name', 'ok', 'message', 'details'}}."""
     from app_helper.service_helper import (
-        check_factories, check_signatures, check_suz_token,
+        check_db_connections, check_factories, check_signatures, check_suz_token,
     )
     from django.db import connection
-    from app_helper.metrics import get_load_stats
+    from app_helper.metrics import (
+        external_check, get_load_stats, queue_check,
+    )
 
     checks = {}
 
@@ -296,6 +298,14 @@ def _diagnose() -> dict:
                 'host': connection.settings_dict.get('HOST', '') or 'localhost',
             },
         }
+
+    db_connections = check_db_connections()
+    checks['db_load'] = {
+        'name': 'Соединения БД',
+        'ok': db_connections['is_ok'],
+        'message': db_connections['message'],
+        'details': {},
+    }
 
     # Проактивно обновляем токен СУЗ заранее (за ~1 час до истечения),
     # т.к. проверка идёт каждые 5 минут — это закрывает разрыв между
@@ -363,6 +373,22 @@ def _diagnose() -> dict:
             'items': items,
             'failed_names': [item['name'] for item in failed],
         },
+    }
+
+    external = external_check()
+    checks['external'] = {
+        'name': external['name'],
+        'ok': external['ok'],
+        'message': external['message'],
+        'details': external['details'],
+    }
+
+    queue = queue_check()
+    checks['queue'] = {
+        'name': queue['name'],
+        'ok': queue['ok'],
+        'message': queue['message'],
+        'details': queue['details'],
     }
 
     load = get_load_stats()

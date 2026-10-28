@@ -3,15 +3,21 @@
 """Тесты наблюдаемости: health-проверки, антидребезг, рассылка, очистка."""
 
 from datetime import timedelta
+from io import StringIO
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from app_event.models import HealthCheck, NotificationRecipient, RequestMetric
+from app_event.models import (
+    EventLog, ExternalCallMetric, HealthCheck, NotificationRecipient,
+    RequestMetric, SystemMetric,
+)
 from app_event.services import health as health_service
+from app_event.services import retention
 from app_helper import load_tracker, metrics
 
 STATIC_OVERRIDE = override_settings(STORAGES={
@@ -310,3 +316,93 @@ class MonitoringDashboardTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertTrue(response.json()['is_error'])
+
+
+class RetentionTests(TestCase):
+    """Сроки хранения логов: старые записи удаляются, свежие остаются."""
+
+    def _event(self, days_ago):
+        event = EventLog.objects.create(
+            module='system', level='info', message='событие',
+        )
+        EventLog.objects.filter(pk=event.pk).update(
+            created_at=timezone.now() - timedelta(days=days_ago),
+        )
+        return event
+
+    def _health(self, days_ago):
+        row = HealthCheck.objects.create(
+            service='load', name='Нагрузка', is_ok=True, message='ok',
+        )
+        HealthCheck.objects.filter(pk=row.pk).update(
+            checked_at=timezone.now() - timedelta(days=days_ago),
+        )
+        return row
+
+    def _task(self, finished_days_ago):
+        from django_tasks.base import TaskResultStatus
+        from django_tasks_db.models import DBTaskResult
+
+        now = timezone.now()
+        task = DBTaskResult.objects.create(
+            status=TaskResultStatus.SUCCESSFUL,
+            args_kwargs={},
+            task_path='app_scheduler.tasks.some_task',
+            backend_name='default',
+            queue_name='default',
+            run_after=now,
+        )
+        DBTaskResult.objects.filter(pk=task.pk).update(
+            started_at=now - timedelta(days=finished_days_ago),
+            finished_at=now - timedelta(days=finished_days_ago),
+        )
+        return task
+
+    @override_settings(EVENT_LOG_RETENTION_DAYS=90)
+    def test_old_events_removed(self):
+        old = self._event(120)
+        fresh = self._event(1)
+
+        result = retention.cleanup_old_events()
+
+        self.assertEqual(result['deleted'], 1)
+        self.assertFalse(EventLog.objects.filter(pk=old.pk).exists())
+        self.assertTrue(EventLog.objects.filter(pk=fresh.pk).exists())
+
+    @override_settings(HEALTH_RETENTION_DAYS=14)
+    def test_old_health_checks_removed(self):
+        old = self._health(20)
+        fresh = self._health(1)
+
+        result = retention.cleanup_old_health_checks()
+
+        self.assertEqual(result['deleted'], 1)
+        self.assertFalse(HealthCheck.objects.filter(pk=old.pk).exists())
+        self.assertTrue(HealthCheck.objects.filter(pk=fresh.pk).exists())
+
+    @override_settings(TASK_RESULT_RETENTION_DAYS=30)
+    def test_old_task_results_removed(self):
+        from django_tasks_db.models import DBTaskResult
+
+        old = self._task(40)
+        fresh = self._task(1)
+
+        result = retention.cleanup_old_task_results()
+
+        self.assertEqual(result['deleted'], 1)
+        self.assertFalse(DBTaskResult.objects.filter(pk=old.pk).exists())
+        self.assertTrue(DBTaskResult.objects.filter(pk=fresh.pk).exists())
+
+    @override_settings(EVENT_LOG_RETENTION_DAYS=90)
+    def test_report_and_cleanup_command(self):
+        self._event(120)
+
+        report = StringIO()
+        call_command('cleanup_logs', stdout=report)
+        self.assertIn('EventLog', report.getvalue())
+        self.assertIn('90', report.getvalue())
+
+        cleanup = StringIO()
+        call_command('cleanup_logs', '--cleanup', stdout=cleanup)
+        self.assertIn('EventLog', cleanup.getvalue())
+        self.assertFalse(EventLog.objects.exists())

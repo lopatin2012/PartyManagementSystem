@@ -1,7 +1,8 @@
 from django.contrib import admin
 
 from app_event.models import (
-    EventLog, HealthCheck, NotificationRecipient, RequestMetric,
+    EventLog, ExternalCallMetric, HealthCheck, NotificationRecipient,
+    RequestMetric, SystemMetric,
 )
 
 
@@ -54,3 +55,36 @@ class RequestMetricAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+
+class ReadOnlyMetricsAdmin(admin.ModelAdmin):
+    """Общая база для метрик: только просмотр, без тяжёлого COUNT(*)."""
+
+    ordering = ('-bucket_start',)
+    date_hierarchy = 'bucket_start'
+    show_full_result_count = False
+    list_per_page = 50
+
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ExternalCallMetric)
+class ExternalCallMetricAdmin(ReadOnlyMetricsAdmin):
+    list_display = (
+        'bucket_start', 'service', 'method', 'outcome',
+        'count', 'errors', 'total_ms', 'max_ms',
+    )
+
+
+@admin.register(SystemMetric)
+class SystemMetricAdmin(ReadOnlyMetricsAdmin):
+    list_display = (
+        'bucket_start', 'metric', 'kind', 'value', 'max_value',
+    )

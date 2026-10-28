@@ -30,6 +30,7 @@
     <div class="mon-error hidden" id="monError"></div>
 
     <div class="mon-cards" id="monCards"></div>
+    <div class="mon-cards" id="monOpsCards"></div>
 
     <div class="mon-chart-block">
         <div class="mon-chart-head">
@@ -55,6 +56,18 @@
         <div class="mon-chart" id="monLatencyChart"></div>
     </div>
 
+    <div class="mon-chart-block hidden" id="monResourcesBlock">
+        <div class="mon-chart-head">
+            <h2>Ресурсы</h2>
+            <span>CPU и RAM, % (максимум за интервал)</span>
+        </div>
+        <div class="mon-legend">
+            <span><span class="mon-dot" style="background:#BBCF32"></span>CPU</span>
+            <span><span class="mon-dot" style="background:#8fb3ff"></span>RAM</span>
+        </div>
+        <div class="mon-chart" id="monResourcesChart"></div>
+    </div>
+
     <div class="mon-tables">
         <div class="mon-table-block">
             <h2>Топ по количеству</h2>
@@ -66,6 +79,15 @@
             <table class="mon-table" id="monTopSlow"></table>
             <p class="mon-note">Только endpoint'ы с 10+ запросами за период.</p>
         </div>
+    </div>
+
+    <div class="mon-table-block">
+        <h2>Внешние API</h2>
+        <table class="mon-table" id="monExternal"></table>
+        <p class="mon-note">
+            Исходящие HTTP-вызовы: ЧЗ, Национальный каталог, СУЗ, подписи,
+            заводы, ожидание лимита ЧЗ. Ошибки — 4xx/5xx, таймауты и сетевые сбои.
+        </p>
     </div>
 </div>
 {% endblock %}

@@ -1,10 +1,13 @@
 from datetime import timedelta
 from unittest.mock import patch
 
+from django.core.cache import cache
 from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
-from app_event.models import RequestMetric
+from app_event.models import (
+    EventLog, ExternalCallMetric, RequestMetric, SystemMetric,
+)
 from app_helper import load_tracker, metrics, middleware, service_helper
 
 
@@ -429,6 +432,323 @@ class RequestMetricsTests(TestCase):
                 row = RequestMetric.objects.get()
                 self.assertEqual(row.status_class, '4xx')
                 self.assertEqual(row.errors, 0)
+
+
+class ExternalMetricsTests(TestCase):
+    """Исходящие вызовы: аккумулятор, UPSERT, сводка по сервисам, health-чек."""
+
+    def setUp(self):
+        metrics.reset()
+        RequestMetric.objects.all().delete()
+        ExternalCallMetric.objects.all().delete()
+
+    def tearDown(self):
+        metrics.reset()
+
+    def _row(self, *, service='cz', method='GET', outcome='ok',
+             minutes_ago=1, count=1, errors=0, duration=100):
+        bucket = (
+            timezone.now().replace(second=0, microsecond=0)
+            - timedelta(minutes=minutes_ago)
+        )
+        values = {
+            'bucket_start': bucket,
+            'service': service,
+            'method': method,
+            'outcome': outcome,
+            'count': count,
+            'errors': errors,
+            'total_ms': duration * count,
+            'max_ms': duration,
+        }
+        values.update({field: 0 for field in metrics.HISTOGRAM_FIELDS})
+        values[metrics._histogram_field(duration)] = count
+        return ExternalCallMetric.objects.create(**values)
+
+    def test_flush_writes_external_rows(self):
+        metrics.record_external_call(
+            service='cz', method='POST', outcome='ok', duration_ms=120,
+        )
+        metrics.record_external_call(
+            service='cz', method='POST', outcome='ok', duration_ms=80,
+        )
+        metrics.record_external_call(
+            service='factory', method='GET', outcome='timeout',
+            duration_ms=30000,
+        )
+
+        self.assertEqual(metrics.pending_external_count(), 2)
+        self.assertEqual(metrics.flush_metrics(), 0)
+        self.assertEqual(metrics.pending_external_count(), 0)
+
+        cz = ExternalCallMetric.objects.get(service='cz')
+        self.assertEqual(cz.count, 2)
+        self.assertEqual(cz.errors, 0)
+        self.assertEqual(cz.total_ms, 200)
+        self.assertEqual(cz.max_ms, 120)
+
+        factory = ExternalCallMetric.objects.get(service='factory')
+        self.assertEqual(factory.count, 1)
+        self.assertEqual(factory.errors, 1)
+
+    def test_second_flush_increments_external_row(self):
+        metrics.record_external_call(
+            service='suz', method='GET', outcome='ok', duration_ms=50,
+        )
+        metrics.flush_metrics()
+        metrics.record_external_call(
+            service='suz', method='GET', outcome='ok', duration_ms=70,
+        )
+        metrics.flush_metrics()
+
+        row = ExternalCallMetric.objects.get()
+        self.assertEqual(row.count, 2)
+        self.assertEqual(row.total_ms, 120)
+        self.assertEqual(row.max_ms, 70)
+
+    def test_external_stats_by_service(self):
+        self._row(service='cz', count=4, duration=100)
+        self._row(
+            service='factory', outcome='timeout', count=1,
+            errors=1, duration=30000,
+        )
+
+        stats = metrics.get_external_stats(60)
+
+        self.assertEqual(stats['total'], 5)
+        self.assertEqual(stats['errors'], 1)
+        self.assertTrue(stats['has_data'])
+        self.assertEqual(stats['source'], 'db')
+        first = stats['services'][0]
+        self.assertEqual(first['service'], 'cz')
+        self.assertEqual(first['label'], 'Честный Знак (True API)')
+        self.assertEqual(first['avg_ms'], 100)
+        factory = stats['services'][1]
+        self.assertEqual(factory['p95_ms'], 30000)
+        self.assertEqual(factory['error_rate'], 1.0)
+
+    def test_external_check_flags_errors(self):
+        self._row(service='cz', outcome='5xx', count=10, errors=6)
+        # Мало вызовов — доля ошибок не оценивается.
+        self._row(service='suz', outcome='5xx', count=2, errors=2)
+
+        check = metrics.external_check(60)
+
+        self.assertFalse(check['ok'])
+        self.assertIn('Честный Знак', check['message'])
+        self.assertEqual(check['details']['problems'], ['cz'])
+
+    def test_external_check_without_data_is_ok(self):
+        check = metrics.external_check(60)
+
+        self.assertTrue(check['ok'])
+        self.assertIn('Нет данных', check['message'])
+
+
+class QueueAndSystemMetricsTests(TestCase):
+    """Очередь django-tasks-db и сэмплы инфраструктуры."""
+
+    def setUp(self):
+        metrics.reset()
+        SystemMetric.objects.all().delete()
+        self.TaskResultStatus = self._task_status()
+        self.DBTaskResult = self._db_task_model()
+        self.DBTaskResult.objects.all().delete()
+
+    def tearDown(self):
+        metrics.reset()
+        self.DBTaskResult.objects.all().delete()
+
+    @staticmethod
+    def _task_status():
+        from django_tasks.base import TaskResultStatus
+        return TaskResultStatus
+
+    @staticmethod
+    def _db_task_model():
+        from django_tasks_db.models import DBTaskResult
+        return DBTaskResult
+
+    def _task(self, status, *, ready_age_seconds=0, duration_ms=None):
+        now = timezone.now()
+        task = self.DBTaskResult.objects.create(
+            status=status,
+            args_kwargs={},
+            task_path='app_scheduler.tasks.some_task',
+            backend_name='default',
+            queue_name='default',
+            run_after=now,
+        )
+        if ready_age_seconds:
+            self.DBTaskResult.objects.filter(pk=task.pk).update(
+                enqueued_at=now - timedelta(seconds=ready_age_seconds),
+            )
+        if duration_ms is not None:
+            self.DBTaskResult.objects.filter(pk=task.pk).update(
+                started_at=now - timedelta(milliseconds=duration_ms),
+                finished_at=now,
+            )
+        return task
+
+    def test_queue_stats(self):
+        self._task(self.TaskResultStatus.READY, ready_age_seconds=120)
+        self._task(self.TaskResultStatus.RUNNING)
+        self._task(self.TaskResultStatus.SUCCESSFUL, duration_ms=500)
+        self._task(self.TaskResultStatus.FAILED, duration_ms=1500)
+
+        stats = metrics.get_queue_stats()
+
+        self.assertTrue(stats['available'])
+        self.assertEqual(stats['ready'], 1)
+        self.assertEqual(stats['running'], 1)
+        self.assertEqual(stats['failed_hour'], 1)
+        self.assertEqual(stats['finished_hour'], 2)
+        self.assertGreaterEqual(stats['oldest_ready_age_seconds'], 120)
+        self.assertEqual(stats['p95_duration_ms'], 1500)
+
+    def test_queue_check_flags_stale_task(self):
+        self._task(self.TaskResultStatus.READY, ready_age_seconds=3600)
+
+        with override_settings(
+            QUEUE_MAX_READY=20, QUEUE_MAX_READY_AGE_SECONDS=600,
+        ):
+            check = metrics.queue_check()
+
+        self.assertFalse(check['ok'])
+        self.assertIn('мин', check['message'])
+
+    def test_queue_check_ok(self):
+        self._task(self.TaskResultStatus.READY)
+
+        with override_settings(
+            QUEUE_MAX_READY=20, QUEUE_MAX_READY_AGE_SECONDS=600,
+            QUEUE_MAX_FAILED_PER_HOUR=5,
+        ):
+            check = metrics.queue_check()
+
+        self.assertTrue(check['ok'])
+
+    def test_queue_check_flags_failures(self):
+        for _ in range(6):
+            self._task(self.TaskResultStatus.FAILED, duration_ms=100)
+
+        with override_settings(QUEUE_MAX_FAILED_PER_HOUR=5):
+            check = metrics.queue_check()
+
+        self.assertFalse(check['ok'])
+        self.assertIn('Ошибок', check['message'])
+
+    def test_db_connections_check(self):
+        result = service_helper.check_db_connections()
+
+        self.assertTrue(result['is_ok'])
+        self.assertIn('Соединений PG', result['message'])
+
+    def test_db_connections_check_flags_high_load(self):
+        with patch.object(
+            service_helper, '_db_connection_counts', return_value=(95, 100),
+        ), override_settings(DB_CONNECTIONS_THRESHOLD=0.8):
+            result = service_helper.check_db_connections()
+
+        self.assertFalse(result['is_ok'])
+        self.assertIn('95', result['message'])
+
+    def _system_row(self, metric, *, kind='gauge', value=1.0,
+                    minutes_ago=1, max_value=None):
+        bucket = (
+            timezone.now().replace(second=0, microsecond=0)
+            - timedelta(minutes=minutes_ago)
+        )
+        return SystemMetric.objects.create(
+            bucket_start=bucket,
+            metric=metric,
+            kind=kind,
+            value=value,
+            max_value=value if max_value is None else max_value,
+        )
+
+    def test_system_stats_gauges_and_counters(self):
+        self._system_row('cpu_percent', value=40.0)
+        self._system_row('cpu_percent', value=70.0, minutes_ago=2)
+        self._system_row('db_xact_commit', kind='counter', value=10)
+        self._system_row(
+            'db_xact_commit', kind='counter', value=5, minutes_ago=2,
+        )
+        self._system_row(
+            'db_temp_bytes', kind='counter', value=2 * 1024 * 1024,
+        )
+
+        stats = metrics.get_system_stats(60)
+        by_name = {item['metric']: item for item in stats['metrics']}
+
+        self.assertEqual(by_name['cpu_percent']['value'], 40.0)
+        self.assertEqual(by_name['cpu_percent']['max'], 70.0)
+        self.assertEqual(by_name['db_xact_commit']['value'], 15.0)
+        self.assertEqual(by_name['db_temp_bytes']['value'], 2.0)
+        self.assertEqual(by_name['db_temp_bytes']['unit'], 'МБ/мин')
+        self.assertTrue(stats['has_data'])
+
+    def test_system_series_for_host_metrics(self):
+        self._system_row('cpu_percent', value=40.0)
+        self._system_row('mem_percent', value=55.0)
+
+        series = metrics.get_system_series('1h')
+
+        self.assertTrue(series['available'])
+        point = series['points'][0]
+        self.assertEqual(point['cpu_percent'], 40.0)
+        self.assertEqual(point['mem_percent'], 55.0)
+
+    def test_flush_stores_system_samples(self):
+        samples = {
+            'cpu_percent': ('gauge', 42.0),
+            'db_xact_commit': ('counter', 7),
+        }
+        metrics.record_request_metric(
+            group='uip_list', method='GET', status_class='2xx',
+            traffic_class=load_tracker.TRAFFIC_USER, duration_ms=10,
+        )
+        with patch.object(
+            metrics.system_metrics, 'collect_samples', return_value=samples,
+        ):
+            self.assertEqual(metrics.flush_metrics(), 1)
+
+        cpu = SystemMetric.objects.get(metric='cpu_percent')
+        self.assertEqual(cpu.kind, 'gauge')
+        self.assertEqual(cpu.value, 42.0)
+        commits = SystemMetric.objects.get(metric='db_xact_commit')
+        self.assertEqual(commits.kind, 'counter')
+        self.assertEqual(commits.value, 7.0)
+
+
+class LogNoiseTests(TestCase):
+    """Повторяющиеся сбои/проверки не забивают журнал и stdout."""
+
+    def setUp(self):
+        cache.clear()
+        EventLog.objects.all().delete()
+        service_helper._failure_log_at.clear()
+
+    def test_duplicate_external_failures_written_once(self):
+        from app_helper.external import safe_external_call
+
+        def boom():
+            raise RuntimeError('down')
+
+        with self.assertLogs('app_helper.external', level='ERROR'):
+            safe_external_call(boom)
+        safe_external_call(boom)  # подавлено дедупликацией
+
+        self.assertEqual(EventLog.objects.count(), 1)
+
+    def test_check_failure_logged_once(self):
+        with self.assertLogs(
+            'app_helper.service_helper', level='WARNING',
+        ) as logs:
+            service_helper._log_check_failure('http://down/', 'err')
+            service_helper._log_check_failure('http://down/', 'err')
+
+        self.assertEqual(len(logs.output), 1)
 
 
 class SessionCookieNameTests(SimpleTestCase):

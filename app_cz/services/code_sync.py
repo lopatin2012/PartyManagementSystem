@@ -22,6 +22,8 @@ import logging
 from datetime import datetime, time, timedelta
 
 import requests
+
+from app_helper import external_http
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime, parse_date
@@ -712,7 +714,7 @@ def sync_codes_task(
 
     try:
         logger.info(f'Запрос кодов из внешнего сервиса: task_id={task_id}')
-        response = requests.get(api_url, params=params, headers=headers, timeout=30)
+        response = external_http.get('factory', api_url, params=params, headers=headers, timeout=30)
         response.raise_for_status()
         payload = response.json()
     except requests.exceptions.RequestException as e:
@@ -1028,7 +1030,7 @@ def _fetch_external_tasks_changed_since(url: str, changed_since):
 
     try:
         logger.info(f'Запрос заданий из внешнего сервиса: changed_since={params["changed_since"]}')
-        response = requests.get(api_url, params=params, headers=headers, timeout=30)
+        response = external_http.get('factory', api_url, params=params, headers=headers, timeout=30)
         response.raise_for_status()
         payload = response.json()
     except requests.exceptions.RequestException as e:

@@ -168,6 +168,107 @@ class RequestMetric(models.Model):
         )
 
 
+class ExternalCallMetric(models.Model):
+    """
+    Агрегат исходящих HTTP-вызовов за минуту (ЧЗ, НК, СУЗ, подписи, заводы).
+
+    Позволяет видеть, сколько времени и запросов уходит во внешние системы,
+    где ошибки/таймауты и сколько ждём лимиты True API.
+    """
+
+    bucket_start = models.DateTimeField(
+        db_index=True, verbose_name='Начало минуты',
+    )
+    service = models.CharField(
+        max_length=30, verbose_name='Сервис',
+        help_text='cz / nk / suz / sign / factory / 1c / cz_rate_limit',
+    )
+    method = models.CharField(max_length=10, verbose_name='Метод')
+    outcome = models.CharField(
+        max_length=10, verbose_name='Исход',
+        help_text='ok / 4xx / 5xx / timeout / error',
+    )
+
+    count = models.PositiveIntegerField(default=0, verbose_name='Вызовов')
+    errors = models.PositiveIntegerField(default=0, verbose_name='Ошибок')
+    total_ms = models.BigIntegerField(default=0, verbose_name='Суммарное время, мс')
+    max_ms = models.IntegerField(default=0, verbose_name='Максимальное время, мс')
+
+    h_lt50 = models.PositiveIntegerField(default=0)
+    h_lt100 = models.PositiveIntegerField(default=0)
+    h_lt250 = models.PositiveIntegerField(default=0)
+    h_lt500 = models.PositiveIntegerField(default=0)
+    h_lt1000 = models.PositiveIntegerField(default=0)
+    h_lt2000 = models.PositiveIntegerField(default=0)
+    h_lt5000 = models.PositiveIntegerField(default=0)
+    h_gte5000 = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['-bucket_start']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['bucket_start', 'service', 'method', 'outcome'],
+                name='extcall_unique_key',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['bucket_start', 'service'],
+                name='extcall_bucket_service',
+            ),
+        ]
+        verbose_name = 'Метрика внешних вызовов'
+        verbose_name_plural = 'Метрики внешних вызовов'
+
+    def __str__(self):
+        return (
+            f'{self.bucket_start:%d.%m.%Y %H:%M} {self.service} '
+            f'{self.method} {self.outcome}: {self.count}'
+        )
+
+
+class SystemMetric(models.Model):
+    """
+    Метрика инфраструктуры за минуту (CPU/RAM/load, Postgres, размер БД).
+
+    `kind='gauge'` — мгновенное значение (за минуту берётся максимум),
+    `kind='counter'` — приращение счётчика за интервал (суммируется).
+    """
+
+    bucket_start = models.DateTimeField(
+        db_index=True, verbose_name='Начало минуты',
+    )
+    metric = models.CharField(max_length=64, verbose_name='Метрика')
+    kind = models.CharField(
+        max_length=10, verbose_name='Тип',
+        help_text='gauge / counter',
+    )
+    value = models.FloatField(default=0, verbose_name='Значение')
+    max_value = models.FloatField(default=0, verbose_name='Максимум')
+
+    class Meta:
+        ordering = ['-bucket_start']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['bucket_start', 'metric', 'kind'],
+                name='sysmetric_unique_key',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['bucket_start', 'metric'],
+                name='sysmetric_bucket_metric',
+            ),
+        ]
+        verbose_name = 'Метрика инфраструктуры'
+        verbose_name_plural = 'Метрики инфраструктуры'
+
+    def __str__(self):
+        return (
+            f'{self.bucket_start:%d.%m.%Y %H:%M} {self.metric}: {self.value}'
+        )
+
+
 class NotificationRecipient(models.Model):
     """
     Настройка рассылки: какая группа получает алерты.

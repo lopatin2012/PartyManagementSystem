@@ -3,6 +3,8 @@
 import json
 import logging
 import requests
+
+from app_helper import external_http
 from django.core.exceptions import ObjectDoesNotExist
 
 from app_cz.models import SUZAccount
@@ -136,7 +138,8 @@ def send_application_report(
                 f"Отправка отчёта о нанесении (чанк {idx + 1}/{len(report_list)}, кодов: {len(sntins)})"
             )
 
-            response = requests.post(
+            response = external_http.post(
+                'cz',
                 url=url,
                 params=params,
                 headers=headers,

@@ -29,6 +29,7 @@ import time
 
 import requests
 
+from app_helper import external_http
 from app_cz.models import CISCodesStatusChoices
 from app_cz.suz_config import SUZ
 
@@ -147,7 +148,8 @@ def get_cises_statuses(codes: list, product_group: str, token: str = None) -> di
         chunk = normalized[start:start + CISES_INFO_BATCH_SIZE]
         time.sleep(CISES_INFO_PAUSE_SECONDS)
         try:
-            response = requests.post(
+            response = external_http.post(
+                'cz',
                 SUZ.cises_info,
                 params={'pg': product_group},
                 headers=headers,

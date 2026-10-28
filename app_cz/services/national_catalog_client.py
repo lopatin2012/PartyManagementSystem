@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 
 import requests
 
+from app_helper import external_http
 from app_factory.models import NationalCatalogProduct
 from app_cz.models import SUZAccount
 from app_cz.services.rate_limit import wait_nk_endpoint
@@ -296,7 +297,8 @@ class NationalCatalogClient:
         last_error = None
         for attempt in range(RATE_LIMIT_RETRIES + 1):
             try:
-                response = requests.request(
+                response = external_http.request(
+                    'nk',
                     method, url, timeout=30, headers=headers, **kwargs
                 )
                 # Лимит запросов: True API может вернуть 429 или 400 с текстом

@@ -1,13 +1,16 @@
 # app_helper/service_helper.py
 
 import logging
+import time
 
 import requests
+
+from app_helper import external_http
 from django.core.cache import cache
 from django.utils import timezone
 from django.db import connection
 
-from app_helper.metrics import get_load_stats
+from app_helper.metrics import external_check, get_load_stats, queue_check
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +22,26 @@ SERVICE_CHECK_CACHE_TTL = 30
 SERVICE_CHECK_TIMEOUT = 3
 
 
-def check_url_status(url: str) -> dict:
+# Не спамим одинаковой ошибкой проверки доступности чаще, чем раз в 5 минут
+# (иначе упавший завод даёт warning на каждом 30-секундном прозвоне).
+FAILURE_LOG_INTERVAL = 300
+_failure_log_at = {}
+
+
+def _log_check_failure(url: str, error) -> None:
+    now = time.monotonic()
+    if now - _failure_log_at.get(url, 0) < FAILURE_LOG_INTERVAL:
+        return
+    _failure_log_at[url] = now
+    logger.warning(f'Проверка доступности {url} не удалась: {error}')
+
+
+def check_url_status(url: str, service: str = 'probe') -> dict:
     """
     Проверяет доступность URL (ожидается HTTP 2xx). Результат кэшируется.
 
     :param url: Полный адрес для проверки (например, http://192.168.1.50:8000/).
+    :param service: код сервиса для метрик (factory/sign/1c/probe).
     :return: {'is_ok': bool, 'message': str}
     """
     cache_key = f'service_check:{url}'
@@ -37,17 +55,19 @@ def check_url_status(url: str) -> dict:
         return result
 
     try:
-        response = requests.get(
+        response = external_http.get(
+            service,
             url,
             timeout=SERVICE_CHECK_TIMEOUT,
             headers={'Accept': 'application/json'},
         )
         if 200 <= response.status_code < 300:
             result = {'is_ok': True, 'message': f'HTTP {response.status_code}'}
+            _failure_log_at.pop(url, None)
         else:
             result = {'is_ok': False, 'message': f'HTTP {response.status_code}'}
     except requests.exceptions.RequestException as e:
-        logger.warning(f'Проверка доступности {url} не удалась: {e}')
+        _log_check_failure(url, e)
         result = {'is_ok': False, 'message': 'Ошибка соединения'}
 
     cache.set(cache_key, result, SERVICE_CHECK_CACHE_TTL)
@@ -70,7 +90,7 @@ def check_factories() -> dict:
     for factory in factories:
         if factory.ip_address and factory.port_address:
             url = f'http://{factory.ip_address}:{factory.port_address}/'
-            status = check_url_status(url)
+            status = check_url_status(url, service='probe')
         else:
             status = {'is_ok': False, 'message': 'Адрес не задан'}
 
@@ -99,7 +119,46 @@ def check_onec() -> dict:
     url = getattr(settings, 'ONEC_URL', '')
     if not url:
         return {'is_ok': False, 'message': 'Адрес 1С не настроен'}
-    return check_url_status(url)
+    return check_url_status(url, service='probe')
+
+
+def check_db_connections() -> dict:
+    """
+    Загрузка соединений Postgres (для health-чека «Соединения БД»).
+
+    :return: {'is_ok': bool, 'message': str}
+    """
+    from django.conf import settings
+
+    try:
+        used, maximum = _db_connection_counts()
+    except Exception as e:
+        logger.error(f'Проверка соединений Postgres: {e}')
+        return {'is_ok': False, 'message': f'Не удалось получить соединения: {e}'}
+
+    threshold = float(
+        getattr(settings, 'DB_CONNECTIONS_THRESHOLD', 0.8) or 0.8
+    )
+    if maximum <= 0:
+        return {'is_ok': True, 'message': f'Подключений PG: {used}'}
+
+    share = used / maximum
+    return {
+        'is_ok': share < threshold,
+        'message': (
+            f'Соединений PG: {used} из {maximum} '
+            f'({share:.0%}, порог {threshold:.0%})'
+        ),
+    }
+
+
+def _db_connection_counts() -> tuple:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM pg_stat_activity")
+        used = cursor.fetchone()[0] or 0
+        cursor.execute("SELECT current_setting('max_connections')::int")
+        maximum = cursor.fetchone()[0] or 0
+    return used, maximum
 
 
 def check_signatures() -> dict:
@@ -112,7 +171,7 @@ def check_signatures() -> dict:
 
     url = getattr(settings, 'SIGNATURE_SERVICE_URL', '') or ''
     if url:
-        return check_url_status(url.rstrip('/') + '/')
+        return check_url_status(url.rstrip('/') + '/', service='probe')
 
     # Адрес из модели ExternalService (тип «Сервис подписей»).
     try:
@@ -122,7 +181,10 @@ def check_signatures() -> dict:
         ).first()
         if not service:
             return {'is_ok': False, 'message': 'Сервис подписей не настроен'}
-        return check_url_status(f'http://{service.ip_address}:{service.port_address}/')
+        return check_url_status(
+            f'http://{service.ip_address}:{service.port_address}/',
+            service='probe',
+        )
     except Exception as e:
         logger.error(f'Проверка сервиса подписей: {e}')
         return {'is_ok': False, 'message': str(e)}
@@ -176,7 +238,15 @@ def diagnose_service() -> dict:
             'message': str(e),
         }
 
-    # 2. СУЗ (интеграция с Честным Знаком).
+    # 2. Загрузка соединений Postgres.
+    db_connections = check_db_connections()
+    checks['db_load'] = {
+        'name': 'Соединения БД',
+        'ok': db_connections['is_ok'],
+        'message': db_connections['message'],
+    }
+
+    # 3. СУЗ (интеграция с Честным Знаком).
     suz = check_suz_token()
     checks['suz'] = {
         'name': 'СУЗ (Честный Знак)',
@@ -211,7 +281,13 @@ def diagnose_service() -> dict:
         'items': items,
     }
 
-    # 5. Нагрузка.
+    # 5. Исходящие вызовы (ЧЗ, НК, СУЗ, подписи, заводы) — доля ошибок.
+    checks['external'] = external_check()
+
+    # 6. Очередь фоновых задач (django-tasks-db).
+    checks['queue'] = queue_check()
+
+    # 7. Нагрузка.
     # Счётчики живут в памяти web-процесса, поэтому в воркере данных нет.
     # Это не сбой, но и не «в норме» — честно показываем «нет данных».
     load = get_load_stats()
@@ -222,7 +298,7 @@ def diagnose_service() -> dict:
         **load,
     }
 
-    # 6. Общая сводка по сервису.
+    # 8. Общая сводка по сервису.
     failed = [name for name, c in checks.items() if not c['ok']]
     failed_names = [checks[name].get('name', name) for name in failed]
     checks['summary'] = {

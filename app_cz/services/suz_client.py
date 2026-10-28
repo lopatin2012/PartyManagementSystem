@@ -7,6 +7,7 @@ import uuid
 import requests
 from django.utils import timezone
 
+from app_helper import external_http
 from app_cz.models import SUZAccount
 from app_cz.suz_config import SUZ
 
@@ -22,7 +23,7 @@ def get_true_api_auth_key() -> dict:
     :raises Exception: Если запрос к TrueAPI не удался
     """
     try:
-        response = requests.get(SUZ.auth_key, timeout=10)
+        response = external_http.get('suz', SUZ.auth_key, timeout=10)
 
         response.raise_for_status()
 
@@ -103,7 +104,7 @@ def get_true_api_session_token() -> dict:
     }
 
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=15)
+        response = external_http.post('suz', url, json=payload, headers=headers, timeout=15)
     except requests.exceptions.RequestException as e:
         logger.error(f"Сетевая ошибка при получении токена TrueAPI: {e}")
         return {
@@ -188,7 +189,8 @@ def get_true_api_dynamic_token(row_uuid: str, signed_data: str) -> str:
             "omsConnection": account.connection_identifier
         }
 
-        response = requests.post(
+        response = external_http.post(
+            'suz',
             url,
             json=payload,
             headers=headers,

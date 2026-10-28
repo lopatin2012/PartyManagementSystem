@@ -7,6 +7,7 @@ import logging
 
 import requests
 
+from app_helper import external_http
 from app_cz.models import SUZAccount
 from app_cz.suz_config import SUZ
 from app_helper.sign_helper import unpinned_signed_data
@@ -59,7 +60,8 @@ def get_suz_providers() -> dict:
         'Accept': 'application/json',
     }
     try:
-        response = requests.get(
+        response = external_http.get(
+            'suz',
             SUZ.providers,
             params={'omsId': account.oms_id},
             headers=headers,
@@ -136,7 +138,8 @@ def get_suz_orders(
     }
 
     try:
-        response = requests.post(
+        response = external_http.post(
+            'suz',
             SUZ.order_search,
             params={'omsId': account.oms_id},
             headers=headers,
@@ -206,7 +209,8 @@ def close_suz_order(order_id: str) -> dict:
     }
 
     try:
-        response = requests.post(
+        response = external_http.post(
+            'suz',
             SUZ.order_close,
             params={'omsId': account.oms_id},
             headers=headers,
