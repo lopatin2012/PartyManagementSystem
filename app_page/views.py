@@ -32,6 +32,7 @@ from app_factory.models import (
     ProductSKU,
     TypeFormationUIP,
 )
+from app_factory.selectors import prefer_linked_skus
 
 from app_uip.models import UIP, ProductionParty, PartyStatusChoices
 
@@ -451,7 +452,7 @@ class ProductControlDetailView(LoginRequiredMixin, View):
             ).distinct()
             locations_qs = locations_qs.filter(line__workshop__factory=factory)
 
-        skus = list(skus_qs)
+        skus = prefer_linked_skus(skus_qs)
         locations = (
             locations_qs
             .select_related('line__workshop__factory')

@@ -20,6 +20,7 @@ from app_cz.services.code_client import send_application_report
 from app_factory.models import (
     ProductSKU, Product, PackagingLevelChoices, TypeFormationUIP
 )
+from app_factory.selectors import prefer_linked_skus
 
 from app_uip.models import UIP, PartyStatusChoices, UIPStatusLog
 
@@ -162,7 +163,8 @@ def find_sku_by_gtin(gtin: str):
     if not product:
         return None
 
-    return product.skus.filter(is_active=True).first()
+    skus = prefer_linked_skus(product.skus.filter(is_active=True))
+    return skus[0] if skus else None
 
 
 def find_any_sku_by_gtin(gtin: str):
@@ -175,7 +177,8 @@ def find_any_sku_by_gtin(gtin: str):
     if not product:
         return None
 
-    return product.skus.order_by('-is_active', 'id').first()
+    skus = prefer_linked_skus(product.skus.all())
+    return skus[0] if skus else None
 
 
 def find_or_activate_sku_for_task(article: str = None, gtin: str = None):
