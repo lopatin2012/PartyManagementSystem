@@ -1900,6 +1900,102 @@ class AvailableProductsInfoTests(TestCase):
         self.assertLessEqual(len(context.captured_queries), 6)
 
 
+class SuzManagementPermissionsTests(TestCase):
+    """Управление СУЗ доступно только суперпользователю."""
+
+    def setUp(self):
+        self.account = SUZAccount.objects.create(
+            is_active=True,
+            certificate_name='Сертификат',
+            serial_number='SN-SUZ-PERM',
+            inn='1234567890',
+            oms_id='oms',
+            device_name='device',
+            connection_identifier='conn',
+            dynamic_token='token',
+            token_expires_at=timezone.now() + timedelta(hours=2),
+        )
+        self.staff = User.objects.create_user(
+            username='suz-perm-staff', password='pass', is_staff=True,
+        )
+        self.superuser = User.objects.create_superuser(
+            username='suz-perm-root', password='pass', email='root@test.local',
+        )
+
+    def test_certificates_require_superuser(self):
+        self.client.force_login(self.staff)
+
+        response = self.client.get('/cz/api/get-suz-certificates/')
+
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_setup_requires_superuser(self):
+        self.client.force_login(self.staff)
+
+        with patch('app_cz.views.get_list_certificates') as certs:
+            response = self.client.post(
+                '/cz/api/setup-suz-account/',
+                data={'serial_number': 'SN-SUZ-PERM'},
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 403)
+        certs.assert_not_called()
+
+    def test_reset_requires_superuser(self):
+        self.client.force_login(self.staff)
+
+        response = self.client.post('/cz/api/reset-suz-account/')
+
+        self.assertEqual(response.status_code, 403)
+        self.account.refresh_from_db()
+        self.assertTrue(self.account.is_active)
+
+    def test_reset_works_for_superuser(self):
+        self.client.force_login(self.superuser)
+
+        response = self.client.post('/cz/api/reset-suz-account/')
+
+        self.assertEqual(response.status_code, 200)
+        self.account.refresh_from_db()
+        self.assertFalse(self.account.is_active)
+
+    def test_auth_key_requires_superuser(self):
+        self.client.force_login(self.staff)
+
+        response = self.client.get('/cz/api/get-auth-key/')
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_refresh_requires_superuser(self):
+        self.client.force_login(self.staff)
+
+        with patch('app_cz.views.refresh_suz_dynamic_token') as refresh:
+            response = self.client.post('/cz/api/refresh-suz-token/')
+
+        self.assertEqual(response.status_code, 403)
+        refresh.assert_not_called()
+
+    def test_refresh_works_for_superuser(self):
+        self.client.force_login(self.superuser)
+
+        with patch(
+            'app_cz.views.refresh_suz_dynamic_token', return_value=True,
+        ):
+            response = self.client.post('/cz/api/refresh-suz-token/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['success'])
+
+    def test_anonymous_denied(self):
+        for url in (
+            '/cz/api/get-suz-certificates/',
+            '/cz/api/get-auth-key/',
+        ):
+            response = self.client.get(url)
+            self.assertIn(response.status_code, (401, 403), url)
+
+
 class GenerateCzUipFormatTests(TestCase):
     """Генерация через ЧЗ отправляет productionDate полным ISO 8601 (…Z)."""
 

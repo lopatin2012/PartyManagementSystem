@@ -54,6 +54,7 @@ python manage.py test app_uip.tests.ReserveAccumulationTests.test_generate_count
 - **`/products/`** (product control) allows inline POST edits (`target=product|sku|packaging|location`) scoped to the product; foreign ids → 404. Any logged-in user may open it.
 - **`get_available_products()`** feeds the `/uip/` generation dropdown (≈400 SKUs): it prefetches `product__packagings` and `product_production_locations` (3 queries total) and returns the full product card (group/shelf life/type/packagings/factories) for the hover tooltip and selected-product block. Don't loop over products with `product.consumer_gtin` / `product_production_locations` — that reintroduces N+1 on every `/uip/` render.
 - Status changes go through `UIP.change_status()`; every transition is audited in `UIPStatusLog` with source (`admin`/`sync`/`api`/`service`).
+- **SUZ management is superuser-only.** The panel buttons («Настроить СУЗ», «Обновить», «Сбросить», modal) are shown only when `status_suz.can_manage` (`request.user.is_superuser`), and the endpoints `GET /cz/api/get-suz-certificates/`, `POST /cz/api/setup-suz-account/`, `POST /cz/api/reset-suz-account/`, `GET /cz/api/get-auth-key/`, `POST /cz/api/refresh-suz-token/` are guarded by `app_helper.access.IsSuperUser` (DRF permission). Don't relax them back to `IsAppAdmin` — these are sensitive account operations.
 
 ## Scheduled tasks
 

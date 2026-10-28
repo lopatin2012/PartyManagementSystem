@@ -2,11 +2,15 @@
 
 """Страница контроля продукции и привязка учётной записи к заводу."""
 
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth.models import Group, User
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
+
+from app_cz.models import SUZAccount
 
 from app_factory.models import (
     CardStateChoices,
@@ -658,6 +662,59 @@ class StatusPanelSnapshotTests(TestCase):
         self.assertEqual(response.status_code, 200)
         factories.assert_called_once()
         diagnose.assert_called_once()
+
+
+@STATIC_OVERRIDE
+class SuzManageButtonsTests(TestCase):
+    """Кнопки управления СУЗ видны только суперпользователю."""
+
+    def setUp(self):
+        self.account = SUZAccount.objects.create(
+            is_active=True,
+            certificate_name='Сертификат',
+            serial_number='SN-SUZ-1',
+            inn='1234567890',
+            oms_id='oms-1',
+            device_name='device',
+            connection_identifier='conn',
+            dynamic_token='token-123',
+            token_expires_at=timezone.now() + timedelta(hours=2),
+        )
+        self.staff = User.objects.create_user(
+            username='suz-staff', password='pass', is_staff=True,
+        )
+        self.superuser = User.objects.create_superuser(
+            username='suz-root', password='pass', email='root@test.local',
+        )
+
+    def _home(self, user):
+        self.client.force_login(user)
+        with patch(
+            'config.context_processors.check_factories',
+            return_value={'is_ok': True, 'factories': []},
+        ), patch(
+            'app_helper.service_helper.diagnose_service',
+            return_value={
+                'is_available': True,
+                'checks': {'summary': {'name': 'Сводка', 'ok': True}},
+            },
+        ):
+            return self.client.get(reverse('home'))
+
+    def test_staff_admin_does_not_see_suz_buttons(self):
+        response = self._home(self.staff)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Токен действителен')
+        self.assertNotContains(response, 'Обновить')
+        self.assertNotContains(response, 'Сбросить')
+
+    def test_superuser_sees_suz_buttons(self):
+        response = self._home(self.superuser)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Обновить')
+        self.assertContains(response, 'Сбросить')
 
 
 @STATIC_OVERRIDE

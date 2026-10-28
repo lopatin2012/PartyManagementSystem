@@ -8,8 +8,8 @@ import uuid
 from datetime import datetime
 
 from app_helper.access import (
-    admin_required, admin_required_json, generate_uip_required_json, IsAppAdmin,
-    user_can_access_sku, user_can_access_uip,
+    admin_required, admin_required_json, generate_uip_required_json,
+    IsAppAdmin, IsSuperUser, user_can_access_sku, user_can_access_uip,
 )
 from django.core.paginator import Paginator
 from django.db.models import Q
@@ -295,6 +295,7 @@ class ProductionPartyViewSet(viewsets.ReadOnlyModelViewSet):
     }
 )
 @api_view(['GET'])
+@permission_classes([IsSuperUser])
 def api_get_suz_certificates(request):
     """Возвращает список доступных валидных сертификатов ЭЦП."""
     try:
@@ -320,7 +321,7 @@ def api_get_suz_certificates(request):
     responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 500: OpenApiTypes.OBJECT}
 )
 @api_view(['POST'])
-# @permission_classes([IsAppAdmin])
+@permission_classes([IsSuperUser])
 def api_setup_suz_account(request):
     """Создает или обновляет активную запись СУЗ на основе выбранных данных."""
     try:
@@ -384,7 +385,7 @@ def api_setup_suz_account(request):
     responses={200: OpenApiTypes.OBJECT}
 )
 @api_view(['POST'])
-# @permission_classes([IsAppAdmin])
+@permission_classes([IsSuperUser])
 def api_reset_suz_account(request):
     """Деактивирует текущую активную запись СУЗ."""
     SUZAccount.objects.filter(is_active=True).update(is_active=False)
@@ -403,7 +404,7 @@ def api_reset_suz_account(request):
     responses={200: OpenApiTypes.OBJECT, 502: OpenApiTypes.OBJECT}
 )
 @api_view(['GET'])
-# @permission_classes([IsAppAdmin])
+@permission_classes([IsSuperUser])
 def api_get_auth_key(request):
     """
     API-эндпоинт для получения ключа аутентификации TrueAPI.
@@ -436,7 +437,7 @@ def api_get_auth_key(request):
     responses={200: OpenApiTypes.OBJECT, 500: OpenApiTypes.OBJECT}
 )
 @api_view(['POST'])
-@permission_classes([IsAppAdmin])
+@permission_classes([IsSuperUser])
 def api_refresh_suz_token(request):
     """
     Принудительное обновления динамического токена СУЗ.
