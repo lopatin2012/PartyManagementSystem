@@ -12,8 +12,10 @@
 
 import json
 from datetime import date, timedelta
+from io import StringIO
 from unittest.mock import Mock, patch
 from django.contrib.auth.models import Permission, User
+from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
@@ -306,6 +308,46 @@ def _create_sku():
         quantity_inside=1,
     )
     return ProductSKU.objects.create(product=product, article='50032')
+
+
+def _create_linked_sku_pair(gtin, factory, old_article='91229',
+                            new_article='91307'):
+    """
+    Продукт с двумя артикулами на один GTIN.
+
+    `new_article` привязан к заводу в `sku_links` (как в заданиях
+    «Молвест.Маркировка»), `old_article` — устаревший, без привязки.
+    """
+    product = Product.objects.create(
+        group=ProductGroupChoices.MILK,
+        name=f'Продукт {new_article}',
+        shelf_life_in_days=45,
+        item_condition=StateConditionChoices.READY_ORDER_KM,
+        card_status=CardStateChoices.PUBLISHED,
+    )
+    ProductPackaging.objects.create(
+        product=product,
+        level=PackagingLevelChoices.UNIT,
+        gtin=gtin,
+        quantity_inside=1,
+    )
+    old_sku = ProductSKU.objects.create(
+        product=product, article=old_article,
+    )
+    new_sku = ProductSKU.objects.create(
+        product=product,
+        article=new_article,
+        sku_links=[{
+            'system': 'molvest',
+            'molvest_uuid': str(product.id),
+            'gtin': gtin,
+            'article': new_article,
+            'factory': str(factory.id),
+            'factory_name': factory.name,
+            'active': True,
+        }],
+    )
+    return product, old_sku, new_sku
 
 
 class SyncPartiesReserveReconciliationTests(TestCase):
@@ -2825,3 +2867,175 @@ class SuzOrdersNotificationTests(TestCase):
         self.assertFalse(result['notified'])
         self.assertTrue(result['is_error'])
         self.assertIn('Письмо отправлено: False', result['message'])
+
+
+class FindSkuPreferenceTests(TestCase):
+    """Выбор SKU по GTIN: приоритет у артикула, привязанного к Молвест."""
+
+    GTIN = '04601751026081'
+
+    def setUp(self):
+        self.factory = Factory.objects.create(name='Калач')
+        self.product, self.old_sku, self.new_sku = _create_linked_sku_pair(
+            self.GTIN, self.factory,
+        )
+
+    def test_find_sku_by_gtin_prefers_linked_article(self):
+        self.assertEqual(
+            str(party_service.find_sku_by_gtin(self.GTIN).id),
+            str(self.new_sku.id),
+        )
+
+    def test_find_any_sku_by_gtin_prefers_linked_inactive(self):
+        self.new_sku.is_active = False
+        self.new_sku.save(update_fields=['is_active'])
+
+        self.assertEqual(
+            str(party_service.find_any_sku_by_gtin(self.GTIN).id),
+            str(self.new_sku.id),
+        )
+
+    def test_find_sku_by_gtin_without_links_takes_first_article(self):
+        self.new_sku.sku_links = []
+        self.new_sku.save(update_fields=['sku_links'])
+
+        self.assertEqual(
+            str(party_service.find_sku_by_gtin(self.GTIN).id),
+            str(self.old_sku.id),
+        )
+
+
+class ReceiveExternalTaskRelinksSkuTests(TestCase):
+    """Задание завода перепривязывает УИП к артикулу этого завода."""
+
+    GTIN = '04601751026082'
+    NUMBER = '046017510260822610150000-0000001'
+
+    def setUp(self):
+        self.factory = Factory.objects.create(name='Калач')
+        workshop = Workshop.objects.create(factory=self.factory, name='Цех 1')
+        self.line = Line.objects.create(
+            workshop=workshop, name='Линия-10 GEA-Робот',
+        )
+        self.product, self.old_sku, self.new_sku = _create_linked_sku_pair(
+            self.GTIN, self.factory,
+        )
+        self.uip = UIP.objects.create(
+            product_sku=self.old_sku,
+            number=self.NUMBER,
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+
+    def _receive(self, line_name=None, **extra):
+        payload = {
+            'uuid_str': 'task-relink-1',
+            'status': 'В работе',
+            'uip': self.NUMBER,
+            'line': {'name': line_name or self.line.name},
+        }
+        payload.update(extra)
+        return code_sync.receive_external_task(payload)
+
+    def test_uip_relinked_to_factory_article(self):
+        result = self._receive()
+
+        self.assertFalse(result['has_error'])
+        self.uip.refresh_from_db()
+        self.assertEqual(str(self.uip.product_sku_id), str(self.new_sku.id))
+
+    def test_unknown_factory_keeps_article(self):
+        other = Factory.objects.create(name='Другой завод')
+        other_line = Line.objects.create(
+            workshop=Workshop.objects.create(factory=other, name='Цех 2'),
+            name='Линия-2',
+        )
+
+        self._receive(line_name=other_line.name)
+
+        self.uip.refresh_from_db()
+        self.assertEqual(str(self.uip.product_sku_id), str(self.old_sku.id))
+
+
+class RelinkUipSkusCommandTests(TestCase):
+    """Команда relink_uip_skus перепривязывает существующие УИП."""
+
+    GTIN = '04601751026083'
+
+    def setUp(self):
+        self.factory = Factory.objects.create(name='Калач')
+        workshop = Workshop.objects.create(factory=self.factory, name='Цех 1')
+        self.line = Line.objects.create(workshop=workshop, name='Линия-1')
+        self.product, self.old_sku, self.new_sku = _create_linked_sku_pair(
+            self.GTIN, self.factory,
+        )
+        self.uip_1 = self._uip('046017510260832610150000-0000001')
+        self.uip_2 = self._uip('046017510260832610150000-0000002')
+
+    def _uip(self, number):
+        uip = UIP.objects.create(
+            product_sku=self.old_sku,
+            number=number,
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        ProductionParty.objects.create(
+            uip=uip,
+            production_party='1',
+            external_number_task=f'task-{number}',
+            line=self.line,
+        )
+        return uip
+
+    def test_command_relinks_uips(self):
+        out = StringIO()
+
+        call_command('relink_uip_skus', stdout=out)
+
+        self.uip_1.refresh_from_db()
+        self.uip_2.refresh_from_db()
+        self.assertEqual(
+            str(self.uip_1.product_sku_id), str(self.new_sku.id),
+        )
+        self.assertEqual(
+            str(self.uip_2.product_sku_id), str(self.new_sku.id),
+        )
+        self.assertIn('перепривязано 2', out.getvalue())
+
+    def test_dry_run_does_not_change(self):
+        out = StringIO()
+
+        call_command('relink_uip_skus', '--dry-run', stdout=out)
+
+        self.uip_1.refresh_from_db()
+        self.assertEqual(
+            str(self.uip_1.product_sku_id), str(self.old_sku.id),
+        )
+        self.assertIn('перепривязано 2', out.getvalue())
+
+    def test_limit_processes_only_first(self):
+        call_command('relink_uip_skus', '--limit', '1', stdout=StringIO())
+
+        self.uip_1.refresh_from_db()
+        self.uip_2.refresh_from_db()
+        self.assertEqual(
+            str(self.uip_1.product_sku_id), str(self.new_sku.id),
+        )
+        self.assertEqual(
+            str(self.uip_2.product_sku_id), str(self.old_sku.id),
+        )
+
+    def test_article_filter_limits_scope(self):
+        self.uip_1.product_sku = self.new_sku
+        self.uip_1.save(update_fields=['product_sku'])
+        out = StringIO()
+
+        call_command('relink_uip_skus', '--article', '91229', stdout=out)
+
+        self.uip_1.refresh_from_db()
+        self.uip_2.refresh_from_db()
+        self.assertEqual(
+            str(self.uip_1.product_sku_id), str(self.new_sku.id),
+        )
+        self.assertEqual(
+            str(self.uip_2.product_sku_id), str(self.new_sku.id),
+        )
+        self.assertIn('проверено УИП 1', out.getvalue())

@@ -38,6 +38,7 @@ from app_uip.models import (
     ProductionPartySyncStatusChoices,
 )
 from app_factory.models import Factory, Line, ProductPackaging, PackagingLevelChoices
+from app_factory.selectors import find_sku_for_factory
 
 logger = logging.getLogger(__name__)
 
@@ -210,14 +211,24 @@ def find_uip_for_external_task(data: dict):
     """
     number = str(data.get('uip') or '').strip()
     if number and number != NUMBER_PARTY_REGISTRATION:
-        uip = UIP.objects.filter(number=number).first()
+        uip = (
+            UIP.objects
+            .filter(number=number)
+            .select_related('product_sku__product')
+            .first()
+        )
         if uip:
             return uip
 
     uuid_uip = str(data.get('uuid_uip') or '').strip()
     if uuid_uip:
         try:
-            uip = UIP.objects.filter(id=uuid_uip).first()
+            uip = (
+                UIP.objects
+                .filter(id=uuid_uip)
+                .select_related('product_sku__product')
+                .first()
+            )
         except (ValueError, TypeError):
             uip = None
         if uip:
@@ -237,7 +248,12 @@ def _find_line(data: dict):
         line_ref = line_ref.get('name') or line_ref.get('id')
     if not line_ref:
         return None
-    return Line.objects.filter(name=str(line_ref)).first()
+    return (
+        Line.objects
+        .filter(name=str(line_ref))
+        .select_related('workshop__factory')
+        .first()
+    )
 
 
 def get_factory_for_party(party: ProductionParty):
@@ -340,6 +356,21 @@ def receive_external_task(data: dict) -> dict:
             line = _find_line(data)
             if line:
                 party.line = line
+
+            # Артикул. У продукта может быть несколько SKU на один GTIN
+            # (например, после смены пластинки): задание завода использует
+            # артикул, привязанный к его заводу в `sku_links`. Перепривязываем
+            # УИП к нему, иначе на /cz/sync показывается устаревший артикул.
+            factory = line.workshop.factory if line and line.workshop else None
+            if uip and uip.product_sku_id and factory:
+                sku = find_sku_for_factory(uip.product_sku.product, factory)
+                if sku and sku.id != uip.product_sku_id:
+                    logger.info(
+                        f'УИП {uip.number}: артикул {uip.product_sku.article} -> '
+                        f'{sku.article} (завод «{factory.name}»).'
+                    )
+                    uip.product_sku = sku
+                    uip.save(update_fields=['product_sku', 'updated_at'])
 
             # Даты.
             start_work = _parse_dt(data.get('start_work'))

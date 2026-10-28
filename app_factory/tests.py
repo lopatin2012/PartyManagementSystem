@@ -26,6 +26,7 @@ from app_factory.models import (
     Workshop,
 )
 from app_factory.services.product_activity_sync import sync_product_activity
+from app_factory.selectors import find_sku_for_factory, prefer_linked_skus
 
 
 def create_sku_with_line(factory, article, gtin):
@@ -321,3 +322,79 @@ class PackagingSharedAcrossArticlesTests(TestCase):
         self.assertEqual(
             ProductPackaging.objects.filter(gtin='04601751027917').count(), 1
         )
+
+
+class SkuFactoryLinkTests(TestCase):
+    """Несколько артикулов на один GTIN: выбор по привязке к заводу."""
+
+    def setUp(self):
+        self.factory = Factory.objects.create(name='Калач')
+        self.other_factory = Factory.objects.create(name='Другой завод')
+        self.product = Product.objects.create(
+            group=ProductGroupChoices.MILK,
+            name='Сыр Natura',
+            shelf_life_in_days=45,
+            item_condition=StateConditionChoices.READY_ORDER_KM,
+            card_status=CardStateChoices.PUBLISHED,
+        )
+        # Старый артикул — первый по алфавиту, без привязки к Молвест.
+        self.old_sku = ProductSKU.objects.create(
+            product=self.product, article='91229',
+        )
+        # Актуальный артикул завода «Калач».
+        self.new_sku = ProductSKU.objects.create(
+            product=self.product,
+            article='91307',
+            sku_links=[{
+                'system': 'molvest',
+                'molvest_uuid': str(self.product.id),
+                'gtin': '04601751024916',
+                'article': '91307',
+                'factory': str(self.factory.id),
+                'factory_name': 'Калач',
+                'active': True,
+            }],
+        )
+
+    def test_find_sku_for_factory_by_id(self):
+        self.assertEqual(
+            str(find_sku_for_factory(self.product, self.factory).id),
+            str(self.new_sku.id),
+        )
+
+    def test_find_sku_for_factory_by_name(self):
+        # Другой id, но то же имя завода — сопоставление по имени.
+        same_name = Factory(name='Калач')
+        self.assertEqual(
+            str(find_sku_for_factory(self.product, same_name).id),
+            str(self.new_sku.id),
+        )
+
+    def test_find_sku_for_factory_unknown_factory(self):
+        self.assertIsNone(
+            find_sku_for_factory(self.product, self.other_factory),
+        )
+
+    def test_find_sku_for_factory_without_product(self):
+        self.assertIsNone(find_sku_for_factory(None, self.factory))
+
+    def test_prefer_linked_skus_puts_linked_first(self):
+        articles = [
+            sku.article for sku in prefer_linked_skus(self.product.skus.all())
+        ]
+        self.assertEqual(articles, ['91307', '91229'])
+
+    def test_prefer_linked_skus_active_link_before_inactive(self):
+        # У «старого» артикула привязка неактивная — он остаётся позади.
+        self.old_sku.sku_links = [{
+            'system': 'molvest',
+            'factory': str(self.other_factory.id),
+            'factory_name': 'Другой завод',
+            'active': False,
+        }]
+        self.old_sku.save(update_fields=['sku_links'])
+
+        articles = [
+            sku.article for sku in prefer_linked_skus(self.product.skus.all())
+        ]
+        self.assertEqual(articles, ['91307', '91229'])
