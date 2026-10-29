@@ -1275,6 +1275,91 @@ class RegisterUipReserveConfirmationTests(TestCase):
         self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
 
 
+class ReleaseUipCodeSourceTests(TestCase):
+    """Аварийное снятие с резерва: короткий срок — код из общего резерва."""
+
+    NUMBER = '04601751026019260101500320000000'
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.sku.product.shelf_life_in_days = 40
+        self.sku.product.save(update_fields=['shelf_life_in_days'])
+        self.uip = UIP.objects.create(
+            product_sku=self.sku,
+            number=self.NUMBER,
+            status=PartyStatusChoices.RESERVED_LOCAL,
+            reservation_date=timezone.now().date(),
+            production_date=timezone.now().date(),
+        )
+        ProductionParty.objects.create(
+            uip=self.uip,
+            production_party='1',
+            external_number_task='task-1',
+            expiration_datetime=timezone.now(),
+        )
+
+    def _release(self, gtin_code='GTINCODE', task_code='TASKCODE'):
+        from app_cz.services import reserve_monitor
+
+        with patch.object(
+            reserve_monitor, 'send_application_report',
+            return_value={'has_error': False},
+        ) as report, patch.object(
+            reserve_monitor, '_fetch_code_by_gtin', return_value=gtin_code,
+        ) as gtin, patch.object(
+            reserve_monitor, '_fetch_code_for_task', return_value=task_code,
+        ) as task, patch(
+            'app_cz.services.party_service.get_reserved_party_numbers',
+            return_value=set(),
+        ):
+            result = reserve_monitor._release_uip(self.uip)
+
+        return result, report, gtin, task
+
+    def test_short_shelf_life_uses_general_reserve(self):
+        result, report, gtin, task = self._release()
+
+        self.assertTrue(result['released'])
+        self.assertEqual(report.call_args.kwargs['sntins'], ['GTINCODE'])
+        gtin.assert_called_once()
+        task.assert_not_called()
+
+    def test_short_shelf_life_falls_back_to_task_code(self):
+        result, report, gtin, task = self._release(gtin_code=None)
+
+        self.assertTrue(result['released'])
+        self.assertEqual(report.call_args.kwargs['sntins'], ['TASKCODE'])
+        task.assert_called_once()
+
+    def test_long_shelf_life_uses_task_code(self):
+        self.sku.product.shelf_life_in_days = 41
+        self.sku.product.save(update_fields=['shelf_life_in_days'])
+
+        result, report, gtin, task = self._release()
+
+        self.assertTrue(result['released'])
+        self.assertEqual(report.call_args.kwargs['sntins'], ['TASKCODE'])
+        task.assert_called_once()
+        gtin.assert_not_called()
+
+    def test_short_shelf_life_boundary(self):
+        from app_cz.services.reserve_monitor import _is_short_shelf_life
+
+        uip = UIP.objects.select_related('product_sku__product').get(
+            pk=self.uip.pk,
+        )
+        self.assertTrue(_is_short_shelf_life(uip))
+
+        uip.product_sku.product.shelf_life_in_days = 41
+        uip.product_sku.product.save(update_fields=['shelf_life_in_days'])
+        self.assertFalse(_is_short_shelf_life(uip))
+
+    def test_emergency_release_batch_is_1000(self):
+        from app_cz.services import reserve_monitor
+
+        self.assertEqual(reserve_monitor.RELEASE_BATCH_SIZE, 1000)
+
+
 class BuildLocalPartyNumberNaturaTests(TestCase):
     """Локальный УИП формата «НатураПРО» (type_formation_uip=4)."""
 
@@ -2117,6 +2202,50 @@ class SuzManagementPermissionsTests(TestCase):
         ):
             response = self.client.get(url)
             self.assertIn(response.status_code, (401, 403), url)
+
+
+class GenerateLocalUipFromCutoffTests(TestCase):
+    """С 01.11.2026 локальный УИП резервируется в ЧЗ, даже если просили черновик."""
+
+    def test_reserves_from_cutoff_even_with_skip_cz(self):
+        sku = _create_sku()
+
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={'token': 't'},
+        ), patch.object(
+            party_service, 'reserve_parties_honest_sign',
+            return_value={
+                'is_error': False,
+                'message_error': 'Ошибки отсутствуют',
+                'lst_party_number_info': [],
+            },
+        ) as reserve:
+            result = party_service.generate_uip(
+                sku, date(2026, 11, 1), 'local', skip_cz=True,
+            )
+
+        self.assertFalse(result['is_error'])
+        reserve.assert_called_once()
+        uip = UIP.objects.get(product_sku=sku)
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertIsNotNone(uip.reservation_date)
+
+    def test_draft_before_cutoff(self):
+        sku = _create_sku()
+
+        with patch.object(
+            party_service, 'reserve_parties_honest_sign',
+        ) as reserve:
+            result = party_service.generate_uip(
+                sku, date(2026, 10, 31), 'local', skip_cz=True,
+            )
+
+        self.assertFalse(result['is_error'])
+        reserve.assert_not_called()
+        uip = UIP.objects.get(product_sku=sku)
+        self.assertEqual(uip.status, PartyStatusChoices.DRAFT)
+        self.assertIsNone(uip.reservation_date)
 
 
 class GenerateCzUipFormatTests(TestCase):

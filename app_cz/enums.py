@@ -1,6 +1,13 @@
 # app_cz/enums.py
 
+from datetime import date
 from enum import Enum
+
+
+# С этой даты УИП с коротким сроком годности обязательно резервируются в ЧЗ
+# (а не остаются черновиками). Общая константа: используется накоплением
+# резерва и генерацией УИП.
+SHORT_SHELF_LIFE_RESERVE_FROM = date(2026, 11, 1)
 
 
 class Signature(Enum):
