@@ -555,7 +555,7 @@ def reserve_drafts_from_date(
             # оставляем черновиком, чтобы разобраться и исправить.
             continue
         uip = item['entry']['uip']
-        reason = str(item.get('reason') or '')[:200]
+        reason = str(item.get('reason') or '')[:500]
         try:
             uip.change_status(
                 PartyStatusChoices.REGISTERED,
@@ -617,5 +617,81 @@ def reserve_drafts_from_date(
                 'Резервирование черновиков: не удалось записать событие'
             )
 
+    logger.info(summary['message'])
+    return summary
+
+
+def restore_pg_failed_drafts(dry_run: bool = True, limit: int = 0) -> dict:
+    """
+    Возвращает в черновики УИП, ошибочно помеченные зарегистрированными
+    из-за отсутствия товарной группы (`pg`).
+
+    Такие УИП были отмечены старой логикой `reserve_drafts_from_date`:
+    ЧЗ отвечал 400 «Некорректный JSON … ReservationRequest["pg"]», а УИП
+    считался зарегистрированным. После заполнения товарной группы их можно
+    снова поставить в резерв.
+
+    :param dry_run: True — только показать список, ничего не менять.
+    :param limit: максимум УИП за запуск (0 — без ограничения).
+    """
+    from django.db.models import Q
+
+    queryset = (
+        UIP.objects
+        .filter(
+            status=PartyStatusChoices.REGISTERED,
+            status_logs__note__contains='Резерв не удался',
+        )
+        .filter(
+            Q(status_logs__note__icontains='ReservationRequest')
+            | Q(status_logs__note__icontains='Некорректный JSON')
+            | Q(status_logs__note__icontains='товарн')
+        )
+        .distinct()
+        .order_by('number')
+    )
+    if limit:
+        queryset = queryset[:limit]
+    uips = list(queryset)
+
+    summary = {
+        'is_error': False,
+        'checked': len(uips),
+        'restored': 0,
+        'dry_run': dry_run,
+        'numbers': [uip.number for uip in uips],
+        'message': '',
+    }
+
+    if dry_run:
+        summary['message'] = (
+            f'К возврату в черновики: {len(uips)} УИП '
+            f'(запустите с --apply, чтобы изменить).'
+        )
+        logger.info(summary['message'])
+        return summary
+
+    for uip in uips:
+        try:
+            uip.reservation_date = None
+            uip.is_desync = False
+            uip.change_status(
+                PartyStatusChoices.DRAFT,
+                source='service',
+                note=(
+                    'Возвращён в черновик: резерв не удался из-за '
+                    'отсутствия товарной группы (pg)'
+                ),
+            )
+            summary['restored'] += 1
+        except Exception as exc:  # noqa: BLE001 — один сбой не роняет прогон
+            logger.exception(
+                f'Возврат в черновик {uip.number}: ошибка: {exc}'
+            )
+            summary['is_error'] = True
+
+    summary['message'] = (
+        f'Возвращено в черновики: {summary["restored"]} из {len(uips)}.'
+    )
     logger.info(summary['message'])
     return summary
