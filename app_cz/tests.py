@@ -3450,6 +3450,28 @@ class ReceiveExternalTaskRelinksSkuTests(TestCase):
         self.uip.refresh_from_db()
         self.assertEqual(str(self.uip.product_sku_id), str(self.old_sku.id))
 
+    def test_number_article_wins_when_both_skus_linked(self):
+        # К заводу привязаны оба артикула, в задании артикула нет —
+        # ориентируемся на артикул из номера УИП (91307), а не на алфавит.
+        self.old_sku.sku_links = [{
+            'system': 'molvest',
+            'factory': str(self.factory.id),
+            'factory_name': 'Калач',
+            'active': True,
+        }]
+        self.old_sku.save(update_fields=['sku_links'])
+        number = '04601751026082261015913070000000'
+        uip = UIP.objects.create(
+            product_sku=self.old_sku,
+            number=number,
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+
+        self._receive(uip=number)
+
+        uip.refresh_from_db()
+        self.assertEqual(str(uip.product_sku_id), str(self.new_sku.id))
+
 
 class RelinkUipSkusCommandTests(TestCase):
     """Команда relink_uip_skus перепривязывает существующие УИП."""
@@ -3534,3 +3556,20 @@ class RelinkUipSkusCommandTests(TestCase):
             str(self.uip_2.product_sku_id), str(self.new_sku.id),
         )
         self.assertIn('проверено УИП 1', out.getvalue())
+
+    def test_number_article_wins_when_both_skus_linked(self):
+        # Оба артикула привязаны к заводу; номер УИП собран из 91307.
+        self.old_sku.sku_links = [{
+            'system': 'molvest',
+            'factory': str(self.factory.id),
+            'factory_name': 'Калач',
+            'active': True,
+        }]
+        self.old_sku.save(update_fields=['sku_links'])
+        number = '04601751026083261015913070000000'
+        uip = self._uip(number)
+
+        call_command('relink_uip_skus', '--number', number, stdout=StringIO())
+
+        uip.refresh_from_db()
+        self.assertEqual(str(uip.product_sku_id), str(self.new_sku.id))

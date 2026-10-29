@@ -378,6 +378,29 @@ class SkuFactoryLinkTests(TestCase):
     def test_find_sku_for_factory_without_product(self):
         self.assertIsNone(find_sku_for_factory(None, self.factory))
 
+    def test_find_sku_for_factory_prefers_article_prefix(self):
+        # Оба артикула привязаны к заводу: артикул из задания важнее алфавита.
+        self.old_sku.sku_links = [{
+            'system': 'molvest',
+            'factory': str(self.factory.id),
+            'factory_name': 'Калач',
+            'active': True,
+        }]
+        self.old_sku.save(update_fields=['sku_links'])
+
+        self.assertEqual(
+            str(find_sku_for_factory(
+                self.product, self.factory, article_prefix='91229',
+            ).id),
+            str(self.old_sku.id),
+        )
+        self.assertEqual(
+            str(find_sku_for_factory(
+                self.product, self.factory, article_prefix='91307',
+            ).id),
+            str(self.new_sku.id),
+        )
+
     def test_prefer_linked_skus_puts_linked_first(self):
         articles = [
             sku.article for sku in prefer_linked_skus(self.product.skus.all())

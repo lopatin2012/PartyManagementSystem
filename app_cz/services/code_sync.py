@@ -41,6 +41,7 @@ from app_uip.models import (
 )
 from app_factory.models import Factory, Line, ProductPackaging, PackagingLevelChoices
 from app_factory.selectors import find_sku_for_factory
+from app_cz.services.party_service import article_prefix_from_local_number
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +240,44 @@ def find_uip_for_external_task(data: dict):
     return None
 
 
+def _task_article_prefix(data: dict, uip=None) -> str:
+    """
+    Первые 5 символов артикула для выбора SKU завода.
+
+    Основной источник — номер УИП: в локальном формате он содержит артикул
+    (GTIN + дата + артикул), поэтому работает, даже если в задании артикула
+    нет. Если номера нет (новое задание) или он в формате Natura, берём
+    артикул из задания, когда он там есть. Нет ни того, ни другого — пустая
+    строка, выбор SKU остаётся прежним (по привязке/активности/алфавиту).
+    """
+    if uip and uip.number:
+        prefix = article_prefix_from_local_number(uip.number)
+        if prefix:
+            return prefix
+
+    candidates = []
+
+    product = data.get('product')
+    if isinstance(product, dict):
+        for key in ('article', 'code', 'article_code', 'sku'):
+            value = product.get(key)
+            if value:
+                candidates.append(str(value).strip())
+    elif isinstance(product, str):
+        candidates.append(product.strip())
+
+    for key in ('article', 'code', 'article_code'):
+        value = data.get(key)
+        if value:
+            candidates.append(str(value).strip())
+
+    for candidate in candidates:
+        if candidate:
+            return candidate[:5]
+
+    return ''
+
+
 def _find_line(data: dict):
     """
     Пытается сопоставить линию внешнего сервиса с локальной линией (по имени).
@@ -365,7 +404,11 @@ def receive_external_task(data: dict) -> dict:
             # УИП к нему, иначе на /cz/sync показывается устаревший артикул.
             factory = line.workshop.factory if line and line.workshop else None
             if uip and uip.product_sku_id and factory:
-                sku = find_sku_for_factory(uip.product_sku.product, factory)
+                sku = find_sku_for_factory(
+                    uip.product_sku.product,
+                    factory,
+                    article_prefix=_task_article_prefix(data, uip),
+                )
                 if sku and sku.id != uip.product_sku_id:
                     logger.info(
                         f'УИП {uip.number}: артикул {uip.product_sku.article} -> '
