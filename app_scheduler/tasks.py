@@ -294,7 +294,11 @@ def cleanup_old_task_results_task() -> dict:
 
 @task(queue_name='default')
 def reserve_required_drafts_task() -> dict:
-    """Резервирует в ЧЗ черновики УИП с датой производства от 01.11.2026."""
+    """
+    Резервирует в ЧЗ черновики УИП по сроку годности и дате производства.
+
+    41–45 дней — всегда; 40 и менее — с 01.03.2027.
+    """
     from app_uip.services.reserve_accumulation import reserve_drafts_from_date
 
     result = reserve_drafts_from_date()
@@ -509,7 +513,7 @@ def accumulate_short_shelf_life_reserve_task() -> dict:
     Продукция со сроком годности 41..UIP_SHORT_SHELF_LIFE_DAYS резервируется
     в ЧЗ собственным (локальным) номером; для срока годности не более
     `UIP_DRAFT_SHELF_LIFE_DAYS` (по умолчанию 40) создаются черновики без
-    обращения к ЧЗ — кроме дат производства с 01.11.2026, которые
+    обращения к ЧЗ — кроме дат производства с 01.03.2027, которые
     резервируются в ЧЗ. `UIP_DRAFT_MODE` на накопление не влияет.
     """
     from app_uip.services.reserve_accumulation import (

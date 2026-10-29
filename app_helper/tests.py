@@ -8,7 +8,9 @@ from django.utils import timezone
 from app_event.models import (
     EventLog, ExternalCallMetric, RequestMetric, SystemMetric,
 )
-from app_helper import load_tracker, metrics, middleware, service_helper
+from app_helper import (
+    external_http, load_tracker, metrics, middleware, service_helper,
+)
 
 
 class LoadStatsMessageTests(SimpleTestCase):
@@ -446,7 +448,7 @@ class ExternalMetricsTests(TestCase):
         metrics.reset()
 
     def _row(self, *, service='cz', method='GET', outcome='ok',
-             minutes_ago=1, count=1, errors=0, duration=100):
+             minutes_ago=1, count=1, errors=0, duration=100, endpoint=''):
         bucket = (
             timezone.now().replace(second=0, microsecond=0)
             - timedelta(minutes=minutes_ago)
@@ -456,6 +458,7 @@ class ExternalMetricsTests(TestCase):
             'service': service,
             'method': method,
             'outcome': outcome,
+            'endpoint': endpoint,
             'count': count,
             'errors': errors,
             'total_ms': duration * count,
@@ -543,6 +546,82 @@ class ExternalMetricsTests(TestCase):
 
         self.assertTrue(check['ok'])
         self.assertIn('Нет данных', check['message'])
+
+    def test_flush_keeps_endpoint(self):
+        metrics.record_external_call(
+            service='factory', method='GET', outcome='404',
+            duration_ms=10, endpoint='/codes/api/get_codes_by_task/',
+        )
+        metrics.flush_metrics()
+
+        row = ExternalCallMetric.objects.get()
+        self.assertEqual(row.endpoint, '/codes/api/get_codes_by_task/')
+        self.assertEqual(row.errors, 1)
+
+    def test_external_check_explains_outcome_and_endpoint(self):
+        self._row(
+            service='factory', method='GET', outcome='404', count=8,
+            errors=8, endpoint='/codes/api/get_codes_by_task/',
+        )
+        self._row(
+            service='factory', method='GET', outcome='timeout', count=1,
+            errors=1, endpoint='/codes/api/get_any_code_for_task/{id}/',
+        )
+        self._row(
+            service='factory', method='GET', outcome='ok', count=10,
+            endpoint='/codes/api/get_codes_by_task/',
+        )
+
+        check = metrics.external_check(60)
+
+        self.assertFalse(check['ok'])
+        self.assertIn('404 — 8', check['message'])
+        self.assertIn('таймаут — 1', check['message'])
+        self.assertIn('/codes/api/get_codes_by_task/', check['message'])
+
+        factory = check['details']['services'][0]
+        self.assertEqual(factory['service'], 'factory')
+        self.assertEqual(factory['error_outcomes'][0]['outcome'], '404')
+        self.assertEqual(
+            factory['top_error_endpoint']['endpoint'],
+            '/codes/api/get_codes_by_task/',
+        )
+
+
+class ExternalEndpointLabelTests(SimpleTestCase):
+    """Эндпоинт в метриках — шаблон пути без uuid/номеров."""
+
+    def test_uuid_segment_is_normalized(self):
+        label = external_http.endpoint_label(
+            'http://10.0.0.1:8000/codes/api/get_any_code_for_task/'
+            '0f8b6a3e-1c2d-4e5f-8a9b-0c1d2e3f4a5b/'
+        )
+
+        self.assertEqual(
+            label, '/codes/api/get_any_code_for_task/{id}/',
+        )
+
+    def test_number_segment_and_query_are_ignored(self):
+        label = external_http.endpoint_label(
+            'http://factory/codes/12345?gtin=04601751030375'
+        )
+
+        self.assertEqual(label, '/codes/{id}')
+
+    def test_empty_url_returns_root(self):
+        self.assertEqual(external_http.endpoint_label(''), '/')
+
+    @patch('app_helper.external_http.metrics.record_external_call')
+    @patch('app_helper.external_http.requests.request')
+    def test_request_records_exact_status_and_endpoint(self, request, record):
+        request.return_value.status_code = 404
+
+        external_http.get('factory', 'http://factory/codes/api/task/abc/')
+
+        kwargs = record.call_args.kwargs
+        self.assertEqual(kwargs['outcome'], '404')
+        self.assertEqual(kwargs['service'], 'factory')
+        self.assertEqual(kwargs['endpoint'], '/codes/api/task/abc/')
 
 
 class QueueAndSystemMetricsTests(TestCase):

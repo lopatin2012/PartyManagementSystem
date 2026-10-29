@@ -1454,25 +1454,28 @@ class ReserveAccumulationTests(TestCase):
     def test_should_reserve_in_cz_by_shelf_life(self):
         from app_uip.services.reserve_accumulation import should_reserve_in_cz
 
-        self.assertFalse(should_reserve_in_cz(
-            self._make_product('R40', '04601751026060', shelf_life=40)
-        ))
-        self.assertTrue(should_reserve_in_cz(
-            self._make_product('R41', '04601751026061', shelf_life=41)
-        ))
-        self.assertTrue(should_reserve_in_cz(
-            self._make_product('R45', '04601751026062', shelf_life=45)
-        ))
+        short = self._make_product('R40', '04601751026060', shelf_life=40)
+        band_41 = self._make_product('R41', '04601751026061', shelf_life=41)
+        band_45 = self._make_product('R45', '04601751026062', shelf_life=45)
 
-    def test_short_shelf_life_reserved_from_constant_date(self):
-        from datetime import date
+        # 41–45 резервируются всегда, даже на прошлые даты.
+        self.assertTrue(should_reserve_in_cz(band_41, date(2026, 10, 1)))
+        self.assertTrue(should_reserve_in_cz(band_45, date(2026, 10, 1)))
+        self.assertTrue(should_reserve_in_cz(band_41))
+
+        # ≤40 — только с 01.03.2027.
+        self.assertFalse(should_reserve_in_cz(short, date(2027, 2, 28)))
+        self.assertTrue(should_reserve_in_cz(short, date(2027, 3, 1)))
+        self.assertFalse(should_reserve_in_cz(short))
+
+    def test_short_shelf_life_reserved_from_cutoff(self):
         from app_uip.services import reserve_accumulation as ra
 
         sku = self._make_product('C40', '04601751026082', shelf_life=40)
         entry = {
             'sku': sku,
-            'date': date(2026, 11, 1),
-            'number': '04601751026082261101134250000000',
+            'date': date(2027, 3, 1),
+            'number': '04601751026082270301134250000000',
             'action': 'create',
         }
         with patch.object(
@@ -1490,15 +1493,14 @@ class ReserveAccumulationTests(TestCase):
             PartyStatusChoices.RESERVED_LOCAL,
         )
 
-    def test_short_shelf_life_draft_before_constant_date(self):
-        from datetime import date
+    def test_short_shelf_life_draft_before_cutoff(self):
         from app_uip.services import reserve_accumulation as ra
 
         sku = self._make_product('C40b', '04601751026083', shelf_life=40)
         entry = {
             'sku': sku,
-            'date': date(2026, 10, 31),
-            'number': '04601751026083261031134250000000',
+            'date': date(2027, 2, 28),
+            'number': '04601751026083270228134250000000',
             'action': 'create',
         }
         with patch.object(
@@ -1513,6 +1515,34 @@ class ReserveAccumulationTests(TestCase):
         self.assertEqual(
             UIP.objects.get(product_sku=sku).status,
             PartyStatusChoices.DRAFT,
+        )
+
+    def test_short_shelf_life_force_reserves_before_cutoff(self):
+        """Принудительный skip_cz=False резервирует и до 01.03.2027."""
+        from app_uip.services import reserve_accumulation as ra
+
+        sku = self._make_product('C40c', '04601751026084', shelf_life=40)
+        entry = {
+            'sku': sku,
+            'date': date(2027, 2, 28),
+            'number': '04601751026084270228134250000000',
+            'action': 'create',
+        }
+        with patch.object(
+            ra, '_plan_reserve', return_value=[entry],
+        ), patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = self._cz_success()
+            result = accumulate_short_shelf_life_reserve(
+                pause_seconds=0, skip_cz=False,
+            )
+
+        mock_reserve.assert_called()
+        self.assertEqual(result['reserved'], 1)
+        self.assertEqual(
+            UIP.objects.get(product_sku=sku).status,
+            PartyStatusChoices.RESERVED_LOCAL,
         )
 
     def test_reserved_elsewhere_is_recorded_locally(self):
@@ -1692,9 +1722,9 @@ class ReserveAccumulationTests(TestCase):
 # ==========================================
 
 class ReserveRequiredDraftsTests(TestCase):
-    """Черновики с датой производства от 01.11.2026 резервируются в ЧЗ."""
+    """Черновики с датой производства от 01.03.2027 резервируются в ЧЗ."""
 
-    CUTOFF = date(2026, 11, 1)
+    CUTOFF = date(2027, 3, 1)
 
     def setUp(self):
         self.sku = create_product()
@@ -1723,9 +1753,9 @@ class ReserveRequiredDraftsTests(TestCase):
         )
 
     def test_reserves_only_drafts_from_cutoff(self):
-        before = self._draft(date(2026, 10, 31))
-        first = self._draft(date(2026, 11, 1))
-        second = self._draft(date(2026, 11, 2))
+        before = self._draft(self.CUTOFF - timedelta(days=1))
+        first = self._draft(self.CUTOFF)
+        second = self._draft(self.CUTOFF + timedelta(days=1))
 
         with patch(
             'app_uip.services.reserve_accumulation.reserve_parties_honest_sign',
@@ -1748,8 +1778,25 @@ class ReserveRequiredDraftsTests(TestCase):
             {first.number, second.number},
         )
 
-    def test_dry_run_does_not_call_cz(self):
+    def test_band_41_45_draft_is_always_reserved(self):
+        self.sku.product.shelf_life_in_days = 45
+        self.sku.product.save(update_fields=['shelf_life_in_days'])
         draft = self._draft(date(2026, 11, 1))
+
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign',
+            return_value=self._cz_success(),
+        ) as reserve:
+            result = reserve_drafts_from_date()
+
+        reserve.assert_called_once()
+        self.assertEqual(result['checked'], 1)
+        self.assertEqual(result['reserved'], 1)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, PartyStatusChoices.RESERVED_LOCAL)
+
+    def test_dry_run_does_not_call_cz(self):
+        draft = self._draft(self.CUTOFF)
 
         with patch(
             'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
@@ -1763,7 +1810,7 @@ class ReserveRequiredDraftsTests(TestCase):
         self.assertEqual(result['reserved'], 0)
 
     def test_skips_when_reserve_full(self):
-        self._draft(date(2026, 11, 1))
+        self._draft(self.CUTOFF)
 
         with patch(
             'app_uip.services.reserve_accumulation.get_reserve_stats',
@@ -1777,7 +1824,7 @@ class ReserveRequiredDraftsTests(TestCase):
         reserve.assert_not_called()
 
     def test_cz_error_assumes_registered(self):
-        draft = self._draft(date(2026, 11, 1))
+        draft = self._draft(self.CUTOFF)
 
         with patch(
             'app_uip.services.reserve_accumulation.reserve_parties_honest_sign',
@@ -1802,7 +1849,7 @@ class ReserveRequiredDraftsTests(TestCase):
         self.assertEqual(draft.status, PartyStatusChoices.REGISTERED)
 
     def test_token_error_keeps_draft_and_marks_error(self):
-        draft = self._draft(date(2026, 11, 1))
+        draft = self._draft(self.CUTOFF)
 
         with patch(
             'app_uip.services.reserve_accumulation.reserve_parties_honest_sign',
@@ -1823,8 +1870,8 @@ class ReserveRequiredDraftsTests(TestCase):
         self.assertEqual(draft.status, PartyStatusChoices.DRAFT)
 
     def test_batch_error_isolates_bad_number(self):
-        good = self._draft(date(2026, 11, 1))
-        bad = self._draft(date(2026, 11, 2))
+        good = self._draft(self.CUTOFF)
+        bad = self._draft(self.CUTOFF + timedelta(days=1))
         batch_error = {
             'is_error': True,
             'error_kind': 'cz',
@@ -1864,7 +1911,7 @@ class ReserveRequiredDraftsTests(TestCase):
         from io import StringIO
         from django.core.management import call_command
 
-        self._draft(date(2026, 11, 1))
+        self._draft(self.CUTOFF)
 
         dry = StringIO()
         call_command('reserve_required_drafts', '--dry-run', stdout=dry)
@@ -1916,7 +1963,7 @@ class ReserveRequiredDraftsTests(TestCase):
         from io import StringIO
         from django.core.management import call_command
 
-        draft = self._draft(date(2026, 11, 1))
+        draft = self._draft(self.CUTOFF)
 
         with patch(
             'app_uip.services.reserve_accumulation.reserve_parties_honest_sign',
@@ -1938,7 +1985,7 @@ class ReserveRequiredDraftsTests(TestCase):
         self.assertIn('Считаем зарегистрированными: 1', text)
 
     def test_missing_product_group_keeps_draft(self):
-        draft = self._draft(date(2026, 11, 1))
+        draft = self._draft(self.CUTOFF)
         self.sku.product.group = ProductGroupChoices.NOT_SELECTED.value
         self.sku.product.save(update_fields=['group'])
 

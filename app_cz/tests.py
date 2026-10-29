@@ -2249,7 +2249,7 @@ class SuzManagementPermissionsTests(TestCase):
 
 
 class GenerateLocalUipFromCutoffTests(TestCase):
-    """С 01.11.2026 локальный УИП резервируется в ЧЗ, даже если просили черновик."""
+    """С 01.03.2027 локальный УИП резервируется в ЧЗ, даже если просили черновик."""
 
     def test_reserves_from_cutoff_even_with_skip_cz(self):
         sku = _create_sku()
@@ -2266,7 +2266,7 @@ class GenerateLocalUipFromCutoffTests(TestCase):
             },
         ) as reserve:
             result = party_service.generate_uip(
-                sku, date(2026, 11, 1), 'local', skip_cz=True,
+                sku, date(2027, 3, 1), 'local', skip_cz=True,
             )
 
         self.assertFalse(result['is_error'])
@@ -2275,6 +2275,31 @@ class GenerateLocalUipFromCutoffTests(TestCase):
         self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
         self.assertIsNotNone(uip.reservation_date)
 
+    def test_band_41_45_reserves_always(self):
+        sku = _create_sku()
+        sku.product.shelf_life_in_days = 45
+        sku.product.save(update_fields=['shelf_life_in_days'])
+
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={'token': 't'},
+        ), patch.object(
+            party_service, 'reserve_parties_honest_sign',
+            return_value={
+                'is_error': False,
+                'message_error': 'Ошибки отсутствуют',
+                'lst_party_number_info': [],
+            },
+        ) as reserve:
+            result = party_service.generate_uip(
+                sku, date(2026, 10, 1), 'local', skip_cz=True,
+            )
+
+        self.assertFalse(result['is_error'])
+        reserve.assert_called_once()
+        uip = UIP.objects.get(product_sku=sku)
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+
     def test_draft_before_cutoff(self):
         sku = _create_sku()
 
@@ -2282,7 +2307,7 @@ class GenerateLocalUipFromCutoffTests(TestCase):
             party_service, 'reserve_parties_honest_sign',
         ) as reserve:
             result = party_service.generate_uip(
-                sku, date(2026, 10, 31), 'local', skip_cz=True,
+                sku, date(2027, 2, 28), 'local', skip_cz=True,
             )
 
         self.assertFalse(result['is_error'])

@@ -186,7 +186,11 @@ class ExternalCallMetric(models.Model):
     method = models.CharField(max_length=10, verbose_name='Метод')
     outcome = models.CharField(
         max_length=10, verbose_name='Исход',
-        help_text='ok / 4xx / 5xx / timeout / error',
+        help_text='ok / 404 / 500 / timeout / error',
+    )
+    endpoint = models.CharField(
+        max_length=120, default='', blank=True, verbose_name='Эндпоинт',
+        help_text='Шаблон пути запроса, например /codes/api/get_codes_by_task/',
     )
 
     count = models.PositiveIntegerField(default=0, verbose_name='Вызовов')
@@ -207,7 +211,8 @@ class ExternalCallMetric(models.Model):
         ordering = ['-bucket_start']
         constraints = [
             models.UniqueConstraint(
-                fields=['bucket_start', 'service', 'method', 'outcome'],
+                fields=['bucket_start', 'service', 'method', 'outcome',
+                        'endpoint'],
                 name='extcall_unique_key',
             ),
         ]
