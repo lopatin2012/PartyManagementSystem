@@ -161,11 +161,18 @@ def _plan_reserve(skus) -> list[dict]:
     return candidates
 
 
-def _reserve_numbers(entries: list[dict], pause_seconds: float) -> tuple[list, list]:
+def _reserve_numbers(
+        entries: list[dict], pause_seconds: float,
+) -> tuple[list, list, list]:
     """
     Резервирует номера в ЧЗ пачками (в разрезе товарных групп).
 
-    :return: (успешно зарезервированные entries, список ошибок).
+    Если ЧЗ отклоняет всю пачку (например, из-за одного некорректного номера),
+    номера проверяются по одному — валидные резервируются, проблемные
+    попадают в `failed` с причиной.
+
+    :return: (успешно зарезервированные entries, список ошибок,
+              список неудачных [{'entry', 'reason', 'error_kind'}]).
     """
     by_group: dict = {}
     for entry in entries:
@@ -173,37 +180,77 @@ def _reserve_numbers(entries: list[dict], pause_seconds: float) -> tuple[list, l
 
     reserved = []
     errors = []
+    failed = []
     first_request = True
+
+    def _attempt(group, chunk, pause=True):
+        nonlocal first_request
+        if pause and not first_request and pause_seconds:
+            time.sleep(pause_seconds)
+        first_request = False
+        return reserve_parties_honest_sign(
+            product_group=group,
+            party_numbers=[item['number'] for item in chunk],
+        )
 
     for group, group_entries in by_group.items():
         for start in range(0, len(group_entries), CZ_BATCH_SIZE):
             chunk = group_entries[start:start + CZ_BATCH_SIZE]
-            numbers = [e['number'] for e in chunk]
+            result = _attempt(group, chunk)
 
-            if not first_request and pause_seconds:
-                time.sleep(pause_seconds)
-            first_request = False
-
-            result = reserve_parties_honest_sign(
-                product_group=group,
-                party_numbers=numbers,
-            )
-            if result.get('is_error'):
-                error = result.get('message_error', 'Ошибка резервирования в ЧЗ')
-                errors.append(error)
-                logger.warning(
-                    f'Накопление резерва: не удалось зарезервировать '
-                    f'{len(numbers)} номер(ов): {error}'
+            if not result.get('is_error'):
+                reserved.extend(chunk)
+                logger.info(
+                    f'Накопление резерва: зарезервировано '
+                    f'{len(chunk)} номер(ов) в ЧЗ (группа {group}).'
                 )
                 continue
 
-            reserved.extend(chunk)
-            logger.info(
-                f'Накопление резерва: зарезервировано {len(numbers)} номер(ов) '
-                f'в ЧЗ (группа {group}).'
+            reason = result.get(
+                'message_error', 'Ошибка резервирования в ЧЗ',
             )
+            error_kind = result.get('error_kind') or 'cz'
 
-    return reserved, errors
+            if error_kind in ('token', 'network') or len(chunk) == 1:
+                if len(chunk) == 1:
+                    reason = f'{chunk[0]["number"]}: {reason}'
+                errors.append(reason)
+                failed.extend({
+                    'entry': item,
+                    'reason': reason,
+                    'error_kind': error_kind,
+                } for item in chunk)
+                logger.warning(
+                    f'Накопление резерва: не удалось зарезервировать '
+                    f'{len(chunk)} номер(ов): {reason}'
+                )
+                continue
+
+            # Один проблемный номер отклоняет весь батч ЧЗ. Проверяем по
+            # одному, чтобы не считать неудачными все номера пачки.
+            logger.warning(
+                f'Накопление резерва: батч из {len(chunk)} не '
+                f'зарезервирован ({reason}); проверяю номера по одному.'
+            )
+            for item in chunk:
+                single = _attempt(group, [item], pause=False)
+                if not single.get('is_error'):
+                    reserved.append(item)
+                    continue
+                single_reason = single.get('message_error', reason)
+                single_kind = single.get('error_kind') or 'cz'
+                errors.append(f'{item["number"]}: {single_reason}')
+                failed.append({
+                    'entry': item,
+                    'reason': single_reason,
+                    'error_kind': single_kind,
+                })
+                logger.warning(
+                    f'Накопление резерва: номер {item["number"]} не '
+                    f'зарезервирован: {single_reason}'
+                )
+
+    return reserved, errors, failed
 
 
 def _create_uip(entry: dict, skip_cz: bool) -> None:
@@ -332,7 +379,9 @@ def accumulate_short_shelf_life_reserve(
             )
 
     if reserve_entries:
-        reserved, reserve_errors = _reserve_numbers(reserve_entries, pause_seconds)
+        reserved, reserve_errors, _failed = _reserve_numbers(
+            reserve_entries, pause_seconds,
+        )
         errors.extend(reserve_errors)
     else:
         reserved = []
@@ -409,6 +458,8 @@ def reserve_drafts_from_date(
         'checked': len(uips),
         'reserved': 0,
         'failed': 0,
+        'assumed_registered': 0,
+        'failed_uips': [],
         'skipped_full': False,
         'dry_run': dry_run,
         'errors': [],
@@ -461,9 +512,16 @@ def reserve_drafts_from_date(
         logger.warning(summary['message'])
         return summary
 
-    reserved, errors = _reserve_numbers(entries, pause_seconds)
+    reserved, errors, failed = _reserve_numbers(entries, pause_seconds)
     summary['errors'] = errors
-    summary['failed'] = (len(entries) - len(reserved)) + missing
+    summary['failed'] = len(failed) + missing
+    summary['failed_uips'] = [
+        {
+            'number': item['entry'].get('number'),
+            'reason': item.get('reason', ''),
+        }
+        for item in failed
+    ]
 
     today = timezone.now().date()
     for entry in reserved:
@@ -484,11 +542,75 @@ def reserve_drafts_from_date(
             summary['is_error'] = True
             summary['failed'] += 1
 
+    # ЧЗ отклонил резерв конкретного номера (не токен/сеть): считаем, что
+    # УИП уже зарегистрирован, чтобы не оставлять его черновиком и не
+    # повторять резервирование. Причину сохраняем в истории и в отчёте.
+    systemic_failed = [
+        item for item in failed
+        if item.get('error_kind') in ('token', 'network')
+    ]
+    for item in failed:
+        if item.get('error_kind') in ('token', 'network', 'validation'):
+            # Токен/сеть — резерв не выполнялся; некорректный номер —
+            # оставляем черновиком, чтобы разобраться и исправить.
+            continue
+        uip = item['entry']['uip']
+        reason = str(item.get('reason') or '')[:200]
+        try:
+            uip.change_status(
+                PartyStatusChoices.REGISTERED,
+                source='service',
+                note=(
+                    f'Резерв не удался ({reason}); считаем УИП '
+                    f'зарегистрированным'
+                ),
+            )
+            summary['assumed_registered'] += 1
+        except Exception as exc:  # noqa: BLE001 — один сбой не роняет прогон
+            logger.exception(
+                f'Резервирование черновика {uip.number}: не удалось '
+                f'пометить зарегистрированным: {exc}'
+            )
+            summary['is_error'] = True
+
+    summary['is_error'] = summary['is_error'] or bool(systemic_failed)
+
     summary['message'] = (
         f'Резервирование черновиков с {cutoff:%d.%m.%Y}: '
         f'проверено {len(uips)}, зарезервировано {summary["reserved"]}, '
-        f'не удалось {summary["failed"]}.'
+        f'не удалось {summary["failed"]}, '
+        f'считаем зарегистрированными {summary["assumed_registered"]}'
     )
-    summary['is_error'] = summary['is_error'] or bool(errors)
+    if systemic_failed:
+        summary['message'] += f'; системных ошибок {len(systemic_failed)}'
+    summary['message'] += '.'
+
+    if summary['failed'] or summary['assumed_registered']:
+        try:
+            from app_event.utils import log_event
+
+            log_event(
+                module='system',
+                level='warning',
+                message=(
+                    f'Резервирование черновиков: не удалось '
+                    f'{summary["failed"]} из {len(uips)} '
+                    f'(зарезервировано {summary["reserved"]}, '
+                    f'считаем зарегистрированными '
+                    f'{summary["assumed_registered"]})'
+                ),
+                metadata={
+                    'cutoff': cutoff.isoformat(),
+                    'failed_uips': summary['failed_uips'][:200],
+                    'systemic_errors': [
+                        item.get('reason') for item in systemic_failed[:20]
+                    ],
+                },
+            )
+        except Exception:  # noqa: BLE001 — журнал не должен ронять задачу
+            logger.exception(
+                'Резервирование черновиков: не удалось записать событие'
+            )
+
     logger.info(summary['message'])
     return summary

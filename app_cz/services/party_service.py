@@ -511,6 +511,7 @@ def reserve_parties_honest_sign(
     if not party_numbers:
         return {
             'is_error': True,
+            'error_kind': 'validation',
             'message_error': 'Список партий для резервирования пуст.'
         }
 
@@ -519,6 +520,7 @@ def reserve_parties_honest_sign(
     if invalid_parties:
         return {
             'is_error': True,
+            'error_kind': 'validation',
             'message_error': f'Некорректный формат номеров партий: {", ".join(invalid_parties[:3])}...'
         }
 
@@ -538,6 +540,7 @@ def reserve_parties_honest_sign(
         logger.warning("Все указанные УИП уже зарезервированы или находятся в работе.")
         return {
             'is_error': True,
+            'error_kind': 'already_reserved',
             'message_error': 'Указанные УИП уже находятся в резерве или в работе.'
         }
 
@@ -585,6 +588,7 @@ def reserve_parties_honest_sign(
             logger.error(f"Сетевая ошибка при резервировании партий: {e}")
             return {
                 'is_error': True,
+                'error_kind': 'network',
                 'message_error': f'Ошибка соединения с ЧЗ: {str(e)}'
             }
 
@@ -623,6 +627,7 @@ def reserve_parties_honest_sign(
         )
         return {
             'is_error': True,
+            'error_kind': 'cz',
             'message_error': _extract_cz_error(
                 body, response.status_code, response.text,
             ),
