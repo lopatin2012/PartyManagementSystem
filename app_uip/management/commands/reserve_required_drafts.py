@@ -1,17 +1,17 @@
 # app_uip/management/commands/reserve_required_drafts.py
 
 """
-Резервирование в ЧЗ черновиков с датой производства от 01.11.2026.
+Резервирование в ЧЗ черновиков, которым пришла пора резервирования.
 
-По правилу с 01.11.2026 УИП не должен оставаться черновиком — он
-резервируется в Честном Знаке. Команда находит такие черновики и
-резервирует их (по товарным группам, пачками).
+Продукция со сроком годности 41–45 дней резервируется всегда; для срока
+годности 40 дней и менее — с даты производства 01.03.2027. Команда находит
+такие черновики и резервирует их (по товарным группам, пачками).
 
 Примеры:
     python manage.py reserve_required_drafts --dry-run
     python manage.py reserve_required_drafts
     python manage.py reserve_required_drafts --limit 50
-    python manage.py reserve_required_drafts --date 2026-11-01
+    python manage.py reserve_required_drafts --date 2027-03-01
 """
 
 from datetime import date
@@ -22,7 +22,7 @@ from app_uip.services.reserve_accumulation import reserve_drafts_from_date
 
 
 class Command(BaseCommand):
-    help = 'Резервирует в ЧЗ черновики УИП с датой производства от 01.11.2026'
+    help = 'Резервирует в ЧЗ черновики УИП по сроку годности и дате производства'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -39,7 +39,10 @@ class Command(BaseCommand):
         parser.add_argument(
             '--date',
             default='',
-            help='Дата производства, с которой резервировать (YYYY-MM-DD)',
+            help=(
+                'Дата резервирования для продукции ≤40 дней '
+                '(YYYY-MM-DD; по умолчанию 01.03.2027)'
+            ),
         )
 
     def handle(self, *args, **options):

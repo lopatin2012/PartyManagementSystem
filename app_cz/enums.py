@@ -7,7 +7,7 @@ from enum import Enum
 # С этой даты УИП с коротким сроком годности обязательно резервируются в ЧЗ
 # (а не остаются черновиками). Общая константа: используется накоплением
 # резерва и генерацией УИП.
-SHORT_SHELF_LIFE_RESERVE_FROM = date(2026, 11, 1)
+SHORT_SHELF_LIFE_RESERVE_FROM = date(2027, 3, 1)
 
 
 class Signature(Enum):

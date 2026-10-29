@@ -8,6 +8,7 @@ import requests
 
 from app_helper import external_http
 from uuid_utils import uuid7
+from django.conf import settings
 from django.utils import timezone
 from django.db.models import ObjectDoesNotExist, Prefetch
 from django.db import transaction
@@ -47,8 +48,32 @@ def uip_draft_mode() -> bool:
     в ЧЗ. Используется как значение по умолчанию для `skip_cz`, когда
     вызывающий код не передал его явно.
     """
-    from django.conf import settings
     return bool(getattr(settings, 'UIP_DRAFT_MODE', True))
+
+
+def uip_draft_shelf_life_days() -> int:
+    """Срок годности (дней, включительно), до которого УИП — черновик."""
+    return int(getattr(settings, 'UIP_DRAFT_SHELF_LIFE_DAYS', 40) or 40)
+
+
+def should_reserve_in_cz(product_sku, production_date=None) -> bool:
+    """
+    Резервировать ли УИП в ЧЗ по сроку годности и дате производства.
+
+    * срок годности больше `UIP_DRAFT_SHELF_LIFE_DAYS` (по умолчанию 40,
+      т.е. 41–45 в накоплении) — резервируем всегда;
+    * срок годности 40 и менее — только с даты
+      `SHORT_SHELF_LIFE_RESERVE_FROM` (01.03.2027);
+    * без даты для короткого срока — черновик (False).
+
+    Принудительный резерв (`skip_cz=False`, в т.ч. задание
+    «Молвест.Маркировка») решается вызывающим кодом и важнее этого правила.
+    """
+    if product_sku.product.shelf_life_in_days > uip_draft_shelf_life_days():
+        return True
+    if production_date is None:
+        return False
+    return production_date >= SHORT_SHELF_LIFE_RESERVE_FROM
 
 
 def validate_party_number(party_number: str) -> bool:
@@ -1543,7 +1568,8 @@ def _generate_local_uip(
         party: str = None,
         target_status: str = None,
         skip_cz: bool = None,
-        type_formation_uip: int = TypeFormationUIP.general.value
+        type_formation_uip: int = TypeFormationUIP.general.value,
+        force_reserve: bool = False,
 ) -> dict:
     """
     Создаёт УИП в локальном согласованном формате И резервирует его в ЧЗ.
@@ -1556,14 +1582,17 @@ def _generate_local_uip(
                           Если None: DRAFT при skip_cz, иначе RESERVED_LOCAL.
     :param skip_cz: Если True — НЕ резервировать в ЧЗ (черновик для тестов).
                     Если None — берётся из настройки UIP_DRAFT_MODE.
+    :param force_reserve: Обязательный резерв по сроку годности/дате
+                          производства (41–45 — всегда, ≤40 — с 01.03.2027).
+                          Игнорирует режим черновиков.
     """
     if skip_cz is None:
         skip_cz = uip_draft_mode()
 
-    # С 01.11.2026 УИП обязательно резервируется в ЧЗ, даже если включён
-    # режим черновиков или запрошен skip_cz=True: черновики с этой даты
-    # не создаём.
-    if production_date and production_date >= SHORT_SHELF_LIFE_RESERVE_FROM:
+    # 41–45 дней резервируются всегда, ≤40 — с 01.03.2027: черновик в этих
+    # случаях не создаём, даже если включён режим черновиков или передан
+    # skip_cz=True.
+    if force_reserve:
         skip_cz = False
         if target_status == PartyStatusChoices.DRAFT:
             target_status = None
@@ -1941,7 +1970,10 @@ def generate_uip(
         return _generate_local_uip(
             article, gtin, production_date,
             is_external_service, party, target_status, skip_cz,
-            type_formation_uip
+            type_formation_uip,
+            force_reserve=should_reserve_in_cz(
+                product_sku, production_date,
+            ),
         )
     if mode == 'cz':
         if skip_cz:

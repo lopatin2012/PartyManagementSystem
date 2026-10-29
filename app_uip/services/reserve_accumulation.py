@@ -14,12 +14,12 @@
 * «сгоревший» (`deleted`) УИП повторно резервируется тем же номером;
 * номер формируется локально (`build_local_party_number`);
 * срок годности `41..UIP_SHORT_SHELF_LIFE_DAYS` — УИП резервируются в ЧЗ
-  собственным (локальным) номером (`reserved_local`);
+  собственным (локальным) номером (`reserved_local`) **всегда**, на всё окно;
 * срок годности не более `UIP_DRAFT_SHELF_LIFE_DAYS` (по умолчанию 40) —
-  создаются черновики без обращения к ЧЗ; **кроме дат производства начиная с
-  `SHORT_SHELF_LIFE_RESERVE_FROM` (01.11.2026)** — они резервируются в ЧЗ
-  (только автоматическое накопление; ручная генерация это правило не
-  применяет); при явном `skip_cz=False` такие УИП тоже резервируются в ЧЗ;
+  черновики; в ЧЗ резервируются только с даты производства
+  `SHORT_SHELF_LIFE_RESERVE_FROM` (01.03.2027);
+* при явном `skip_cz=False` (принудительный резерв, в т.ч. по заданию
+  «Молвест.Маркировка») УИП резервируется в ЧЗ независимо от даты;
 * при резервировании в ЧЗ, если заполнение резерва превышает `RELEASE_PERCENT`
   (95%) — резервирование пропускается, чтобы не ухудшать ситуацию.
 """
@@ -30,6 +30,7 @@ from datetime import date, timedelta
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from app_cz.enums import SHORT_SHELF_LIFE_RESERVE_FROM
@@ -37,6 +38,8 @@ from app_cz.services.party_service import (
     build_local_party_number,
     reserve_parties_honest_sign,
     restore_burned_uips,
+    should_reserve_in_cz,
+    uip_draft_shelf_life_days,
 )
 from app_cz.services.reserve_monitor import RELEASE_PERCENT, get_reserve_stats
 from app_factory.models import ProductSKU, TypeFormationUIP
@@ -57,35 +60,18 @@ def _short_shelf_life_days() -> int:
     return int(getattr(settings, 'UIP_SHORT_SHELF_LIFE_DAYS', 45) or 45)
 
 
-def _draft_shelf_life_days() -> int:
-    """Порог срока годности (дней, включительно), до которого создаём черновики."""
-    return int(getattr(settings, 'UIP_DRAFT_SHELF_LIFE_DAYS', 40) or 40)
-
-
-def should_reserve_in_cz(sku) -> bool:
-    """
-    Должен ли УИП этого SKU резервироваться в ЧЗ по сроку годности продукта.
-
-    Продукция со сроком годности больше `UIP_DRAFT_SHELF_LIFE_DAYS` (по
-    умолчанию 40 дней) резервируется в ЧЗ; более короткий срок — черновик.
-    """
-    return sku.product.shelf_life_in_days > _draft_shelf_life_days()
-
-
 def _should_reserve_entry(entry, skip_cz) -> bool:
     """
     Резервировать ли конкретный УИП (SKU + дата производства) в ЧЗ.
 
-    * срок годности > `UIP_DRAFT_SHELF_LIFE_DAYS` (в пределах
-      `UIP_SHORT_SHELF_LIFE_DAYS`) — всегда резерв в ЧЗ;
-    * короткий срок, но дата производства >= `SHORT_SHELF_LIFE_RESERVE_FROM`
-      (01.11.2026) — тоже резерв в ЧЗ (только при автопополнении);
-    * иначе — черновик, если не передан явный `skip_cz=False`.
+    * срок годности 41–45 (больше `UIP_DRAFT_SHELF_LIFE_DAYS`) — всегда
+      резерв в ЧЗ (на всё окно накопления);
+    * срок годности 40 и менее — резерв только с даты производства
+      `SHORT_SHELF_LIFE_RESERVE_FROM` (01.03.2027), иначе черновик;
+    * явный `skip_cz=False` резервирует всегда — принудительный резерв,
+      в т.ч. по заданию «Молвест.Маркировка».
     """
-    if should_reserve_in_cz(entry['sku']):
-        return True
-    production_date = entry.get('date')
-    if production_date and production_date >= SHORT_SHELF_LIFE_RESERVE_FROM:
+    if should_reserve_in_cz(entry['sku'], entry.get('date')):
         return True
     return skip_cz is False
 
@@ -320,8 +306,10 @@ def accumulate_short_shelf_life_reserve(
 
     Продукция со сроком годности `41..UIP_SHORT_SHELF_LIFE_DAYS` резервируется
     в ЧЗ собственным (локальным) номером. Для срока годности не более
-    `UIP_DRAFT_SHELF_LIFE_DAYS` создаются черновики; если передан явный
-    `skip_cz=False`, такие УИП тоже резервируются в ЧЗ.
+    `UIP_DRAFT_SHELF_LIFE_DAYS` создаются черновики; с даты производства
+    `SHORT_SHELF_LIFE_RESERVE_FROM` (01.03.2027) такие УИП тоже резервируются
+    в ЧЗ. Если передан явный `skip_cz=False` (принудительный резерв, в т.ч. по
+    заданию «Молвест.Маркировка»), резервируются и более ранние даты.
 
     :param pause_seconds: пауза между запросами в ЧЗ (по умолчанию
                           CZ_BATCH_PAUSE_SECONDS).
@@ -417,9 +405,7 @@ def accumulate_short_shelf_life_reserve(
     }
 
 
-DRAFT_RESERVE_NOTE = (
-    'Черновик с датой производства от 01.11.2026 зарезервирован в ЧЗ'
-)
+DRAFT_RESERVE_NOTE = 'Черновик УИП зарезервирован в ЧЗ'
 
 
 def reserve_drafts_from_date(
@@ -429,13 +415,17 @@ def reserve_drafts_from_date(
         limit: int = 0,
 ) -> dict:
     """
-    Резервирует в ЧЗ существующие черновики с датой производства от cutoff.
+    Резервирует в ЧЗ черновики УИП, которым пришла пора резервирования.
 
-    Условие: статус «Черновик» и дата производства >=
-    `SHORT_SHELF_LIFE_RESERVE_FROM` (01.11.2026). Используется ежедневной
-    задачей и командой `reserve_required_drafts`.
+    * срок годности 41–45 (больше `UIP_DRAFT_SHELF_LIFE_DAYS`) — берём все
+      черновики, они резервируются всегда;
+    * срок годности 40 и менее — только с датой производства от `cutoff`
+      (`SHORT_SHELF_LIFE_RESERVE_FROM`, 01.03.2027).
+
+    Используется ежедневной задачей и командой `reserve_required_drafts`.
     """
     cutoff = cutoff_date or SHORT_SHELF_LIFE_RESERVE_FROM
+    draft_threshold = uip_draft_shelf_life_days()
     if pause_seconds is None:
         pause_seconds = CZ_BATCH_PAUSE_SECONDS
 
@@ -443,7 +433,14 @@ def reserve_drafts_from_date(
         UIP.objects
         .filter(
             status=PartyStatusChoices.DRAFT,
-            production_date__gte=cutoff,
+            production_date__isnull=False,
+        )
+        .filter(
+            Q(product_sku__product__shelf_life_in_days__gt=draft_threshold)
+            | Q(
+                product_sku__product__shelf_life_in_days__lte=draft_threshold,
+                production_date__gte=cutoff,
+            )
         )
         .select_related('product_sku__product')
         .order_by('production_date', 'number')
@@ -466,17 +463,18 @@ def reserve_drafts_from_date(
         'message': '',
     }
 
+    rule_text = (
+        f'41+ дней — всегда, ≤{draft_threshold} — с {cutoff:%d.%m.%Y}'
+    )
+
     if not uips:
-        summary['message'] = (
-            f'Нет черновиков с датой производства от {cutoff:%d.%m.%Y}.'
-        )
+        summary['message'] = f'Нет черновиков к резервированию ({rule_text}).'
         logger.info(summary['message'])
         return summary
 
     if dry_run:
         summary['message'] = (
-            f'Черновиков к резервированию: {len(uips)} '
-            f'(дата производства от {cutoff:%d.%m.%Y}).'
+            f'Черновиков к резервированию: {len(uips)} ({rule_text}).'
         )
         logger.info(summary['message'])
         return summary
@@ -576,7 +574,7 @@ def reserve_drafts_from_date(
     summary['is_error'] = summary['is_error'] or bool(systemic_failed)
 
     summary['message'] = (
-        f'Резервирование черновиков с {cutoff:%d.%m.%Y}: '
+        f'Резервирование черновиков ({rule_text}): '
         f'проверено {len(uips)}, зарезервировано {summary["reserved"]}, '
         f'не удалось {summary["failed"]}, '
         f'считаем зарегистрированными {summary["assumed_registered"]}'

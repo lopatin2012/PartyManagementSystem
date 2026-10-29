@@ -1315,7 +1315,9 @@ class GenerateUIPView(View):
             # резервируем, а не создаём черновик, даже если глобально включён
             # режим черновиков UIP_DRAFT_MODE.
             skip_cz = None
-            if mode == 'local' and should_reserve_in_cz(product_sku):
+            if mode == 'local' and should_reserve_in_cz(
+                product_sku, production_date,
+            ):
                 skip_cz = False
             result = generate_uip(
                 product_sku, production_date, mode,
