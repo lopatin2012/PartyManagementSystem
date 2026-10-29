@@ -1803,6 +1803,27 @@ class CzErrorMessagesTests(TestCase):
         self.assertIn('HTTP 502', result['message_error'])
         self.assertIn('Bad gateway from proxy', result['message_error'])
 
+    def test_pg_json_error_is_validation(self):
+        resp = self._resp(400, {
+            'error_message': (
+                'Некорректный JSON. Данные ошибки: '
+                'ReservationRequest["pg"]'
+            ),
+        })
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={'token': 't'},
+        ), patch(
+            'app_cz.services.party_service.external_http.post',
+            return_value=resp,
+        ):
+            result = party_service.reserve_parties_honest_sign(
+                product_group='milk', party_numbers=[self.PARTY],
+            )
+
+        self.assertEqual(result['error_kind'], 'validation')
+        self.assertIn('ReservationRequest', result['message_error'])
+
     def test_token_failure_is_marked_and_has_hint(self):
         with patch.object(
             party_service, 'get_true_api_session_token',
@@ -1868,6 +1889,29 @@ class TrueApiErrorExtractionTests(SimpleTestCase):
 
         self.assertIn('HTTP 502', message)
         self.assertIn('Bad gateway', message)
+
+
+class ReserveProductGroupValidationTests(TestCase):
+    """ЧЗ не принимает пустую/невыбранную товарную группу (pg)."""
+
+    PARTY = '04601751028990261011134240000000'
+
+    def test_missing_group_is_rejected_locally(self):
+        result = party_service.reserve_parties_honest_sign(
+            product_group='null', party_numbers=[self.PARTY],
+        )
+
+        self.assertTrue(result['is_error'])
+        self.assertEqual(result['error_kind'], 'validation')
+        self.assertIn('товарн', result['message_error'])
+
+    def test_empty_group_is_rejected_locally(self):
+        result = party_service.reserve_parties_honest_sign(
+            product_group=None, party_numbers=[self.PARTY],
+        )
+
+        self.assertTrue(result['is_error'])
+        self.assertEqual(result['error_kind'], 'validation')
 
 
 class ReservePartiesDuplicatesTests(TestCase):

@@ -46,6 +46,7 @@ from app_uip.services.uip_reserve import reserve_uips
 from app_uip.services.reserve_accumulation import (
     accumulate_short_shelf_life_reserve,
     reserve_drafts_from_date,
+    restore_pg_failed_drafts,
 )
 
 
@@ -1935,6 +1936,88 @@ class ReserveRequiredDraftsTests(TestCase):
         self.assertIn(draft.number, text)
         self.assertIn('Некорректный номер', text)
         self.assertIn('Считаем зарегистрированными: 1', text)
+
+    def test_missing_product_group_keeps_draft(self):
+        draft = self._draft(date(2026, 11, 1))
+        self.sku.product.group = ProductGroupChoices.NOT_SELECTED.value
+        self.sku.product.save(update_fields=['group'])
+
+        with patch(
+            'app_uip.services.reserve_accumulation.get_reserve_stats',
+            return_value={'percent': 50, 'count': 5000, 'limit': 10000},
+        ):
+            result = reserve_drafts_from_date()
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['assumed_registered'], 0)
+        self.assertEqual(result['failed'], 1)
+        self.assertIn('товарн', result['failed_uips'][0]['reason'])
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, PartyStatusChoices.DRAFT)
+
+
+class RestorePgFailedDraftsTests(TestCase):
+    """Возврат в черновики УИП, ошибочно помеченных зарегистрированными."""
+
+    def setUp(self):
+        self.sku = create_product()
+
+    def _registered(self, production_date, *, with_pg_note=True):
+        number = build_local_party_number(
+            '04601751026019',
+            production_date,
+            article='50032',
+            party='000',
+            type_formation_uip=TypeFormationUIP.general.value,
+        )
+        uip = UIP.objects.create(
+            product_sku=self.sku,
+            number=number,
+            status=PartyStatusChoices.REGISTERED,
+            production_date=production_date,
+        )
+        if with_pg_note:
+            UIPStatusLog.objects.create(
+                uip=uip,
+                from_status=PartyStatusChoices.DRAFT,
+                to_status=PartyStatusChoices.REGISTERED,
+                source='service',
+                note=(
+                    'Резерв не удался (HTTP 400: Некорректный JSON. '
+                    'Данные ошибки: Cannot invoke … because '
+                    '"this.errorMessageService" is null.); считаем УИП '
+                    'зарегистрированным'
+                ),
+            )
+        return uip
+
+    def test_dry_run_lists_only_pg_failed(self):
+        bad = self._registered(date(2026, 11, 1))
+        self._registered(date(2026, 11, 2), with_pg_note=False)
+
+        result = restore_pg_failed_drafts()
+
+        self.assertEqual(result['checked'], 1)
+        self.assertEqual(result['numbers'], [bad.number])
+        self.assertEqual(result['restored'], 0)
+        bad.refresh_from_db()
+        self.assertEqual(bad.status, PartyStatusChoices.REGISTERED)
+
+    def test_apply_restores_drafts(self):
+        bad = self._registered(date(2026, 11, 1))
+        other = self._registered(date(2026, 11, 2), with_pg_note=False)
+        bad.reservation_date = date(2026, 11, 1)
+        bad.save(update_fields=['reservation_date'])
+
+        result = restore_pg_failed_drafts(dry_run=False)
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['restored'], 1)
+        bad.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual(bad.status, PartyStatusChoices.DRAFT)
+        self.assertIsNone(bad.reservation_date)
+        self.assertEqual(other.status, PartyStatusChoices.REGISTERED)
 
 
 class UIPAdminDeleteActionTests(TestCase):

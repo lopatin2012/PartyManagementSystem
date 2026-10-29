@@ -21,8 +21,14 @@ from app_cz.services.code_client import send_application_report
 
 from app_factory.models import (
     ProductSKU, Product, PackagingLevelChoices, TypeFormationUIP,
-    ProductPackaging, ProductProductionLocation,
+    ProductPackaging, ProductProductionLocation, ProductGroupChoices,
 )
+
+# Валидные товарные группы для резервирования в ЧЗ (без «не выбрана»).
+VALID_PRODUCT_GROUPS = {
+    value for value, _label in ProductGroupChoices.choices
+    if value != ProductGroupChoices.NOT_SELECTED.value
+}
 from app_factory.selectors import prefer_linked_skus
 
 from app_uip.models import UIP, PartyStatusChoices, UIPStatusLog
@@ -338,6 +344,14 @@ def generate_party_numbers(
             'message_error': 'Максимальное количество генераций за один запрос — 50.'
         }
 
+    group_error = _product_group_validation_error(product_group)
+    if group_error:
+        logger.warning(
+            f'Генерация партий в ЧЗ отклонена локально: '
+            f'{group_error["message_error"]}'
+        )
+        return group_error
+
     # token для работы с TrueAPI.
     result_true_api_session_token = get_true_api_session_token()
     token = result_true_api_session_token.get('token')
@@ -501,6 +515,21 @@ def _reservation_error_message(reserve_result: dict, action: str) -> str:
     return f'{action}: {detail}'
 
 
+def _product_group_validation_error(product_group) -> dict | None:
+    """Ошибка, если товарная группа не заполнена (ЧЗ не примет pg)."""
+    value = str(product_group or '').strip().lower()
+    if value in VALID_PRODUCT_GROUPS:
+        return None
+    return {
+        'is_error': True,
+        'error_kind': 'validation',
+        'message_error': (
+            'У продукта не указана товарная группа — резерв в ЧЗ невозможен. '
+            'Заполните «Товарную группу» в карточке продукции и повторите.'
+        ),
+    }
+
+
 def reserve_parties_honest_sign(
         product_group: str,
         party_numbers: list[str]
@@ -514,6 +543,13 @@ def reserve_parties_honest_sign(
             'error_kind': 'validation',
             'message_error': 'Список партий для резервирования пуст.'
         }
+
+    group_error = _product_group_validation_error(product_group)
+    if group_error:
+        logger.warning(
+            f'Резервирование в ЧЗ отклонено локально: {group_error["message_error"]}'
+        )
+        return group_error
 
     # 1. Валидация формата.
     invalid_parties = [p for p in party_numbers if not validate_party_number(p)]
@@ -625,12 +661,18 @@ def reserve_parties_honest_sign(
             f"Ошибка резервирования {response.status_code}: "
             f"{response.text[:500]}"
         )
+        detail = _extract_cz_error(
+            body, response.status_code, response.text,
+        )
+        # Ошибка вида «Некорректный JSON … ReservationRequest["pg"]» —
+        # это проблема данных (товарная группа), а не «номер уже занят».
+        error_kind = 'cz'
+        if 'Некорректный JSON' in detail and 'pg' in detail:
+            error_kind = 'validation'
         return {
             'is_error': True,
-            'error_kind': 'cz',
-            'message_error': _extract_cz_error(
-                body, response.status_code, response.text,
-            ),
+            'error_kind': error_kind,
+            'message_error': detail,
             'http_status': response.status_code,
         }
 
@@ -659,12 +701,25 @@ def reserve_party_numbers_cz(
               'lst_party_number_info': list}
     """
     if not party_numbers:
-        return {'is_error': True, 'message_error': 'Список партий пуст.'}
+        return {
+            'is_error': True,
+            'error_kind': 'validation',
+            'message_error': 'Список партий пуст.',
+        }
+
+    group_error = _product_group_validation_error(product_group)
+    if group_error:
+        logger.warning(
+            f'Проверка в ЧЗ отклонена локально: '
+            f'{group_error["message_error"]}'
+        )
+        return group_error
 
     invalid = [p for p in party_numbers if not validate_party_number(p)]
     if invalid:
         return {
             'is_error': True,
+            'error_kind': 'validation',
             'message_error': (
                 f'Некорректный формат номеров партий: {", ".join(invalid[:3])}...'
             ),
