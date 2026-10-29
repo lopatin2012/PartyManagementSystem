@@ -99,4 +99,5 @@ def wait_nk_endpoint(endpoint: str, on_wait: Optional[Callable[[float], None]] =
             method='WAIT',
             outcome='ok',
             duration_ms=waited_ms,
+            endpoint=endpoint,
         )

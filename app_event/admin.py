@@ -78,7 +78,7 @@ class ReadOnlyMetricsAdmin(admin.ModelAdmin):
 @admin.register(ExternalCallMetric)
 class ExternalCallMetricAdmin(ReadOnlyMetricsAdmin):
     list_display = (
-        'bucket_start', 'service', 'method', 'outcome',
+        'bucket_start', 'service', 'method', 'outcome', 'endpoint',
         'count', 'errors', 'total_ms', 'max_ms',
     )
 

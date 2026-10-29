@@ -166,7 +166,7 @@
                 'Нет данных о внешних вызовах</td></tr></tbody>';
             return;
         }
-        const head = ['Сервис', 'Вызовов', 'Ошибок', 'Среднее', 'p95', 'Макс'];
+        const head = ['Сервис', 'Вызовов', 'Ошибок', 'Расшифровка', 'Среднее', 'p95', 'Макс'];
         const html = ['<thead><tr>'];
         head.forEach(function (title, index) {
             html.push('<th class="' + (index ? 'num' : '') + '">' +
@@ -175,6 +175,16 @@
         html.push('</tr></thead><tbody>');
         services.forEach(function (row) {
             const label = row.label || row.service;
+            const details = [];
+            (row.error_outcomes || []).forEach(function (outcome) {
+                details.push(outcome.label + ' — ' + fmt(outcome.errors));
+            });
+            if (row.top_error_endpoint && row.top_error_endpoint.endpoint) {
+                details.push(
+                    row.top_error_endpoint.method + ' ' +
+                    row.top_error_endpoint.endpoint
+                );
+            }
             html.push('<tr>');
             html.push('<td title="' + esc(row.service) + '">' + esc(label) + '</td>');
             html.push('<td class="num">' + fmt(row.count) + '</td>');
@@ -182,6 +192,7 @@
                 '<td class="num">' + fmt(row.errors) +
                 ' (' + fmtPct(row.error_rate) + ')</td>'
             );
+            html.push('<td>' + esc(details.join('; ') || '—') + '</td>');
             html.push('<td class="num">' + fmt(row.avg_ms) + ' мс</td>');
             html.push('<td class="num">' + fmt(row.p95_ms) + ' мс</td>');
             html.push('<td class="num">' + fmt(row.max_ms) + ' мс</td>');

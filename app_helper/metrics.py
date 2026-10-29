@@ -80,11 +80,19 @@ KEY_COLUMNS = (
 
 # Исходящие вызовы: отдельная таблица и ключ.
 EXTERNAL_COLUMNS = (
-    'bucket_start', 'service', 'method', 'outcome',
+    'bucket_start', 'service', 'method', 'outcome', 'endpoint',
     'count', 'errors', 'total_ms', 'max_ms',
     *HISTOGRAM_FIELDS,
 )
-EXTERNAL_KEY_COLUMNS = ('bucket_start', 'service', 'method', 'outcome')
+EXTERNAL_KEY_COLUMNS = (
+    'bucket_start', 'service', 'method', 'outcome', 'endpoint',
+)
+
+# Подписи исходов для сообщений (HTTP-коды показываем как есть).
+OUTCOME_LABELS = {
+    'timeout': 'таймаут',
+    'error': 'сеть',
+}
 
 # Метрики инфраструктуры (CPU/RAM/Postgres).
 SYSTEM_COLUMNS = ('bucket_start', 'metric', 'kind', 'value', 'max_value')
@@ -301,7 +309,7 @@ def pending_external_count() -> int:
 
 
 def record_external_call(*, service: str, method: str, outcome: str,
-                         duration_ms: float) -> None:
+                         duration_ms: float, endpoint: str = '') -> None:
     """Добавить один исходящий HTTP-вызов в минутный аккумулятор."""
     if _disabled:
         return
@@ -310,9 +318,10 @@ def record_external_call(*, service: str, method: str, outcome: str,
     service = (service or 'other')[:30]
     method = (method or 'GET')[:10].upper()
     outcome = (outcome or 'ok')[:10]
+    endpoint = (endpoint or '')[:120]
     duration = max(0, int(round(duration_ms)))
     histogram = _histogram_field(duration)
-    key = (minute, service, method, outcome)
+    key = (minute, service, method, outcome, endpoint)
 
     with _lock:
         row = _external_rows.get(key)
@@ -324,6 +333,7 @@ def record_external_call(*, service: str, method: str, outcome: str,
                 'service': service,
                 'method': method,
                 'outcome': outcome,
+                'endpoint': endpoint,
                 'count': 0,
                 'errors': 0,
                 'total_ms': 0,
@@ -565,7 +575,7 @@ def _external_upsert_sql() -> str:
     return (
         f'INSERT INTO app_event_externalcallmetric ({columns}) '
         f'VALUES ({placeholders}) '
-        f'ON CONFLICT (bucket_start, service, method, outcome) '
+        f'ON CONFLICT (bucket_start, service, method, outcome, endpoint) '
         f'DO UPDATE SET {", ".join(updates)}'
     )
 
@@ -1104,7 +1114,7 @@ def _safe_external(start):
         return list(
             ExternalCallMetric.objects
             .filter(bucket_start__gte=start)
-            .values('service')
+            .values('service', 'method', 'outcome', 'endpoint')
             .annotate(
                 count=Sum('count'),
                 errors=Sum('errors'),
@@ -1119,7 +1129,13 @@ def _safe_external(start):
 
 
 def get_external_stats(minutes: int = 60) -> dict:
-    """Сводка исходящих HTTP-вызовов по сервисам за окно."""
+    """
+    Сводка исходящих HTTP-вызовов за окно.
+
+    Помимо итогов по сервисам возвращает разбивку по исходам (HTTP-код,
+    таймаут, сеть) и по конкретным эндпоинтам — чтобы было видно, что именно
+    отвечает ошибкой, а не только «Серверы заводов».
+    """
     minutes = max(1, int(minutes))
     end = timezone.now()
     start = _minute_start(end - timedelta(minutes=minutes))
@@ -1130,25 +1146,71 @@ def get_external_stats(minutes: int = 60) -> dict:
         rows = []
         source = 'memory'
 
-    by_service: dict = {}
-    for row in rows:
-        _add_external(
-            by_service.setdefault(row['service'], _empty_external()), row,
-        )
-
     with _lock:
         pending = [
             dict(row) for row in _external_rows.values()
             if row['bucket_start'] >= start
         ]
-    for row in pending:
-        _add_external(
-            by_service.setdefault(row['service'], _empty_external()), row,
+
+    by_service: dict = {}
+    by_outcome: dict = {}
+    by_endpoint: dict = {}
+    for row in list(rows) + pending:
+        service = row['service']
+        _add_external(by_service.setdefault(service, _empty_external()), row)
+
+        outcome_key = (service, row.get('outcome') or 'ok')
+        outcome = by_outcome.setdefault(
+            outcome_key, {'count': 0, 'errors': 0},
         )
+        outcome['count'] += row.get('count') or 0
+        outcome['errors'] += row.get('errors') or 0
+
+        endpoint_key = (
+            service, row.get('method') or '', row.get('endpoint') or '',
+        )
+        endpoint = by_endpoint.setdefault(
+            endpoint_key, {'count': 0, 'errors': 0},
+        )
+        endpoint['count'] += row.get('count') or 0
+        endpoint['errors'] += row.get('errors') or 0
 
     services = []
     for service, totals in by_service.items():
         count = totals['count']
+
+        outcomes = [
+            {
+                'outcome': outcome,
+                'label': OUTCOME_LABELS.get(outcome, outcome),
+                'count': values['count'],
+                'errors': values['errors'],
+            }
+            for (svc, outcome), values in by_outcome.items()
+            if svc == service
+        ]
+        outcomes.sort(
+            key=lambda item: (item['errors'], item['count']), reverse=True,
+        )
+
+        endpoints = [
+            {
+                'method': method,
+                'endpoint': endpoint,
+                'count': values['count'],
+                'errors': values['errors'],
+                'error_rate': (
+                    values['errors'] / values['count']
+                    if values['count'] else 0.0
+                ),
+            }
+            for (svc, method, endpoint), values in by_endpoint.items()
+            if svc == service
+        ]
+        endpoints.sort(
+            key=lambda item: (item['errors'], item['count']), reverse=True,
+        )
+
         services.append({
             'service': service,
             'label': SERVICE_LABELS.get(service, service),
@@ -1161,6 +1223,14 @@ def get_external_stats(minutes: int = 60) -> dict:
                 {field: totals[field] for field in HISTOGRAM_FIELDS},
                 count,
                 totals['max_ms'],
+            ),
+            'outcomes': outcomes,
+            'error_outcomes': [
+                item for item in outcomes if item['outcome'] != 'ok'
+            ][:5],
+            'endpoints': endpoints,
+            'top_error_endpoint': next(
+                (item for item in endpoints if item['errors']), None,
             ),
         })
     services.sort(key=lambda item: item['count'], reverse=True)
@@ -1191,6 +1261,19 @@ def external_min_calls() -> int:
         return 5
 
 
+def _external_problem_details(item: dict) -> str:
+    """Расшифровка ошибок сервиса: исходы и самый проблемный эндпоинт."""
+    details = ', '.join(
+        f'{outcome["label"]} — {outcome["errors"]}'
+        for outcome in (item.get('error_outcomes') or [])
+    )
+    top = item.get('top_error_endpoint')
+    if top and top.get('endpoint'):
+        endpoint = f'чаще всего {top["method"]} {top["endpoint"]}'
+        details = f'{details}; {endpoint}' if details else endpoint
+    return details
+
+
 def external_check(minutes: int = 60) -> dict:
     """Проверка «Внешние API» для health/status: доля ошибок по сервисам."""
     stats = get_external_stats(minutes)
@@ -1212,11 +1295,19 @@ def external_check(minutes: int = 60) -> dict:
         ok = True
     elif problems:
         ok = False
-        message = 'Ошибки внешних API: ' + '; '.join(
-            f'{item["label"]} {item["error_rate"]:.1%} '
-            f'({item["errors"]}/{item["count"]})'
-            for item in problems
-        )
+        lines = []
+        for item in problems:
+            line = (
+                f'{item["label"]} {item["error_rate"]:.1%} '
+                f'({item["errors"]}/{item["count"]})'
+            )
+            details = _external_problem_details(item)
+            if details:
+                line += f': {details}'
+            lines.append(line)
+        message = 'Ошибки внешних API: ' + '; '.join(lines)
+        if len(message) > 250:
+            message = message[:247].rstrip() + '…'
     else:
         ok = True
         message = (
