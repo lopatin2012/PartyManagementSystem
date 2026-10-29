@@ -1674,13 +1674,14 @@ class ReserveAccumulationTests(TestCase):
             'app_uip.services.reserve_accumulation.time.sleep'
         ) as mock_sleep:
             mock_reserve.return_value = self._cz_success()
-            reserved, errors = reserve_accumulation._reserve_numbers(
+            reserved, errors, failed = reserve_accumulation._reserve_numbers(
                 entries, pause_seconds=10
             )
 
         self.assertEqual(mock_reserve.call_count, 2)  # 2 + 1
         self.assertEqual(len(reserved), 3)
         self.assertEqual(errors, [])
+        self.assertEqual(failed, [])
         # Пауза только между запросами (не перед первым).
         self.assertEqual(mock_sleep.call_count, 1)
 
@@ -1774,22 +1775,89 @@ class ReserveRequiredDraftsTests(TestCase):
         self.assertTrue(result['skipped_full'])
         reserve.assert_not_called()
 
-    def test_cz_error_keeps_draft(self):
+    def test_cz_error_assumes_registered(self):
         draft = self._draft(date(2026, 11, 1))
 
         with patch(
             'app_uip.services.reserve_accumulation.reserve_parties_honest_sign',
             return_value={
                 'is_error': True,
+                'error_kind': 'cz',
                 'message_error': 'HTTP 400: Ошибка при выполнении запроса',
+                'http_status': 400,
             },
+        ), patch(
+            'app_uip.services.reserve_accumulation.get_reserve_stats',
+            return_value={'percent': 50, 'count': 5000, 'limit': 10000},
+        ):
+            result = reserve_drafts_from_date()
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['failed'], 1)
+        self.assertEqual(result['assumed_registered'], 1)
+        self.assertEqual(len(result['failed_uips']), 1)
+        self.assertEqual(result['failed_uips'][0]['number'], draft.number)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, PartyStatusChoices.REGISTERED)
+
+    def test_token_error_keeps_draft_and_marks_error(self):
+        draft = self._draft(date(2026, 11, 1))
+
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign',
+            return_value={
+                'is_error': True,
+                'error_kind': 'token',
+                'message_error': 'Не удалось получить токен СУЗ',
+            },
+        ), patch(
+            'app_uip.services.reserve_accumulation.get_reserve_stats',
+            return_value={'percent': 50, 'count': 5000, 'limit': 10000},
         ):
             result = reserve_drafts_from_date()
 
         self.assertTrue(result['is_error'])
-        self.assertEqual(result['failed'], 1)
+        self.assertEqual(result['assumed_registered'], 0)
         draft.refresh_from_db()
         self.assertEqual(draft.status, PartyStatusChoices.DRAFT)
+
+    def test_batch_error_isolates_bad_number(self):
+        good = self._draft(date(2026, 11, 1))
+        bad = self._draft(date(2026, 11, 2))
+        batch_error = {
+            'is_error': True,
+            'error_kind': 'cz',
+            'message_error': 'HTTP 400: Ошибка при выполнении запроса',
+        }
+        single_error = {
+            'is_error': True,
+            'error_kind': 'cz',
+            'message_error': 'HTTP 400: Некорректный номер',
+        }
+        success = {
+            'is_error': False,
+            'message_error': 'Ошибки отсутствуют',
+            'lst_party_number_info': [],
+        }
+
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign',
+            side_effect=[batch_error, success, single_error],
+        ) as reserve, patch(
+            'app_uip.services.reserve_accumulation.get_reserve_stats',
+            return_value={'percent': 50, 'count': 5000, 'limit': 10000},
+        ):
+            result = reserve_drafts_from_date()
+
+        self.assertEqual(reserve.call_count, 3)
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['reserved'], 1)
+        self.assertEqual(result['failed'], 1)
+        self.assertEqual(result['assumed_registered'], 1)
+        good.refresh_from_db()
+        bad.refresh_from_db()
+        self.assertEqual(good.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertEqual(bad.status, PartyStatusChoices.REGISTERED)
 
     def test_management_command_dry_run_and_reserve(self):
         from io import StringIO
@@ -1815,6 +1883,33 @@ class ReserveRequiredDraftsTests(TestCase):
             ).count(),
             1,
         )
+
+    def test_task_does_not_raise_for_cz_failures(self):
+        from app_scheduler.tasks import reserve_required_drafts_task
+
+        summary = {
+            'is_error': False,
+            'message': 'не удалось 6, считаем зарегистрированными 6',
+            'failed': 6,
+        }
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_drafts_from_date',
+            return_value=summary,
+        ):
+            self.assertEqual(reserve_required_drafts_task.func(), summary)
+
+    def test_task_raises_for_systemic_errors(self):
+        from app_scheduler.tasks import reserve_required_drafts_task
+
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_drafts_from_date',
+            return_value={
+                'is_error': True,
+                'message': 'Не удалось получить токен СУЗ',
+            },
+        ):
+            with self.assertRaises(RuntimeError):
+                reserve_required_drafts_task.func()
 
 
 class UIPAdminDeleteActionTests(TestCase):
