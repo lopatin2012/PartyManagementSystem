@@ -45,6 +45,7 @@ from app_uip.serializers import (
 from app_uip.services.uip_reserve import reserve_uips
 from app_uip.services.reserve_accumulation import (
     accumulate_short_shelf_life_reserve,
+    reserve_drafts_from_date,
 )
 
 
@@ -1469,8 +1470,8 @@ class ReserveAccumulationTests(TestCase):
         sku = self._make_product('C40', '04601751026082', shelf_life=40)
         entry = {
             'sku': sku,
-            'date': date(2027, 3, 10),
-            'number': '04601751026082270310134250000000',
+            'date': date(2026, 11, 1),
+            'number': '04601751026082261101134250000000',
             'action': 'create',
         }
         with patch.object(
@@ -1495,8 +1496,8 @@ class ReserveAccumulationTests(TestCase):
         sku = self._make_product('C40b', '04601751026083', shelf_life=40)
         entry = {
             'sku': sku,
-            'date': date(2027, 2, 28),
-            'number': '04601751026083270228134250000000',
+            'date': date(2026, 10, 31),
+            'number': '04601751026083261031134250000000',
             'action': 'create',
         }
         with patch.object(
@@ -1687,6 +1688,134 @@ class ReserveAccumulationTests(TestCase):
 # ==========================================
 # Админка: массовое удаление черновиков.
 # ==========================================
+
+class ReserveRequiredDraftsTests(TestCase):
+    """Черновики с датой производства от 01.11.2026 резервируются в ЧЗ."""
+
+    CUTOFF = date(2026, 11, 1)
+
+    def setUp(self):
+        self.sku = create_product()
+
+    @staticmethod
+    def _cz_success():
+        return {
+            'is_error': False,
+            'message_error': 'Ошибки отсутствуют',
+            'lst_party_number_info': [],
+        }
+
+    def _draft(self, production_date):
+        number = build_local_party_number(
+            '04601751026019',
+            production_date,
+            article='50032',
+            party='000',
+            type_formation_uip=TypeFormationUIP.general.value,
+        )
+        return UIP.objects.create(
+            product_sku=self.sku,
+            number=number,
+            status=PartyStatusChoices.DRAFT,
+            production_date=production_date,
+        )
+
+    def test_reserves_only_drafts_from_cutoff(self):
+        before = self._draft(date(2026, 10, 31))
+        first = self._draft(date(2026, 11, 1))
+        second = self._draft(date(2026, 11, 2))
+
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign',
+            return_value=self._cz_success(),
+        ) as reserve:
+            result = reserve_drafts_from_date()
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['checked'], 2)
+        self.assertEqual(result['reserved'], 2)
+        for uip in (first, second):
+            uip.refresh_from_db()
+            self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+            self.assertIsNotNone(uip.reservation_date)
+        before.refresh_from_db()
+        self.assertEqual(before.status, PartyStatusChoices.DRAFT)
+        reserve.assert_called_once()
+        self.assertEqual(
+            set(reserve.call_args.kwargs['party_numbers']),
+            {first.number, second.number},
+        )
+
+    def test_dry_run_does_not_call_cz(self):
+        draft = self._draft(date(2026, 11, 1))
+
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as reserve:
+            result = reserve_drafts_from_date(dry_run=True)
+
+        reserve.assert_not_called()
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, PartyStatusChoices.DRAFT)
+        self.assertEqual(result['checked'], 1)
+        self.assertEqual(result['reserved'], 0)
+
+    def test_skips_when_reserve_full(self):
+        self._draft(date(2026, 11, 1))
+
+        with patch(
+            'app_uip.services.reserve_accumulation.get_reserve_stats',
+            return_value={'percent': 96, 'count': 9600, 'limit': 10000},
+        ), patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign'
+        ) as reserve:
+            result = reserve_drafts_from_date()
+
+        self.assertTrue(result['skipped_full'])
+        reserve.assert_not_called()
+
+    def test_cz_error_keeps_draft(self):
+        draft = self._draft(date(2026, 11, 1))
+
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign',
+            return_value={
+                'is_error': True,
+                'message_error': 'HTTP 400: Ошибка при выполнении запроса',
+            },
+        ):
+            result = reserve_drafts_from_date()
+
+        self.assertTrue(result['is_error'])
+        self.assertEqual(result['failed'], 1)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, PartyStatusChoices.DRAFT)
+
+    def test_management_command_dry_run_and_reserve(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        self._draft(date(2026, 11, 1))
+
+        dry = StringIO()
+        call_command('reserve_required_drafts', '--dry-run', stdout=dry)
+        self.assertIn('Черновиков к резервированию: 1', dry.getvalue())
+
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign',
+            return_value=self._cz_success(),
+        ):
+            out = StringIO()
+            call_command('reserve_required_drafts', stdout=out)
+
+        self.assertIn('зарезервировано 1', out.getvalue())
+        self.assertEqual(
+            UIP.objects.filter(
+                status=PartyStatusChoices.RESERVED_LOCAL
+            ).count(),
+            1,
+        )
+
 
 class UIPAdminDeleteActionTests(TestCase):
     """UIPAdmin.delete_selected_uips — только черновики, с учётом каскадов."""

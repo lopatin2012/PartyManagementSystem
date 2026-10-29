@@ -17,7 +17,7 @@
   собственным (локальным) номером (`reserved_local`);
 * срок годности не более `UIP_DRAFT_SHELF_LIFE_DAYS` (по умолчанию 40) —
   создаются черновики без обращения к ЧЗ; **кроме дат производства начиная с
-  `SHORT_SHELF_LIFE_RESERVE_FROM` (01.03.2027)** — они резервируются в ЧЗ
+  `SHORT_SHELF_LIFE_RESERVE_FROM` (01.11.2026)** — они резервируются в ЧЗ
   (только автоматическое накопление; ручная генерация это правило не
   применяет); при явном `skip_cz=False` такие УИП тоже резервируются в ЧЗ;
 * при резервировании в ЧЗ, если заполнение резерва превышает `RELEASE_PERCENT`
@@ -32,6 +32,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from app_cz.enums import SHORT_SHELF_LIFE_RESERVE_FROM
 from app_cz.services.party_service import (
     build_local_party_number,
     reserve_parties_honest_sign,
@@ -49,11 +50,6 @@ CZ_BATCH_PAUSE_SECONDS = 10
 
 # Формат УИП, для которого поддерживается накопление.
 RESERVE_TYPE_FORMATION = TypeFormationUIP.general
-
-# С этой даты продукция с коротким сроком годности (не более
-# UIP_DRAFT_SHELF_LIFE_DAYS) тоже резервируется в ЧЗ. До неё — черновик.
-# Правило действует только для автоматического накопления.
-SHORT_SHELF_LIFE_RESERVE_FROM = date(2027, 3, 1)
 
 
 def _short_shelf_life_days() -> int:
@@ -83,7 +79,7 @@ def _should_reserve_entry(entry, skip_cz) -> bool:
     * срок годности > `UIP_DRAFT_SHELF_LIFE_DAYS` (в пределах
       `UIP_SHORT_SHELF_LIFE_DAYS`) — всегда резерв в ЧЗ;
     * короткий срок, но дата производства >= `SHORT_SHELF_LIFE_RESERVE_FROM`
-      (01.03.2027) — тоже резерв в ЧЗ (только при автопополнении);
+      (01.11.2026) — тоже резерв в ЧЗ (только при автопополнении);
     * иначе — черновик, если не передан явный `skip_cz=False`.
     """
     if should_reserve_in_cz(entry['sku']):
@@ -370,3 +366,129 @@ def accumulate_short_shelf_life_reserve(
         'errors': errors,
         'message': message,
     }
+
+
+DRAFT_RESERVE_NOTE = (
+    'Черновик с датой производства от 01.11.2026 зарезервирован в ЧЗ'
+)
+
+
+def reserve_drafts_from_date(
+        cutoff_date: date = None,
+        pause_seconds: float = None,
+        dry_run: bool = False,
+        limit: int = 0,
+) -> dict:
+    """
+    Резервирует в ЧЗ существующие черновики с датой производства от cutoff.
+
+    Условие: статус «Черновик» и дата производства >=
+    `SHORT_SHELF_LIFE_RESERVE_FROM` (01.11.2026). Используется ежедневной
+    задачей и командой `reserve_required_drafts`.
+    """
+    cutoff = cutoff_date or SHORT_SHELF_LIFE_RESERVE_FROM
+    if pause_seconds is None:
+        pause_seconds = CZ_BATCH_PAUSE_SECONDS
+
+    queryset = (
+        UIP.objects
+        .filter(
+            status=PartyStatusChoices.DRAFT,
+            production_date__gte=cutoff,
+        )
+        .select_related('product_sku__product')
+        .order_by('production_date', 'number')
+    )
+    if limit:
+        queryset = queryset[:limit]
+    uips = list(queryset)
+
+    summary = {
+        'is_error': False,
+        'cutoff': cutoff.isoformat(),
+        'checked': len(uips),
+        'reserved': 0,
+        'failed': 0,
+        'skipped_full': False,
+        'dry_run': dry_run,
+        'errors': [],
+        'message': '',
+    }
+
+    if not uips:
+        summary['message'] = (
+            f'Нет черновиков с датой производства от {cutoff:%d.%m.%Y}.'
+        )
+        logger.info(summary['message'])
+        return summary
+
+    if dry_run:
+        summary['message'] = (
+            f'Черновиков к резервированию: {len(uips)} '
+            f'(дата производства от {cutoff:%d.%m.%Y}).'
+        )
+        logger.info(summary['message'])
+        return summary
+
+    stats = get_reserve_stats()
+    if stats['percent'] > RELEASE_PERCENT:
+        summary['skipped_full'] = True
+        summary['message'] = (
+            f'Резерв ЧЗ заполнен на {stats["percent"]}% '
+            f'(порог {RELEASE_PERCENT}%) — резервирование черновиков '
+            f'пропущено ({len(uips)} шт.).'
+        )
+        logger.warning(summary['message'])
+        return summary
+
+    entries = [
+        {
+            'uip': uip,
+            'number': uip.number,
+            'sku': uip.product_sku,
+            'date': uip.production_date,
+        }
+        for uip in uips
+        if uip.number and uip.product_sku_id
+    ]
+    missing = len(uips) - len(entries)
+
+    if not entries:
+        summary['failed'] = len(uips)
+        summary['message'] = (
+            'У черновиков нет номера или продукта — резервировать нечего.'
+        )
+        logger.warning(summary['message'])
+        return summary
+
+    reserved, errors = _reserve_numbers(entries, pause_seconds)
+    summary['errors'] = errors
+    summary['failed'] = (len(entries) - len(reserved)) + missing
+
+    today = timezone.now().date()
+    for entry in reserved:
+        uip = entry['uip']
+        try:
+            uip.reservation_date = today
+            uip.change_status(
+                PartyStatusChoices.RESERVED_LOCAL,
+                source='service',
+                note=DRAFT_RESERVE_NOTE,
+            )
+            summary['reserved'] += 1
+        except Exception as exc:  # noqa: BLE001 — один сбой не роняет прогон
+            logger.exception(
+                f'Резервирование черновика {uip.number}: ошибка смены статуса: '
+                f'{exc}'
+            )
+            summary['is_error'] = True
+            summary['failed'] += 1
+
+    summary['message'] = (
+        f'Резервирование черновиков с {cutoff:%d.%m.%Y}: '
+        f'проверено {len(uips)}, зарезервировано {summary["reserved"]}, '
+        f'не удалось {summary["failed"]}.'
+    )
+    summary['is_error'] = summary['is_error'] or bool(errors)
+    logger.info(summary['message'])
+    return summary

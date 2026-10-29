@@ -15,7 +15,7 @@ from django.utils.dateparse import parse_datetime, parse_date
 
 from app_cz.models import CISCode, SUZAccount
 from app_cz.suz_config import SUZ
-from app_cz.enums import TypeProduct
+from app_cz.enums import TypeProduct, SHORT_SHELF_LIFE_RESERVE_FROM
 from app_cz.services.suz_client import get_true_api_session_token
 from app_cz.services.code_client import send_application_report
 
@@ -1499,6 +1499,14 @@ def _generate_local_uip(
     """
     if skip_cz is None:
         skip_cz = uip_draft_mode()
+
+    # С 01.11.2026 УИП обязательно резервируется в ЧЗ, даже если включён
+    # режим черновиков или запрошен skip_cz=True: черновики с этой даты
+    # не создаём.
+    if production_date and production_date >= SHORT_SHELF_LIFE_RESERVE_FROM:
+        skip_cz = False
+        if target_status == PartyStatusChoices.DRAFT:
+            target_status = None
 
     number = build_local_party_number(
         gtin,

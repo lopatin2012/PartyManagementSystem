@@ -52,8 +52,11 @@ RELEASE_BEFORE_BURN_DAYS = 5
 REGISTER_BEFORE_BURN_DAYS = 3
 # Предупреждаем по почте, если до сгорания осталось менее этого количества дней.
 BURN_WARN_DAYS = 7
+# Максимальное количество УИП за один запуск плановой регистрации.
+REGISTER_BATCH_SIZE = 100
 # Максимальное количество УИП за один запуск снятия с резерва.
-RELEASE_BATCH_SIZE = 100
+# Аварийная ситуация (>95%): освобождаем резерв крупными партиями.
+RELEASE_BATCH_SIZE = 1000
 
 # Статусы, которые считаются «в резерве».
 RESERVED_STATUSES = [
@@ -87,6 +90,21 @@ def _register_threshold_date():
 def _burn_warn_threshold_date():
     """Дата резервирования, раньше которой УИП попадает в предупреждение о сгорании."""
     return timezone.now().date() - timedelta(days=BURN_DAYS - BURN_WARN_DAYS)
+
+
+# Порог срока годности (дней, включительно), для которого при снятии с резерва
+# при переполнении (>95%) код берётся из общего резерва завода (по GTIN),
+# а не из задания.
+SHORT_SHELF_CODE_DAYS = 40
+
+
+def _is_short_shelf_life(uip: UIP) -> bool:
+    """Срок годности продукта УИП не больше SHORT_SHELF_CODE_DAYS."""
+    sku = getattr(uip, 'product_sku', None)
+    product = getattr(sku, 'product', None)
+    if product is None or product.shelf_life_in_days is None:
+        return False
+    return product.shelf_life_in_days <= SHORT_SHELF_CODE_DAYS
 
 
 def _uip_effective_reservation_date(uip: UIP):
@@ -273,14 +291,22 @@ def _confirm_reserve_release(uip: UIP) -> tuple[bool, str]:
     return True, 'Номер ушёл из резерва ЧЗ'
 
 
-def register_uip(uip: UIP, source: str = 'auto', note: str = None) -> dict:
+def register_uip(
+        uip: UIP,
+        source: str = 'auto',
+        note: str = None,
+        prefer_general_reserve: bool = False,
+) -> dict:
     """
     Регистрирует УИП через отчёт о нанесении (УИП → REGISTERED).
 
     Код для отчёта:
-    1. один код из задания внешнего сервиса (get_any_code_for_task);
-    2. если задания/кода нет — DataMatrix из заданий УИП, не в статусе «нанесён»;
-    3. если кодов нет вовсе — код по GTIN у внешнего сервиса.
+    1. при `prefer_general_reserve` — сразу код из общего резерва завода
+       (по GTIN); используется при аварийном снятии с резерва продукции
+       со сроком годности не более 40 дней;
+    2. иначе один код из задания внешнего сервиса (get_any_code_for_task);
+    3. если задания/кода нет — DataMatrix из заданий УИП, не в статусе «нанесён»;
+    4. если кодов нет вовсе — код по GTIN у внешнего сервиса.
 
     В отчёт передаётся дата производства УИП (как дата маркировки), а вместо
     срока годности — срок годности задания, если он есть, иначе дата
@@ -300,15 +326,23 @@ def register_uip(uip: UIP, source: str = 'auto', note: str = None) -> dict:
     # 2. Коды для отчёта.
     codes = []
 
-    # 2a. Пробуем получить один код из задания внешнего сервиса.
     external_code = None
-    if party and party.external_number_task:
-        external_code = _fetch_code_for_task(uip, party.external_number_task)
 
-    if external_code:
-        codes = [external_code]
-    else:
-        # 2b. Коды DataMatrix из локальных заданий УИП (не нанесённые).
+    # 2a. Аварийное снятие с резерва (>95%) для короткоживущей продукции:
+    #     код берём из общего резерва завода (по GTIN), а не из задания.
+    if prefer_general_reserve:
+        external_code = _fetch_code_by_gtin(uip)
+        if external_code:
+            codes = [external_code]
+
+    # 2b. Пробуем получить один код из задания внешнего сервиса.
+    if not codes and party and party.external_number_task:
+        external_code = _fetch_code_for_task(uip, party.external_number_task)
+        if external_code:
+            codes = [external_code]
+
+    if not codes:
+        # 2c. Коды DataMatrix из локальных заданий УИП (не нанесённые).
         codes = list(
             CISCode.objects.filter(
                 production_party__uip=uip,
@@ -317,7 +351,7 @@ def register_uip(uip: UIP, source: str = 'auto', note: str = None) -> dict:
             .values_list('code', flat=True)[:1000]
         )
 
-    # 2c. Если кодов нет вовсе — код по GTIN.
+    # 2d. Если кодов нет вовсе — код по GTIN.
     if not codes:
         external_code = _fetch_code_by_gtin(uip)
         if external_code:
@@ -429,9 +463,11 @@ def _release_uip(uip: UIP) -> dict:
     (пропускается).
 
     Коды для отчёта:
-    1. один код из задания внешнего сервиса (get_any_code_for_task);
-    2. иначе DataMatrix из заданий УИП, не в статусе «нанесён»;
-    3. иначе код по GTIN у внешнего сервиса.
+    - для продукции со сроком годности не более 40 дней (аварийное снятие
+      при переполнении резерва >95%) — из общего резерва завода по GTIN;
+    - иначе один код из задания внешнего сервиса (get_any_code_for_task);
+    - иначе DataMatrix из заданий УИП, не в статусе «нанесён»;
+    - иначе код по GTIN у внешнего сервиса.
 
     После успешного отчёта локальные коды помечаются как нанесённые,
     УИП переводится в статус REGISTERED.
@@ -440,6 +476,7 @@ def _release_uip(uip: UIP) -> dict:
         uip,
         source='auto',
         note='Снят с резерва автоматически (переполнение резерва УИП)',
+        prefer_general_reserve=_is_short_shelf_life(uip),
     )
 
     return {
@@ -451,7 +488,7 @@ def _release_uip(uip: UIP) -> dict:
     }
 
 
-def register_eligible_reserved_uips(max_uips: int = RELEASE_BATCH_SIZE) -> dict:
+def register_eligible_reserved_uips(max_uips: int = REGISTER_BATCH_SIZE) -> dict:
     """
     Регистрирует зарезервированные УИП, близкие к сгоранию (до сгорания осталось
     менее REGISTER_BEFORE_BURN_DAYS дней), у которых есть производственная партия

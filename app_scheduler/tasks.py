@@ -293,6 +293,20 @@ def cleanup_old_task_results_task() -> dict:
 
 
 @task(queue_name='default')
+def reserve_required_drafts_task() -> dict:
+    """Резервирует в ЧЗ черновики УИП с датой производства от 01.11.2026."""
+    from app_uip.services.reserve_accumulation import reserve_drafts_from_date
+
+    result = reserve_drafts_from_date()
+    if result.get('is_error'):
+        # Пусть DBTaskResult станет FAILED — ошибку видно в «Фоновых задачах».
+        raise RuntimeError(
+            result.get('message') or 'Ошибка резервирования черновиков УИП'
+        )
+    return result
+
+
+@task(queue_name='default')
 def prune_request_metrics_task() -> dict:
     """Очистка метрик HTTP-запросов старше REQUEST_METRICS_RETENTION_DAYS."""
     from app_helper.metrics import prune_old_metrics
@@ -495,7 +509,8 @@ def accumulate_short_shelf_life_reserve_task() -> dict:
     Продукция со сроком годности 41..UIP_SHORT_SHELF_LIFE_DAYS резервируется
     в ЧЗ собственным (локальным) номером; для срока годности не более
     `UIP_DRAFT_SHELF_LIFE_DAYS` (по умолчанию 40) создаются черновики без
-    обращения к ЧЗ. `UIP_DRAFT_MODE` на накопление не влияет.
+    обращения к ЧЗ — кроме дат производства с 01.11.2026, которые
+    резервируются в ЧЗ. `UIP_DRAFT_MODE` на накопление не влияет.
     """
     from app_uip.services.reserve_accumulation import (
         accumulate_short_shelf_life_reserve,
