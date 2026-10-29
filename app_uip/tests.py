@@ -1911,6 +1911,31 @@ class ReserveRequiredDraftsTests(TestCase):
             with self.assertRaises(RuntimeError):
                 reserve_required_drafts_task.func()
 
+    def test_command_prints_failure_details(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        draft = self._draft(date(2026, 11, 1))
+
+        with patch(
+            'app_uip.services.reserve_accumulation.reserve_parties_honest_sign',
+            return_value={
+                'is_error': True,
+                'error_kind': 'cz',
+                'message_error': 'HTTP 400: Некорректный номер',
+            },
+        ), patch(
+            'app_uip.services.reserve_accumulation.get_reserve_stats',
+            return_value={'percent': 50, 'count': 5000, 'limit': 10000},
+        ):
+            out = StringIO()
+            call_command('reserve_required_drafts', stdout=out)
+
+        text = out.getvalue()
+        self.assertIn(draft.number, text)
+        self.assertIn('Некорректный номер', text)
+        self.assertIn('Считаем зарегистрированными: 1', text)
+
 
 class UIPAdminDeleteActionTests(TestCase):
     """UIPAdmin.delete_selected_uips — только черновики, с учётом каскадов."""

@@ -58,6 +58,16 @@ class Command(BaseCommand):
             limit=options['limit'],
         )
 
+        for item in result.get('failed_uips', [])[:100]:
+            self.stdout.write(
+                f'  Не удалось: {item.get("number")}: {item.get("reason")}'
+            )
+        if result.get('assumed_registered'):
+            self.stdout.write(
+                f'Считаем зарегистрированными: '
+                f'{result["assumed_registered"]}'
+            )
+
         message = result['message']
         if result.get('is_error'):
             self.stderr.write(self.style.ERROR(message))

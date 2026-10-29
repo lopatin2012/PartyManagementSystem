@@ -582,7 +582,12 @@ def reserve_drafts_from_date(
         f'считаем зарегистрированными {summary["assumed_registered"]}'
     )
     if systemic_failed:
-        summary['message'] += f'; системных ошибок {len(systemic_failed)}'
+        first_reason = str(
+            systemic_failed[0].get('reason') or ''
+        )[:160]
+        summary['message'] += (
+            f'; системных ошибок {len(systemic_failed)}: {first_reason}'
+        )
     summary['message'] += '.'
 
     if summary['failed'] or summary['assumed_registered']:
