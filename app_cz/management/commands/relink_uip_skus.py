@@ -12,6 +12,8 @@
 
 Команда смотрит завод последнего задания по каждому УИП и перепривязывает
 УИП к SKU этого завода (если для завода есть привязка в `sku_links`).
+Если к заводу привязано несколько артикулов одного GTIN, выбирается тот,
+чей артикул совпадает с артикулом из номера УИП (GTIN + дата + артикул).
 
 Примеры:
     python manage.py relink_uip_skus --dry-run
@@ -25,6 +27,7 @@ from django.db.models import Prefetch
 
 from app_factory.selectors import find_sku_for_factory
 from app_uip.models import ProductionParty, UIP
+from app_cz.services.party_service import article_prefix_from_local_number
 
 
 def _latest_parties_with_factory():
@@ -88,7 +91,11 @@ def relink_uip_skus(article: str = '', number: str = '', limit: int = 0,
             continue
 
         factory = parties[0].line.workshop.factory
-        sku = find_sku_for_factory(uip.product_sku.product, factory)
+        sku = find_sku_for_factory(
+            uip.product_sku.product,
+            factory,
+            article_prefix=article_prefix_from_local_number(uip.number),
+        )
         if sku is None:
             result['no_linked_sku'] += 1
             continue

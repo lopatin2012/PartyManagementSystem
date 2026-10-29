@@ -164,6 +164,23 @@ def build_local_party_number(
             return uip
 
 
+def article_prefix_from_local_number(number: str) -> str:
+    """
+    Первые 5 символов артикула из локального номера УИП.
+
+    Для всех локальных типов, кроме Natura, позиции 20:25 — артикул
+    (см. `build_local_party_number`). Для Natura (GTIN + дата + `0000-` +
+    партия) артикула в номере нет — возвращается пустая строка.
+    """
+    number = number or ''
+    if len(number) < 25:
+        return ''
+    if number[24] == '-':  # Natura: «0000-» после даты.
+        return ''
+    prefix = number[20:25]
+    return prefix if prefix.strip('0') else ''
+
+
 def split_local_party_number(number: str) -> tuple[list[dict], str]:
     """
     Разбирает номер УИП на информационные части для подсветки:

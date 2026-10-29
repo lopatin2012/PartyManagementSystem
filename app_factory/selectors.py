@@ -69,13 +69,17 @@ def prefer_linked_skus(skus) -> list:
     )
 
 
-def find_sku_for_factory(product, factory):
+def find_sku_for_factory(product, factory, article_prefix: str = ''):
     """
     SKU продукта, привязанный к указанному заводу в `ProductSKU.sku_links`.
 
     У продукта может быть несколько артикулов на один GTIN (например, после
     смены пластинки завод заводит новый `code`). Актуальный артикул задания —
     тот, чья запись `sku_links` ссылается на завод задания (по id или имени).
+
+    Если к заводу привязано несколько артикулов, `article_prefix` (первые
+    5 символов артикула из задания/номера УИП) выбирает нужный: без него
+    победил бы первый по алфавиту, что может быть устаревшим артикулом.
 
     :return: ProductSKU или None.
     """
@@ -99,6 +103,15 @@ def find_sku_for_factory(product, factory):
 
     if not candidates:
         return None
+
+    prefix = (article_prefix or '').strip()[:5]
+    if prefix:
+        matching = [
+            (is_active, sku) for is_active, sku in candidates
+            if sku.article[:5] == prefix
+        ]
+        if matching:
+            candidates = matching
 
     # Активная привязка и активный SKU — в приоритете, затем по артикулу.
     active = [sku for is_active, sku in candidates if is_active]
