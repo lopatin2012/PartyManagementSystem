@@ -44,7 +44,7 @@ from app_helper import load_tracker, system_metrics
 logger = logging.getLogger(__name__)
 
 # Порог «высокой нагрузки» по количеству запросов в час.
-HIGH_LOAD_THRESHOLD = 50_000
+HIGH_LOAD_THRESHOLD = 100_000
 
 # Запрос дольше этого считается медленным.
 SLOW_REQUEST_MS = 1000
@@ -92,7 +92,11 @@ EXTERNAL_KEY_COLUMNS = (
 OUTCOME_LABELS = {
     'timeout': 'таймаут',
     'error': 'сеть',
+    'empty': 'нет кода',
 }
+
+# Исходы, которые не считаются ошибкой сервиса.
+NON_ERROR_OUTCOMES = ('ok', 'empty')
 
 # Метрики инфраструктуры (CPU/RAM/Postgres).
 SYSTEM_COLUMNS = ('bucket_start', 'metric', 'kind', 'value', 'max_value')
@@ -149,6 +153,18 @@ def p95_threshold_ms() -> int:
         return int(getattr(settings, 'LOAD_P95_THRESHOLD_MS', 1500))
     except (TypeError, ValueError):
         return 1500
+
+
+def high_load_threshold() -> int:
+    """Порог запросов в час для алерта «высокая нагрузка»."""
+    try:
+        return int(getattr(
+            settings,
+            'LOAD_REQUESTS_PER_HOUR_THRESHOLD',
+            HIGH_LOAD_THRESHOLD,
+        ))
+    except (TypeError, ValueError):
+        return HIGH_LOAD_THRESHOLD
 
 
 def error_rate_threshold() -> float:
@@ -343,7 +359,7 @@ def record_external_call(*, service: str, method: str, outcome: str,
             _external_rows[key] = row
 
         row['count'] += 1
-        if outcome != 'ok':
+        if outcome not in NON_ERROR_OUTCOMES:
             row['errors'] += 1
         row['total_ms'] += duration
         if duration > row['max_ms']:
@@ -796,11 +812,12 @@ def get_load_stats() -> dict:
     peak = stats['peak_per_minute']
 
     reasons = []
+    threshold = high_load_threshold()
     if has_data:
-        if requests_per_hour >= HIGH_LOAD_THRESHOLD:
+        if requests_per_hour >= threshold:
             reasons.append(
                 f'{requests_per_hour} запросов/час '
-                f'(порог {HIGH_LOAD_THRESHOLD})'
+                f'(порог {threshold})'
             )
         if p95 > p95_threshold_ms():
             reasons.append(f'p95 {p95} мс (порог {p95_threshold_ms()})')
@@ -839,7 +856,7 @@ def get_load_stats() -> dict:
         'error_rate': round(error_rate, 4),
         'slow_count': stats['slow_count'],
         'avg_db_ms': stats['avg_db_ms'],
-        'threshold_per_hour': HIGH_LOAD_THRESHOLD,
+        'threshold_per_hour': threshold,
         'p95_threshold_ms': p95_threshold_ms(),
         'error_rate_threshold': error_rate_threshold(),
         'is_high_load': is_high,
@@ -1226,7 +1243,8 @@ def get_external_stats(minutes: int = 60) -> dict:
             ),
             'outcomes': outcomes,
             'error_outcomes': [
-                item for item in outcomes if item['outcome'] != 'ok'
+                item for item in outcomes
+                if item['outcome'] not in NON_ERROR_OUTCOMES
             ][:5],
             'endpoints': endpoints,
             'top_error_endpoint': next(
@@ -1650,7 +1668,7 @@ def get_dashboard_data(range_key: str = DEFAULT_RANGE) -> dict:
         'retention_days': retention_days(),
         'generated_at': timezone.now().isoformat(),
         'thresholds': {
-            'requests_per_hour': HIGH_LOAD_THRESHOLD,
+            'requests_per_hour': high_load_threshold(),
             'p95_ms': p95_threshold_ms(),
             'error_rate': error_rate_threshold(),
         },

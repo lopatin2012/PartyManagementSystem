@@ -179,6 +179,11 @@
             (row.error_outcomes || []).forEach(function (outcome) {
                 details.push(outcome.label + ' — ' + fmt(outcome.errors));
             });
+            (row.outcomes || []).forEach(function (outcome) {
+                if (outcome.outcome === 'empty') {
+                    details.push(outcome.label + ' — ' + fmt(outcome.count));
+                }
+            });
             if (row.top_error_endpoint && row.top_error_endpoint.endpoint) {
                 details.push(
                     row.top_error_endpoint.method + ' ' +

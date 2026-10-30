@@ -69,10 +69,18 @@ def endpoint_label(url: str) -> str:
     return label[:120]
 
 
-def _outcome(response) -> str:
-    """Исход вызова: `ok` или точный HTTP-код ошибки (404, 500, …)."""
+def _outcome(response, soft_statuses=()) -> str:
+    """
+    Исход вызова: `ok`, `empty` для ожидаемых 404 или точный HTTP-код ошибки.
+
+    `soft_statuses` — статусы, которые для конкретного вызова означают
+    штатное «данных нет» (например, 404 «кода по заданию ещё нет»),
+    а не сбой сервиса.
+    """
     status = getattr(response, 'status_code', 0) or 0
     if status >= 400:
+        if status in soft_statuses:
+            return 'empty'
         return str(status)
     return 'ok'
 
@@ -92,7 +100,13 @@ def _record(service: str, method: str, outcome: str,
 
 
 def request(service: str, method: str, url: str, **kwargs):
-    """HTTP-запрос с замером; исключения `requests` пробрасываются."""
+    """
+    HTTP-запрос с замером; исключения `requests` пробрасываются.
+
+    `soft_statuses` (необязательный) — HTTP-статусы, которые считаются
+    штатным «данных нет» и не попадают в ошибки метрик.
+    """
+    soft_statuses = kwargs.pop('soft_statuses', ())
     started = time.perf_counter()
     endpoint = endpoint_label(url)
     try:
@@ -103,7 +117,7 @@ def request(service: str, method: str, url: str, **kwargs):
     except requests.exceptions.RequestException:
         _record(service, method, 'error', started, endpoint)
         raise
-    _record(service, method, _outcome(response), started, endpoint)
+    _record(service, method, _outcome(response, soft_statuses), started, endpoint)
     return response
 
 

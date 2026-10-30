@@ -558,6 +558,33 @@ class ExternalMetricsTests(TestCase):
         self.assertEqual(row.endpoint, '/codes/api/get_codes_by_task/')
         self.assertEqual(row.errors, 1)
 
+    def test_empty_outcome_is_not_error(self):
+        metrics.record_external_call(
+            service='factory', method='GET', outcome='empty',
+            duration_ms=10, endpoint='/codes/api/get_any_code_for_task/{id}/',
+        )
+        metrics.flush_metrics()
+
+        row = ExternalCallMetric.objects.get()
+        self.assertEqual(row.errors, 0)
+        self.assertEqual(row.count, 1)
+
+    def test_empty_outcome_does_not_flag_external_check(self):
+        # 404 «нет кода» — штатный ответ, в ошибки не входит.
+        self._row(
+            service='factory', method='GET', outcome='empty', count=27,
+            errors=0, endpoint='/codes/api/get_any_code_for_task/{id}/',
+        )
+        self._row(
+            service='factory', method='GET', outcome='500', count=1,
+            errors=1, endpoint='/codes/api/get_any_code_for_task/{id}/',
+        )
+
+        check = metrics.external_check(60)
+
+        self.assertTrue(check['ok'])
+        self.assertIn('ошибок 1', check['message'])
+
     def test_external_check_explains_outcome_and_endpoint(self):
         self._row(
             service='factory', method='GET', outcome='404', count=8,
@@ -622,6 +649,22 @@ class ExternalEndpointLabelTests(SimpleTestCase):
         self.assertEqual(kwargs['outcome'], '404')
         self.assertEqual(kwargs['service'], 'factory')
         self.assertEqual(kwargs['endpoint'], '/codes/api/task/abc/')
+
+    @patch('app_helper.external_http.metrics.record_external_call')
+    @patch('app_helper.external_http.requests.request')
+    def test_soft_404_is_recorded_as_empty(self, request, record):
+        request.return_value.status_code = 404
+
+        external_http.get(
+            'factory',
+            'http://factory/codes/api/get_any_code_for_task/abc/',
+            soft_statuses=(404,),
+        )
+
+        kwargs = record.call_args.kwargs
+        self.assertEqual(kwargs['outcome'], 'empty')
+        # soft_statuses не уходит в requests.
+        self.assertNotIn('soft_statuses', request.call_args.kwargs)
 
 
 class QueueAndSystemMetricsTests(TestCase):

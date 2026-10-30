@@ -2,9 +2,12 @@
 
 """Тесты логики планировщика периодических задач."""
 
+from datetime import timedelta
+
 from django.contrib.auth.models import User
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 from django_tasks.base import TaskResultStatus
 
 from app_scheduler.management.commands.run_scheduler import (
@@ -317,3 +320,90 @@ class SchedulerRunViewTests(TestCase):
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 409)
         self.assertTrue(second.json()['is_error'])
+
+
+class CleanupStaleDraftsTests(TestCase):
+    """Устаревшие черновики УИП переводятся в «Удалён»."""
+
+    def setUp(self):
+        from app_factory.models import (
+            CardStateChoices,
+            Product,
+            ProductGroupChoices,
+            ProductSKU,
+            StateConditionChoices,
+        )
+
+        self.today = timezone.now().date()
+        product = Product.objects.create(
+            group=ProductGroupChoices.MILK,
+            name='Тестовый продукт',
+            shelf_life_in_days=14,
+            item_condition=StateConditionChoices.READY_ORDER_KM,
+            card_status=CardStateChoices.PUBLISHED,
+        )
+        self.sku = ProductSKU.objects.create(
+            product=product, article='50032',
+        )
+
+    def _uip(self, production_date, status=None, number=None):
+        from app_cz.services.party_service import build_local_party_number
+        from app_uip.models import PartyStatusChoices, UIP
+
+        if number is None:
+            number = build_local_party_number(
+                '04601751026019',
+                production_date,
+                article='50032',
+                party='000',
+                type_formation_uip=1,
+            )
+        return UIP.objects.create(
+            product_sku=self.sku,
+            number=number,
+            status=status or PartyStatusChoices.DRAFT,
+            production_date=production_date,
+        )
+
+    def test_stale_draft_is_deleted(self):
+        from app_scheduler.tasks import cleanup_stale_drafts_task
+        from app_uip.models import PartyStatusChoices, UIPStatusLog
+
+        stale = self._uip(self.today - timedelta(days=31))
+        fresh = self._uip(self.today - timedelta(days=29))
+        no_date = self._uip(
+            None, number='04601751026019260101000000000000',
+        )
+        reserved = self._uip(
+            self.today - timedelta(days=60),
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+
+        result = cleanup_stale_drafts_task.func()
+
+        self.assertEqual(result['deleted'], 1)
+        stale.refresh_from_db()
+        fresh.refresh_from_db()
+        no_date.refresh_from_db()
+        reserved.refresh_from_db()
+        self.assertEqual(stale.status, PartyStatusChoices.DELETED)
+        self.assertEqual(fresh.status, PartyStatusChoices.DRAFT)
+        self.assertEqual(no_date.status, PartyStatusChoices.DRAFT)
+        self.assertEqual(reserved.status, PartyStatusChoices.RESERVED_LOCAL)
+        log = UIPStatusLog.objects.get(uip=stale)
+        self.assertEqual(log.from_status, PartyStatusChoices.DRAFT)
+        self.assertEqual(log.to_status, PartyStatusChoices.DELETED)
+        self.assertIn('устаревшего черновика', log.note)
+
+    @override_settings(UIP_DRAFT_RETENTION_DAYS=0)
+    def test_zero_days_disables_cleanup(self):
+        from app_scheduler.tasks import cleanup_stale_drafts_task
+        from app_uip.models import PartyStatusChoices
+
+        stale = self._uip(self.today - timedelta(days=365))
+
+        result = cleanup_stale_drafts_task.func()
+
+        self.assertEqual(result['deleted'], 0)
+        stale.refresh_from_db()
+        self.assertEqual(stale.status, PartyStatusChoices.DRAFT)
