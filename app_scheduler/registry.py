@@ -22,6 +22,7 @@ def get_scheduled_tasks() -> dict:
         cleanup_event_logs_task,
         cleanup_old_logs_task,
         cleanup_old_task_results_task,
+        cleanup_stale_drafts_task,
         close_unused_registered_uips_task,
         prune_request_metrics_task,
         refresh_suz_token_task,
@@ -38,6 +39,7 @@ def get_scheduled_tasks() -> dict:
     return {
         'refresh_suz_token': refresh_suz_token_task,
         'cleanup_expired_reserved': cleanup_expired_reserved_uips_task,
+        'cleanup_stale_drafts': cleanup_stale_drafts_task,
         'close_unused_registered': close_unused_registered_uips_task,
         'archive_stale_closed': archive_stale_closed_uips_task,
         'cleanup_old_logs': cleanup_old_logs_task,

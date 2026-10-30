@@ -258,6 +258,69 @@ def archive_stale_closed_uips_task() -> dict:
     logger.info(message)
     return {'archived': updated_count, 'message': message}
 
+
+@task(queue_name='default')
+def cleanup_stale_drafts_task() -> dict:
+    """
+    Устаревшие черновики УИП → DELETED.
+
+    Черновик не резервировался в ЧЗ; если дата производства прошла более
+    `UIP_DRAFT_RETENTION_DAYS` (по умолчанию 30) дней назад, он уже не нужен.
+    Строка и история статусов сохраняются. Черновики без даты производства
+    не трогаем. `UIP_DRAFT_RETENTION_DAYS=0` отключает очистку.
+    """
+    from django.conf import settings
+    from app_uip.models import UIP, UIPStatusLog, PartyStatusChoices
+
+    days = int(getattr(settings, 'UIP_DRAFT_RETENTION_DAYS', 30) or 0)
+    if days <= 0:
+        message = 'Удаление устаревших черновиков отключено (0 дней)'
+        logger.info(message)
+        return {'deleted': 0, 'message': message}
+
+    threshold = timezone.now().date() - timedelta(days=days)
+    stale_drafts = list(
+        UIP.objects.filter(
+            status=PartyStatusChoices.DRAFT,
+            production_date__isnull=False,
+            production_date__lt=threshold,
+        ).values_list('id', 'status')
+    )
+
+    if not stale_drafts:
+        message = (
+            f'Нет устаревших черновиков (дата производства старше {days} дней)'
+        )
+        logger.info(message)
+        return {'deleted': 0, 'message': message}
+
+    uip_ids = [uip_id for uip_id, _ in stale_drafts]
+    old_statuses = {uip_id: status for uip_id, status in stale_drafts}
+
+    updated_count = UIP.objects.filter(id__in=uip_ids).update(
+        status=PartyStatusChoices.DELETED,
+        updated_at=timezone.now(),
+    )
+
+    log_entries = [
+        UIPStatusLog(
+            uip_id=uip_id,
+            from_status=old_statuses[uip_id],
+            to_status=PartyStatusChoices.DELETED,
+            source='auto',
+            note=(
+                f'Автоматическое удаление устаревшего черновика: '
+                f'дата производства прошла более {days} дней назад'
+            ),
+        )
+        for uip_id in uip_ids
+    ]
+    UIPStatusLog.objects.bulk_create(log_entries, batch_size=BATCH_SIZE)
+
+    message = f'Удалено устаревших черновиков УИП: {updated_count}'
+    logger.info(message)
+    return {'deleted': updated_count, 'message': message}
+
 # ==========================================
 # Очистка старых данных.
 # ==========================================

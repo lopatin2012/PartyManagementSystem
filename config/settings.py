@@ -323,6 +323,9 @@ UIP_DRAFT_SHELF_LIFE_DAYS = int(os.getenv('UIP_DRAFT_SHELF_LIFE_DAYS', '40'))
 # в запросе имеет приоритет над настройкой. На накопление резерва больше не
 # влияет (см. UIP_DRAFT_SHELF_LIFE_DAYS).
 UIP_DRAFT_MODE = os.getenv('UIP_DRAFT_MODE', '1') == '1'
+# Сколько дней после даты производства хранить черновик УИП, прежде чем
+# перевести его в «Удалён». 0 — не удалять автоматически.
+UIP_DRAFT_RETENTION_DAYS = int(os.getenv('UIP_DRAFT_RETENTION_DAYS', '30'))
 
 # ==========================================
 # Уведомления о заказах кодов в СУЗ.
