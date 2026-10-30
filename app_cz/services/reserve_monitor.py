@@ -170,6 +170,7 @@ def _fetch_code_by_gtin(uip: UIP) -> str:
             params={'gtin': gtin},
             headers={'Accept': 'application/json'},
             timeout=30,
+            soft_statuses=(404,),
         )
         response.raise_for_status()
         data = response.json()
@@ -221,6 +222,7 @@ def _fetch_code_for_task(uip: UIP, task_uuid: str) -> str:
             api_url,
             headers={'Accept': 'application/json'},
             timeout=30,
+            soft_statuses=(404,),
         )
         response.raise_for_status()
         data = response.json()

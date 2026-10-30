@@ -17,7 +17,7 @@ import threading
 import time
 
 # Лимит запросов в час (используется в отчётах health-чека).
-HIGH_LOAD_THRESHOLD = 50_000
+HIGH_LOAD_THRESHOLD = 100_000
 
 BUCKET_SECONDS = 60  # размер бакета — 1 минута.
 HOUR_BUCKETS = 60  # 60 минут.

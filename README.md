@@ -194,6 +194,7 @@ python manage.py test app_uip.tests.ReserveAccumulationTests.test_generate_count
 | `REQUEST_METRICS_FLUSH_SECONDS` | Как часто сбрасывать минутный аккумулятор метрик HTTP-запросов в БД (по умолчанию `30`) |
 | `REQUEST_METRICS_RETENTION_DAYS` | Сколько дней хранить минутные метрики запросов (по умолчанию `14`) |
 | `LOAD_P95_THRESHOLD_MS` | Порог p95 времени ответа для алерта «высокая нагрузка», мс (по умолчанию `1500`) |
+| `LOAD_REQUESTS_PER_HOUR_THRESHOLD` | Порог количества запросов в час для алерта «высокая нагрузка» (по умолчанию `100000`) |
 | `LOAD_ERROR_RATE_THRESHOLD` | Порог доли ошибок 5xx для алерта «высокая нагрузка» (по умолчанию `0.05` = 5%) |
 | `EXTERNAL_ERROR_RATE_THRESHOLD` | Порог доли ошибок исходящих вызовов для health-чека «Внешние API» (по умолчанию `0.2` = 20%) |
 | `EXTERNAL_MIN_CALLS` | Минимум вызовов к сервису, чтобы оценивать долю ошибок (по умолчанию `5`) |
@@ -375,7 +376,8 @@ curl "http://<host>:<port>/uip/api/v1/search/?q=04601751026019260101500320000000
   «Очередь задач» — порог готовых задач (`QUEUE_MAX_READY`), возраст старейшей
   (`QUEUE_MAX_READY_AGE_SECONDS`) и ошибки за час (`QUEUE_MAX_FAILED_PER_HOUR`);
   «Соединения БД» — доля занятых соединений Postgres (`DB_CONNECTIONS_THRESHOLD`);
-  «Нагрузка» — запросы/час (50 000), p95 (`LOAD_P95_THRESHOLD_MS`), доля 5xx
+  «Нагрузка» — запросы/час (`LOAD_REQUESTS_PER_HOUR_THRESHOLD`, по умолчанию
+  100 000), p95 (`LOAD_P95_THRESHOLD_MS`), доля 5xx
   (`LOAD_ERROR_RATE_THRESHOLD`).
 - **История** хранится `REQUEST_METRICS_RETENTION_DAYS` дней (по умолчанию 14) и
   чистится ежедневной задачей `prune_request_metrics` (запросы, внешние вызовы и
