@@ -1803,6 +1803,35 @@ class CzErrorMessagesTests(TestCase):
         self.assertIn('HTTP 502', result['message_error'])
         self.assertIn('Bad gateway from proxy', result['message_error'])
 
+    def test_reserve_error_is_logged_with_response_and_numbers(self):
+        from django.core.cache import cache
+        from app_event.models import EventLog
+
+        cache.clear()
+        resp = self._resp(
+            500, {'error_message': 'Internal error'}, raw='boom-500',
+        )
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={'token': 't'},
+        ), patch(
+            'app_cz.services.party_service.external_http.post',
+            return_value=resp,
+        ):
+            party_service.reserve_parties_honest_sign(
+                product_group='milk', party_numbers=[self.PARTY],
+            )
+
+        event = EventLog.objects.filter(
+            module='cz', level='error',
+        ).latest('created_at')
+        self.assertIn('Internal error', event.message)
+        self.assertEqual(event.metadata['http_status'], 500)
+        self.assertEqual(event.metadata['product_group'], 'milk')
+        self.assertEqual(event.metadata['party_numbers'], [self.PARTY])
+        self.assertEqual(event.metadata['party_count'], 1)
+        self.assertIn('boom-500', event.metadata['response'])
+
     def test_pg_json_error_is_validation(self):
         resp = self._resp(400, {
             'error_message': (

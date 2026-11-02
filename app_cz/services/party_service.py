@@ -1,5 +1,6 @@
 # app_cz/services/party_service.py
 import json
+import hashlib
 import logging
 import re
 from datetime import datetime, date
@@ -440,6 +441,12 @@ def generate_party_numbers(
                 body = response.json()
             except ValueError:
                 body = {}
+            _log_cz_error(
+                'Генерация партий в ЧЗ',
+                response,
+                product_group=product_group,
+                extra={'party_info': party_info_list[:50]},
+            )
             return {
                 'is_error': True,
                 'message_error': _extract_cz_error(
@@ -467,6 +474,12 @@ def generate_party_numbers(
 
     except requests.exceptions.RequestException as e:
         logger.error(f"Сетевая ошибка при генерации партий: {e}")
+        _log_cz_network_error(
+            'Генерация партий в ЧЗ',
+            e,
+            product_group=product_group,
+            extra={'party_info': party_info_list[:50]},
+        )
         return {
             'is_error': True,
             'message_error': f'Ошибка соединения с ЧЗ: {str(e)}'
@@ -547,6 +560,93 @@ def _token_error_result(token_result: dict) -> dict:
         'error_kind': 'token',
         'message_error': message,
     }
+
+
+def _log_cz_error(action, response, *, product_group=None,
+                  party_numbers=None, extra=None):
+    """
+    Пишет в журнал событий причину отказа ЧЗ и что отправляли.
+
+    Нужно, чтобы в админке EventLog было видно не только «400/500», но и
+    тело ответа и номера партий. Повторы одинакового ответа за 5 минут
+    не дублируются.
+    """
+    from django.core.cache import cache
+    from app_event.utils import log_event
+
+    status = getattr(response, 'status_code', 0) or 0
+    raw_text = getattr(response, 'text', '') or ''
+    if not isinstance(raw_text, str):
+        raw_text = str(raw_text)
+    text = raw_text[:1000]
+    try:
+        body = response.json()
+    except (ValueError, AttributeError):
+        body = {}
+    detail = _extract_cz_error(body, status, text)
+    numbers = list(party_numbers or [])
+    url = getattr(response, 'url', '')
+    endpoint = url if isinstance(url, str) else ''
+
+    cache_key = 'cz-http-error:' + hashlib.sha1(
+        f'{action}:{status}:{text[:200]}'.encode('utf-8')
+    ).hexdigest()
+    if not cache.add(cache_key, True, 300):
+        return
+
+    metadata = {
+        'action': action,
+        'http_status': status,
+        'endpoint': endpoint,
+        'product_group': product_group,
+        'party_count': len(numbers),
+        'party_numbers': numbers[:50],
+        'response': text,
+    }
+    if extra:
+        metadata.update(extra)
+    try:
+        log_event(
+            module='cz',
+            level='error',
+            message=f'{action}: {detail}'[:255],
+            metadata=metadata,
+        )
+    except Exception:  # noqa: BLE001 — журнал не должен ломать резерв
+        logger.exception('Не удалось записать событие об ошибке ЧЗ')
+
+
+def _log_cz_network_error(action, error, *, product_group=None,
+                          party_numbers=None, extra=None):
+    """Журнал сетевого сбоя при обращении в ЧЗ."""
+    from django.core.cache import cache
+    from app_event.utils import log_event
+
+    numbers = list(party_numbers or [])
+    cache_key = 'cz-net-error:' + hashlib.sha1(
+        f'{action}:{str(error)[:200]}'.encode('utf-8')
+    ).hexdigest()
+    if not cache.add(cache_key, True, 300):
+        return
+
+    metadata = {
+        'action': action,
+        'product_group': product_group,
+        'party_count': len(numbers),
+        'party_numbers': numbers[:50],
+        'error': str(error)[:500],
+    }
+    if extra:
+        metadata.update(extra)
+    try:
+        log_event(
+            module='cz',
+            level='error',
+            message=f'{action}: {error}'[:255],
+            metadata=metadata,
+        )
+    except Exception:  # noqa: BLE001 — журнал не должен ломать резерв
+        logger.exception('Не удалось записать сетевое событие ЧЗ')
 
 
 def _reservation_error_message(reserve_result: dict, action: str) -> str:
@@ -664,6 +764,12 @@ def reserve_parties_honest_sign(
             )
         except requests.exceptions.RequestException as e:
             logger.error(f"Сетевая ошибка при резервировании партий: {e}")
+            _log_cz_network_error(
+                'Резервирование партий в ЧЗ',
+                e,
+                product_group=product_group,
+                party_numbers=to_reserve,
+            )
             return {
                 'is_error': True,
                 'error_kind': 'network',
@@ -711,6 +817,12 @@ def reserve_parties_honest_sign(
         error_kind = 'cz'
         if 'Некорректный JSON' in detail and 'pg' in detail:
             error_kind = 'validation'
+        _log_cz_error(
+            'Резервирование партий в ЧЗ',
+            response,
+            product_group=product_group,
+            party_numbers=to_reserve,
+        )
         return {
             'is_error': True,
             'error_kind': error_kind,

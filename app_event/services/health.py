@@ -494,7 +494,12 @@ def run_health_checks() -> dict:
         log_event(
             module=module, level='critical',
             message=f'{name}: недоступен — {info.get("message", "")}',
-            metadata={'service': service, 'failures': failures_count},
+            metadata={
+                'service': service,
+                'failures': failures_count,
+                'message': info.get('message', ''),
+                'details': info.get('details') or {},
+            },
         )
         if _alerts_enabled():
             sent = _send_alert_for(
