@@ -79,6 +79,24 @@ class HealthCheckTests(TestCase):
         self.assertIn('СБОЙ', mock_alert.call_args[0][0])
         self.assertIn('signatures', result['failed'])
 
+    def test_failure_event_contains_message_and_details(self):
+        """В EventLog пишем не только service/failures, но и причину/детали."""
+        checks = _fake_checks(False)
+        checks['signatures']['details'] = {'probe': 'x', 'items': []}
+        with patch.object(
+            health_service, '_confirm_attempts', return_value=1,
+        ), patch.object(
+            health_service, '_diagnose', return_value=checks,
+        ), patch.object(health_service, '_send_alert'):
+            health_service.run_health_checks()
+
+        event = EventLog.objects.filter(
+            module='cz', level='critical',
+        ).latest('created_at')
+        self.assertEqual(event.metadata['service'], 'signatures')
+        self.assertEqual(event.metadata['message'], 'нет связи')
+        self.assertEqual(event.metadata['details']['probe'], 'x')
+
     def test_no_duplicate_alert_while_still_failing(self):
         """Повторные неудачи после подтверждения письма не шлют."""
         with patch.object(health_service, '_confirm_attempts', return_value=2):
