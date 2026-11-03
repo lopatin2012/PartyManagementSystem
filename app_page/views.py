@@ -4,9 +4,10 @@ from datetime import datetime
 
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db.models import Exists, OuterRef, Q
-from django.http import Http404
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views import View
@@ -40,6 +41,7 @@ from app_helper.access import (
     AdminRequiredMixin,
     UipPageAccessMixin,
     filter_uips_for_user,
+    generate_uip_required_json,
     get_user_factory,
     user_can_access_sku,
 )
@@ -162,6 +164,8 @@ class UIPListView(UipPageAccessMixin, TemplateView):
         prod_to = get.get('prod_to', '')
         res_from = get.get('res_from', '')
         res_to = get.get('res_to', '')
+        # Фильтр по заводу (id). Привязанному пользователю доступен только его завод.
+        factory_filter = get.get('factory', '').strip()
         # Показать только УИП в рассинхроне (is_desync=True).
         desync_only = get.get('desync') == '1'
 
@@ -179,7 +183,38 @@ class UIPListView(UipPageAccessMixin, TemplateView):
             ).order_by('-created_at'),
         )
 
+        # === Заводы для фильтра ===
+        user_factory = get_user_factory(self.request.user)
+        factories = Factory.objects.all()
+        if user_factory is not None:
+            factories = factories.filter(id=user_factory.id)
+        factories = factories.order_by('-is_active', 'name')
+
+        selected_factory = None
+        if factory_filter:
+            try:
+                selected_factory = factories.filter(id=factory_filter).first()
+            except (ValidationError, ValueError):
+                selected_factory = None
+        if selected_factory is None:
+            factory_filter = ''
+
         # === Применяем фильтры ===
+        if selected_factory is not None:
+            queryset = queryset.filter(
+                Exists(
+                    ProductProductionLocation.objects.filter(
+                        product_sku_id=OuterRef('product_sku_id'),
+                        line__workshop__factory=selected_factory,
+                    )
+                )
+                | Exists(
+                    ProductionParty.objects.filter(
+                        uip_id=OuterRef('pk'),
+                        line__workshop__factory=selected_factory,
+                    )
+                )
+            )
         if desync_only:
             queryset = queryset.filter(is_desync=True)
         if status_filter and status_filter != 'all':
@@ -242,6 +277,7 @@ class UIPListView(UipPageAccessMixin, TemplateView):
             or (status_filter and status_filter != 'all')
             or number_filter or article_filter
             or prod_from or prod_to or res_from or res_to
+            or factory_filter
         )
 
         context.update({
@@ -255,9 +291,6 @@ class UIPListView(UipPageAccessMixin, TemplateView):
             'query_string': query_string,
             'start_item': start_item,
             'end_item': end_item,
-            'available_products': get_available_products(
-                factory=get_user_factory(self.request.user)
-            ),
 
             # Текущие значения фильтров (для сохранения в шаблоне).
             'current_status': status_filter,
@@ -267,6 +300,8 @@ class UIPListView(UipPageAccessMixin, TemplateView):
             'current_prod_to': prod_to,
             'current_res_from': res_from,
             'current_res_to': res_to,
+            'current_factory': str(selected_factory.id) if selected_factory else '',
+            'factories': factories,
             'desync_only': desync_only,
             'has_active_filters': has_active_filters,
 
@@ -277,10 +312,16 @@ class UIPListView(UipPageAccessMixin, TemplateView):
         return context
 
 
+@generate_uip_required_json
+def uip_available_products(request):
+    """Продукты для модалки генерации УИП (грузятся отдельно от страницы)."""
+    products = get_available_products(factory=get_user_factory(request.user))
+    return JsonResponse({'is_error': False, 'products': products})
+
+
 # ==========================================
 # Контроль продукции.
 # ==========================================
-
 def _products_for_user(user):
     """
     Продукты, доступные пользователю для контроля.

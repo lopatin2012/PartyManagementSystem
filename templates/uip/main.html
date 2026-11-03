@@ -48,9 +48,6 @@
         </div>
 
         {% if can_generate_uip %}
-        <!-- Данные продуктов для JS -->
-        {{ available_products|json_script:"available-products-data" }}
-
         <!-- МОДАЛЬНОЕ ОКНО ГЕНЕРАЦИИ -->
         <div id="generateModal" class="modal-overlay hidden">
             <div class="modal-content generate-modal">
@@ -159,6 +156,21 @@
             </div>
         </div>
         {% endif %}
+        {% endif %}
+
+        {% if factories %}
+        <div class="factory-filter">
+            <label for="factoryFilter">Завод:</label>
+            <select id="factoryFilter" onchange="applyFactoryFilter(this.value)">
+                <option value="">Все заводы</option>
+                {% for factory in factories %}
+                    <option value="{{ factory.id }}"
+                            {% if current_factory == factory.id|stringformat:'s' %}selected{% endif %}>
+                        {{ factory.name }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
         {% endif %}
     </div>
 

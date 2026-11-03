@@ -46,45 +46,60 @@ class SchedulerStatusView(View):
         now = timezone.now()
         schedule_data = []
 
+        # Пути задач: статусы и последние запуски грузим пачкой, а не по
+        # 4 запроса на каждую задачу (эндпоинт опрашивается каждые 5 секунд).
+        paths = []
+        path_by_name = {}
         for name, interval, description in SCHEDULE:
             task_func = task_map.get(name)
             if not task_func:
                 continue
-
             original_func = task_func.func
             task_path = f'{original_func.__module__}.{original_func.__name__}'
+            paths.append(task_path)
+            path_by_name[name] = task_path
 
-            # Последний запуск
-            last_run = (
-                DBTaskResult.objects
-                .filter(task_path=task_path)
-                .filter(status__in=[TaskResultStatus.SUCCESSFUL, TaskResultStatus.FAILED])
-                .order_by('-finished_at')
-                .first()
-            )
+        last_runs = self._last_results(
+            DBTaskResult,
+            paths,
+            [TaskResultStatus.SUCCESSFUL, TaskResultStatus.FAILED],
+            '-finished_at',
+            ('task_path', 'status', 'finished_at'),
+        )
+        last_failures = self._last_results(
+            DBTaskResult,
+            paths,
+            [TaskResultStatus.FAILED],
+            '-finished_at',
+            ('task_path', 'status', 'finished_at'),
+        )
+        running_tasks = self._last_results(
+            DBTaskResult,
+            paths,
+            [TaskResultStatus.RUNNING],
+            '-started_at',
+            ('task_path', 'started_at'),
+        )
+        queued_paths = set(
+            DBTaskResult.objects
+            .filter(task_path__in=paths, status=TaskResultStatus.READY)
+            .values_list('task_path', flat=True)
+            .distinct()
+        )
 
-            # Последняя ошибка (если была)
-            last_error = (
-                DBTaskResult.objects
-                .filter(task_path=task_path, status=TaskResultStatus.FAILED)
-                .order_by('-finished_at')
-                .first()
-            )
+        for name, interval, description in SCHEDULE:
+            task_path = path_by_name.get(name)
+            if not task_path:
+                continue
 
-            # Текущее выполнение (RUNNING) и очередь (READY).
-            running = (
-                DBTaskResult.objects
-                .filter(task_path=task_path, status=TaskResultStatus.RUNNING)
-                .order_by('-started_at')
-                .first()
-            )
-            is_queued = DBTaskResult.objects.filter(
-                task_path=task_path, status=TaskResultStatus.READY,
-            ).exists()
+            last_run = last_runs.get(task_path)
+            last_error = last_failures.get(task_path)
+            running = running_tasks.get(task_path)
+            is_queued = task_path in queued_paths
 
-            if last_run and last_run.finished_at:
-                last_run_str = last_run.finished_at.strftime('%d.%m.%Y %H:%M:%S')
-                last_status = last_run.status
+            if last_run and last_run['finished_at']:
+                last_run_str = last_run['finished_at'].strftime('%d.%m.%Y %H:%M:%S')
+                last_status = last_run['status']
             else:
                 last_run_str = None
                 last_status = None
@@ -99,8 +114,8 @@ class SchedulerStatusView(View):
                     if target <= now
                     else target.strftime('%d.%m.%Y %H:%M:%S')
                 )
-            elif last_run and last_run.finished_at:
-                next_run = last_run.finished_at + interval
+            elif last_run and last_run['finished_at']:
+                next_run = last_run['finished_at'] + interval
                 interval_display = self._format_interval(int(interval.total_seconds()))
                 next_run_str = (
                     'Сейчас (при следующей проверке)'
@@ -121,14 +136,14 @@ class SchedulerStatusView(View):
                 'next_run': next_run_str,
                 'has_recent_error': bool(
                     last_error and
-                    last_error.finished_at and
-                    (now - last_error.finished_at) < interval
+                    last_error['finished_at'] and
+                    (now - last_error['finished_at']) < interval
                 ),
                 'is_running': bool(running),
                 'is_queued': is_queued,
                 'started_at': (
-                    running.started_at.strftime('%d.%m.%Y %H:%M:%S')
-                    if running and running.started_at else None
+                    running['started_at'].strftime('%d.%m.%Y %H:%M:%S')
+                    if running and running['started_at'] else None
                 ),
                 'progress': get_task_progress(name) if running else None,
             })
@@ -145,15 +160,31 @@ class SchedulerStatusView(View):
             'system_health': self._system_health_state(),
         })
 
+    @staticmethod
+    def _last_results(model, paths, statuses, order_field, fields):
+        """Последняя запись по каждому task_path одним запросом."""
+        if not paths:
+            return {}
+        rows = (
+            model.objects
+            .filter(task_path__in=paths, status__in=statuses)
+            .order_by('task_path', order_field)
+            .values(*fields)
+            .distinct('task_path')
+        )
+        return {row['task_path']: row for row in rows}
+
     def _system_health_state(self) -> dict:
         """Последняя проверка по каждому сервису для виджета состояния."""
         from app_event.models import HealthCheck
 
-        seen = {}
-        for check in HealthCheck.objects.order_by('-checked_at'):
-            if check.service in seen:
-                continue
-            seen[check.service] = {
+        checks = (
+            HealthCheck.objects
+            .order_by('service', '-checked_at')
+            .distinct('service')
+        )
+        seen = {
+            check.service: {
                 'service': check.service,
                 'name': check.name,
                 'is_ok': check.is_ok,
@@ -161,6 +192,8 @@ class SchedulerStatusView(View):
                 'message': check.message,
                 'checked_at': check.checked_at.strftime('%d.%m.%Y %H:%M:%S'),
             }
+            for check in checks
+        }
         return {'is_ok': all(c['is_ok'] for c in seen.values()), 'services': list(seen.values())}
 
     def _format_interval(self, seconds: int) -> str:

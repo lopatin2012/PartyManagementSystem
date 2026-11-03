@@ -5,7 +5,7 @@
 from datetime import timedelta
 from unittest.mock import patch
 
-from django.contrib.auth.models import Group, User
+from django.contrib.auth.models import Group, Permission, User
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -409,25 +409,76 @@ class FactoryScopedUipVisibilityTests(TestCase):
         self.assertContains(response, self.uip_a.number)
         self.assertNotContains(response, self.uip_b.number)
 
-    def test_generation_dropdown_scoped_to_factory(self):
+    def test_admin_filters_by_factory(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.get(
+            reverse('uip_list'), {'factory': str(self.factory_a.id)},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['total_count'], 1)
+        self.assertEqual(
+            response.context['current_factory'], str(self.factory_a.id),
+        )
+        self.assertContains(response, self.uip_a.number)
+        self.assertNotContains(response, self.uip_b.number)
+
+    def test_bound_user_cannot_filter_other_factory(self):
         self.client.force_login(self.user_a)
 
-        response = self.client.get(reverse('uip_list'))
+        response = self.client.get(
+            reverse('uip_list'), {'factory': str(self.factory_b.id)},
+        )
 
-        articles = {p['article'] for p in response.context['available_products']}
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['total_count'], 1)
+        self.assertContains(response, self.uip_a.number)
+
+    def test_invalid_factory_is_ignored(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.get(
+            reverse('uip_list'), {'factory': 'not-a-uuid'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['total_count'], 2)
+
+    def test_generation_dropdown_scoped_to_factory(self):
+        self.user_a.user_permissions.add(
+            Permission.objects.get(codename='add_uip'),
+        )
+        self.client.force_login(self.user_a)
+
+        response = self.client.get(reverse('uip_available_products'))
+
+        self.assertEqual(response.status_code, 200)
+        articles = {p['article'] for p in response.json()['products']}
         self.assertEqual(articles, {'A-1'})
+
+    def test_available_products_requires_generation_permission(self):
+        self.client.force_login(self.user_a)
+
+        response = self.client.get(reverse('uip_available_products'))
+
+        self.assertEqual(response.status_code, 403)
 
     def test_generation_modal_exposes_full_product_info(self):
         self.client.force_login(self.admin)
 
-        response = self.client.get(reverse('uip_list'))
+        response = self.client.get(reverse('uip_available_products'))
 
-        product = response.context['available_products'][0]
+        self.assertEqual(response.status_code, 200)
+        product = response.json()['products'][0]
         self.assertIn('packagings', product)
         self.assertIn('group_label', product)
         self.assertIn('factories', product)
         self.assertIn('shelf_life_in_days', product)
-        self.assertContains(response, 'group_label')
+
+        # Страница не встраивает 400+ продуктов в HTML — они грузятся отдельно.
+        page = self.client.get(reverse('uip_list'))
+        self.assertNotContains(page, 'available-products-data')
 
     def test_unbound_viewer_sees_all_uips(self):
         viewer = User.objects.create_user(username='viewer', password='pass')

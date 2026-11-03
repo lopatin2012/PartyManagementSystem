@@ -6,6 +6,11 @@ urlpatterns = [
     path('', view=views.MainPageView.as_view(), name='home'),
     path('search/', view=views.SearchView.as_view(), name='search'),
     path('uip/', view=views.UIPListView.as_view(), name='uip_list'),
+    path(
+        'uip/available-products/',
+        view=views.uip_available_products,
+        name='uip_available_products',
+    ),
     path('products/', view=views.ProductControlView.as_view(), name='product_control'),
     path(
         'products/<uuid:pk>/',

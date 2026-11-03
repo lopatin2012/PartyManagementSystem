@@ -60,6 +60,13 @@ def _fixed_daily_target(name, reference=None):
     return moment.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
+def _last_finished_at(last_run):
+    """Время последнего запуска: поддерживает объект и словарь."""
+    if isinstance(last_run, dict):
+        return last_run.get('finished_at')
+    return getattr(last_run, 'finished_at', None)
+
+
 def is_fixed_daily_due(name, last_run, now=None) -> bool:
     """Пора ли запускать задачу с фиксированным временем."""
     if now is None:
@@ -67,7 +74,7 @@ def is_fixed_daily_due(name, last_run, now=None) -> bool:
     target = _fixed_daily_target(name, now)
     if _local_moment(now) < target:
         return False
-    last_finished = getattr(last_run, 'finished_at', None)
+    last_finished = _last_finished_at(last_run)
     if last_finished and last_finished >= target:
         return False
     return True
@@ -78,7 +85,7 @@ def next_fixed_daily_run(name, last_run, now=None):
     if now is None:
         now = timezone.now()
     target = _fixed_daily_target(name, now)
-    last_finished = getattr(last_run, 'finished_at', None)
+    last_finished = _last_finished_at(last_run)
     if last_finished and last_finished >= target:
         target = target + timedelta(days=1)
     return target

@@ -19,6 +19,7 @@ from functools import wraps
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied
+from django.db.models import Exists, OuterRef
 from django.http import JsonResponse
 from django.urls import reverse
 
@@ -108,12 +109,23 @@ def filter_uips_for_user(user, queryset):
     factory = get_user_factory(user)
     if factory is None:
         return queryset
-    from django.db.models import Q
+    from app_factory.models import ProductProductionLocation
+    from app_uip.models import ProductionParty
 
     return queryset.filter(
-        Q(product_sku__product_production_locations__line__workshop__factory=factory)
-        | Q(production_parties__line__workshop__factory=factory)
-    ).distinct()
+        Exists(
+            ProductProductionLocation.objects.filter(
+                product_sku_id=OuterRef('product_sku_id'),
+                line__workshop__factory=factory,
+            )
+        )
+        | Exists(
+            ProductionParty.objects.filter(
+                uip_id=OuterRef('pk'),
+                line__workshop__factory=factory,
+            )
+        )
+    )
 
 
 def user_can_access_uip(user, uip) -> bool:

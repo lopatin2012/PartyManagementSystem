@@ -62,6 +62,31 @@ class LoadStatsMessageTests(SimpleTestCase):
         self.assertTrue(result['is_high_load'])
         self.assertIn('p95', result['message'])
 
+    def test_high_load_by_p95_names_slowest_endpoint(self):
+        stats = self._stats(user=100, p95_ms=5000)
+        with patch.object(
+            metrics, 'get_window_stats', return_value=stats,
+        ), patch.object(
+            metrics, 'get_top_groups',
+            return_value={
+                'by_p95': [
+                    {'group': '/uip/', 'p95_ms': 5000, 'count': 100},
+                ],
+            },
+        ):
+            result = metrics.get_load_stats()
+
+        self.assertIn('/uip/', result['message'])
+        self.assertEqual(result['slowest']['group'], '/uip/')
+
+    def test_single_slow_request_does_not_trigger_p95(self):
+        """Один холодный запрос после рестарта не поднимает тревогу."""
+        stats = self._stats(user=5, p95_ms=5000)
+        with patch.object(metrics, 'get_window_stats', return_value=stats):
+            result = metrics.get_load_stats()
+
+        self.assertFalse(result['is_high_load'])
+
     def test_high_load_by_error_rate(self):
         stats = self._stats(user=100, errors=10, error_rate=0.1)
         with patch.object(metrics, 'get_window_stats', return_value=stats):

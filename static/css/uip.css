@@ -411,6 +411,43 @@
     justify-content: center;
 }
 
+/* === ФИЛЬТР ПО ЗАВОДУ (под кнопками синхронизации/генерации) === */
+.factory-filter {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    margin-top: 1rem;
+}
+
+.factory-filter label {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.9rem;
+}
+
+.factory-filter select {
+    padding: 0.55rem 1rem;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    color: var(--text-main);
+    font-size: 0.9rem;
+    outline: none;
+    cursor: pointer;
+    color-scheme: dark;
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.factory-filter select:focus {
+    border-color: var(--accent-green);
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.factory-filter select option {
+    background-color: var(--bg-dark);
+    color: var(--text-main);
+}
+
 .btn-sync {
     display: inline-flex;
     align-items: center;
