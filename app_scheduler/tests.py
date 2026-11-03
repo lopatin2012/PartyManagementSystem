@@ -208,6 +208,19 @@ class SchedulerStatusViewTests(TestCase):
             'ежедневно 00:30',
         )
 
+    def test_status_uses_bounded_queries(self):
+        """Статус опрашивается каждые 5 сек — не по 4 запроса на задачу."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        self.client.force_login(self.admin)
+
+        with CaptureQueriesContext(connection) as ctx:
+            response = self.client.get(reverse('status'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLessEqual(len(ctx), 15)
+
 
 class SchedulerCheckEnqueueTests(TestCase):
     """_check_and_enqueue не падает в ветке «ещё рано» (регресс)."""

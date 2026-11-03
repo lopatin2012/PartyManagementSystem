@@ -52,6 +52,10 @@ SLOW_REQUEST_MS = 1000
 # Минимум запросов, чтобы доля ошибок считалась осмысленной.
 MIN_REQUESTS_FOR_ERROR_RATE = 20
 
+# Минимум запросов, чтобы оценивать p95 (один «холодный» запрос после
+# рестарта не должен поднимать тревогу на час).
+MIN_REQUESTS_FOR_P95 = 20
+
 # Предохранитель: сколько строк аккумулятора держать, если БД долго недоступна.
 MAX_PENDING_ROWS = 5000
 
@@ -813,14 +817,30 @@ def get_load_stats() -> dict:
 
     reasons = []
     threshold = high_load_threshold()
+    slowest = None
     if has_data:
         if requests_per_hour >= threshold:
             reasons.append(
                 f'{requests_per_hour} запросов/час '
                 f'(порог {threshold})'
             )
-        if p95 > p95_threshold_ms():
-            reasons.append(f'p95 {p95} мс (порог {p95_threshold_ms()})')
+        if (
+            requests_per_hour >= MIN_REQUESTS_FOR_P95
+            and p95 > p95_threshold_ms()
+        ):
+            try:
+                top_slow = get_top_groups('1h', limit=1).get('by_p95') or []
+            except Exception:  # noqa: BLE001 — диагностика не должна ломать чек
+                top_slow = []
+            if top_slow:
+                slowest = top_slow[0]
+            reason = f'p95 {p95} мс (порог {p95_threshold_ms()})'
+            if slowest:
+                reason += (
+                    f', самый медленный: {slowest["group"]} '
+                    f'{slowest["p95_ms"]} мс'
+                )
+            reasons.append(reason)
         if (
             stats['user'] + stats['bot'] >= MIN_REQUESTS_FOR_ERROR_RATE
             and error_rate > error_rate_threshold()
@@ -859,6 +879,7 @@ def get_load_stats() -> dict:
         'threshold_per_hour': threshold,
         'p95_threshold_ms': p95_threshold_ms(),
         'error_rate_threshold': error_rate_threshold(),
+        'slowest': slowest,
         'is_high_load': is_high,
         'has_data': has_data,
         'source': stats['source'],

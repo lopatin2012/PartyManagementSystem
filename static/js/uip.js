@@ -84,6 +84,8 @@ let availableProducts = [];   // полный список
 let filteredProducts = [];    // отфильтрованный список
 let selectedSkuId = null;     // сохранённый выбор
 let lastQuery = '';           // последний поисковый запрос (для подсветки)
+let productsLoading = false;  // идёт загрузка списка продуктов
+let productsLoaded = false;   // список уже загружен
 const MAX_VISIBLE_PRODUCTS = 50;  // сколько элементов рендерим за раз
 
 // Типы формирования УИП (соответствует TypeFormationUIP в модели).
@@ -259,14 +261,6 @@ function updatePartyVisibility() {
 function initGenerateModal() {
     updateGenerateButtonState();
 
-    const dataEl = document.getElementById('available-products-data');
-    if (dataEl) {
-        try {
-            availableProducts = JSON.parse(dataEl.textContent);
-        } catch (e) {
-            availableProducts = [];
-        }
-    }
     filteredProducts = availableProducts;
     renderProductList();
     updateFormationType();
@@ -277,6 +271,40 @@ function initGenerateModal() {
         dateInput.valueAsDate = new Date();
         dateInput.addEventListener('change', updatePreview);
     }
+
+    // Список продуктов грузим отдельно, чтобы не тормозить саму страницу.
+    loadAvailableProducts();
+}
+
+/** Загружает продукты для модалки генерации (один раз на страницу). */
+async function loadAvailableProducts() {
+    if (productsLoaded || productsLoading) return;
+    productsLoading = true;
+
+    const list = document.getElementById('productList');
+    if (list) {
+        list.innerHTML = '<div class="empty-products">Загрузка продуктов…</div>';
+    }
+
+    try {
+        const response = await fetch('/uip/available-products/', {
+            headers: {'Accept': 'application/json'},
+        });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const data = await response.json();
+        availableProducts = data.products || [];
+        filteredProducts = availableProducts;
+        productsLoaded = true;
+    } catch (e) {
+        productsLoading = false;
+        if (list) {
+            list.innerHTML = '<div class="empty-products">Не удалось загрузить продукты</div>';
+        }
+        return;
+    }
+
+    productsLoading = false;
+    renderProductList();
 }
 
 /** Фильтрация по артикулу, названию и GTIN. */
@@ -610,7 +638,11 @@ function openGenerateModal() {
     // Сброс поиска при открытии (выбор продукта сохраняется через selectedSkuId).
     const searchInput = document.getElementById('productSearch');
     if (searchInput) searchInput.value = '';
-    filterProducts('');
+    if (!productsLoaded) {
+        loadAvailableProducts();
+    } else {
+        filterProducts('');
+    }
     updateGenerateButtonState();
     updatePreview();
     updateFormationType();
@@ -1036,6 +1068,18 @@ function toggleFilter(col) {
 /** Применить фильтры (отправить форму). */
 function applyFilters() {
     document.getElementById('uipFilterForm').submit();
+}
+
+/** Фильтр по заводу: меняет query-параметр factory, сбрасывая страницу. */
+function applyFactoryFilter(value) {
+    const url = new URL(window.location.href);
+    if (value) {
+        url.searchParams.set('factory', value);
+    } else {
+        url.searchParams.delete('factory');
+    }
+    url.searchParams.delete('page');
+    window.location.href = url.toString();
 }
 
 /** Сбросить все фильтры — переход на чистый URL. */
