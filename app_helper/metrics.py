@@ -44,7 +44,7 @@ from app_helper import load_tracker, system_metrics
 logger = logging.getLogger(__name__)
 
 # Порог «высокой нагрузки» по количеству запросов в час.
-HIGH_LOAD_THRESHOLD = 100_000
+HIGH_LOAD_THRESHOLD = 200_000
 
 # Запрос дольше этого считается медленным.
 SLOW_REQUEST_MS = 1000
