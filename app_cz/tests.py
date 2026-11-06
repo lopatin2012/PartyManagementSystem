@@ -497,16 +497,18 @@ class MapCzStatusTests(SimpleTestCase):
         # Неизвестный статус трактуется как «не нанесён».
         self.assertEqual(map_cz_status('SOMETHING_NEW'), C.EMITTED)
 
-    def test_desync_recognises_applied_and_introduced_only(self):
+    def test_desync_recognises_used_code_statuses(self):
         from app_cz.services.code_status import map_cz_status
         from app_cz.services.desync_resolution import APPLIED_STATUSES
 
-        # «Нанесён» и «В обороте» — отчёт о нанесении сформирован.
-        self.assertIn(map_cz_status('APPLIED'), APPLIED_STATUSES)
-        self.assertIn(map_cz_status('INTRODUCED'), APPLIED_STATUSES)
-        # Остальные официальные статусы регистрацией не считаются.
-        for raw in ('EMITTED', 'WRITTEN_OFF', 'RETIRED', 'WITHDRAWN', 'DISAGGREGATION'):
-            self.assertNotIn(map_cz_status(raw), APPLIED_STATUSES)
+        # Нанесён, в обороте и выведен из оборота — код использован.
+        for raw in (
+            'APPLIED', 'INTRODUCED', 'WRITTEN_OFF', 'RETIRED',
+            'WITHDRAWN', 'DISAGGREGATION',
+        ):
+            self.assertIn(map_cz_status(raw), APPLIED_STATUSES)
+        # Только выпущенный код ещё не использован.
+        self.assertNotIn(map_cz_status('EMITTED'), APPLIED_STATUSES)
 
 
 class GetCisesStatusesTests(SimpleTestCase):
@@ -578,12 +580,13 @@ class ResolveDesyncUipsTests(TestCase):
         self.packaging = self.sku.product.packagings.first()
 
     def _uip(self, number, status=PartyStatusChoices.RESERVED_LOCAL,
-             is_desync=True):
+             is_desync=True, reservation_date=None):
         return UIP.objects.create(
             product_sku=self.sku,
             number=number,
             status=status,
             is_desync=is_desync,
+            reservation_date=reservation_date,
         )
 
     def _party_with_code(self, uip, code, index='1'):
@@ -695,12 +698,80 @@ class ResolveDesyncUipsTests(TestCase):
         self.assertFalse(uip.is_desync)
         self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
 
-    def test_no_codes_absent_from_reserve_registers(self):
+    def test_no_codes_absent_from_reserve_keeps_desync(self):
+        """Без кода и без резерва нельзя утверждать, что УИП зарегистрирован."""
         uip = self._uip('04601751026019260101500320000000')
 
         result = self._resolve(reserved=())
 
+        self.assertEqual(result['registered'], 0)
+        self.assertEqual(result['remaining'], 1)
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertTrue(uip.is_desync)
+
+    def test_burned_reserved_uip_is_not_auto_rere_reserved(self):
+        """Сгоревший резерв автоматически не перерезервируется."""
+        today = timezone.now().date()
+        uip = self._uip(
+            '04601751026019260101500320000000',
+            reservation_date=today - timedelta(days=31),
+        )
+
+        with patch(
+            'app_cz.services.party_service.reserve_party_numbers_cz',
+        ) as reserve:
+            result = self._resolve(reserved=())
+
+        reserve.assert_not_called()
+        self.assertEqual(result['reserved'], 0)
+        self.assertEqual(result['remaining'], 1)
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertTrue(uip.is_desync)
+
+    def test_burned_uip_with_used_code_still_registers(self):
+        """Если код использован, регистрация подтверждена даже после сгорания."""
+        today = timezone.now().date()
+        uip = self._uip(
+            '04601751026019260101500320000000',
+            reservation_date=today - timedelta(days=31),
+        )
+        self._party_with_code(uip, '010460175102601921CODE0001')
+
+        with patch(
+            'app_cz.services.party_service.reserve_party_numbers_cz',
+        ) as reserve:
+            result = self._resolve(
+                {'010460175102601921CODE0001': 'APPLIED'}, reserved=(),
+            )
+
+        reserve.assert_not_called()
         self.assertEqual(result['registered'], 1)
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.REGISTERED)
+
+    def test_withdrawn_code_confirms_registration(self):
+        """Код «Выведен из оборота» тоже означает, что УИП использован."""
+        uip = self._uip('04601751026019260101500320000000')
+        self._party_with_code(uip, '010460175102601921CODE0001')
+
+        result = self._resolve({'010460175102601921CODE0001': 'WITHDRAWN'})
+
+        self.assertEqual(result['registered'], 1)
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.REGISTERED)
+
+    def test_registered_without_codes_clears_flag_only(self):
+        """Уже registered/closed/archived: без кодов снимаем только флаг."""
+        uip = self._uip(
+            '04601751026019260101500320000000',
+            status=PartyStatusChoices.REGISTERED,
+        )
+
+        result = self._resolve(reserved=())
+
+        self.assertEqual(result['desync_cleared'], 1)
         uip.refresh_from_db()
         self.assertEqual(uip.status, PartyStatusChoices.REGISTERED)
         self.assertFalse(uip.is_desync)
@@ -2411,6 +2482,149 @@ class GenerateCzUipFormatTests(TestCase):
 
 
 
+class GenerateExistingUipReserveTests(TestCase):
+    """Черновик/сгоревший УИП резервируется только по запросу."""
+
+    def setUp(self):
+        from app_cz.services.party_service import build_local_party_number
+
+        self.sku = _create_sku()
+        self.production_date = date(2026, 11, 2)
+        self.number = build_local_party_number(
+            '04601751026019',
+            self.production_date,
+            article='50032',
+            party='000',
+            type_formation_uip=TypeFormationUIP.general.value,
+        )
+
+    def _uip(self, status, reservation_date=None):
+        return UIP.objects.create(
+            product_sku=self.sku,
+            number=self.number,
+            status=status,
+            production_date=self.production_date,
+            reservation_date=reservation_date,
+        )
+
+    @staticmethod
+    def _cz_success():
+        return {
+            'is_error': False,
+            'message_error': 'Ошибки отсутствуют',
+            'lst_party_number_info': [],
+        }
+
+    def test_draft_existing_is_reserved_on_request(self):
+        uip = self._uip(PartyStatusChoices.DRAFT)
+        today = timezone.now().date()
+
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={'token': 't'},
+        ), patch.object(
+            party_service, 'reserve_parties_honest_sign',
+            return_value=self._cz_success(),
+        ) as reserve:
+            result = party_service.generate_uip(
+                self.sku, self.production_date, 'local', skip_cz=False,
+            )
+
+        self.assertFalse(result['is_error'])
+        reserve.assert_called_once()
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertEqual(uip.reservation_date, today)
+        self.assertEqual(UIP.objects.filter(number=self.number).count(), 1)
+
+    def test_burned_reserved_is_rere_reserved_on_request(self):
+        today = timezone.now().date()
+        uip = self._uip(
+            PartyStatusChoices.RESERVED_LOCAL,
+            reservation_date=today - timedelta(days=31),
+        )
+
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={'token': 't'},
+        ), patch.object(
+            party_service, 'reserve_parties_honest_sign',
+            return_value=self._cz_success(),
+        ) as reserve:
+            result = party_service.generate_uip(
+                self.sku, self.production_date, 'local', skip_cz=False,
+            )
+
+        self.assertFalse(result['is_error'])
+        reserve.assert_called_once()
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertEqual(uip.reservation_date, today)
+
+    def test_fresh_reserved_is_not_reserved_again(self):
+        today = timezone.now().date()
+        uip = self._uip(
+            PartyStatusChoices.RESERVED_LOCAL, reservation_date=today,
+        )
+
+        with patch.object(
+            party_service, 'reserve_parties_honest_sign',
+        ) as reserve:
+            result = party_service.generate_uip(
+                self.sku, self.production_date, 'local',
+                skip_cz=False, is_external_service=True,
+            )
+
+        reserve.assert_not_called()
+        self.assertFalse(result['is_error'])
+        self.assertIn('уже существует', result['message'])
+        uip.refresh_from_db()
+        self.assertEqual(uip.reservation_date, today)
+
+    def test_burned_reserve_failure_keeps_status(self):
+        today = timezone.now().date()
+        old_date = today - timedelta(days=31)
+        uip = self._uip(
+            PartyStatusChoices.RESERVED_LOCAL, reservation_date=old_date,
+        )
+
+        with patch.object(
+            party_service, 'get_true_api_session_token',
+            return_value={'token': 't'},
+        ), patch.object(
+            party_service, 'reserve_parties_honest_sign',
+            return_value={
+                'is_error': True,
+                'error_kind': 'cz',
+                'message_error': 'HTTP 400: Номер занят',
+            },
+        ):
+            result = party_service.generate_uip(
+                self.sku, self.production_date, 'local', skip_cz=False,
+            )
+
+        self.assertTrue(result['is_error'])
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertEqual(uip.reservation_date, old_date)
+
+    def test_draft_without_request_stays_draft(self):
+        uip = self._uip(PartyStatusChoices.DRAFT)
+
+        with patch.object(
+            party_service, 'reserve_parties_honest_sign',
+        ) as reserve:
+            result = party_service.generate_uip(
+                self.sku, self.production_date, 'local',
+                skip_cz=True, is_external_service=True,
+            )
+
+        reserve.assert_not_called()
+        self.assertFalse(result['is_error'])
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.DRAFT)
+
+
 class CheckUipCzEndpointTests(TestCase):
     """POST /cz/api/check-uip-cz/ — проверка УИП в рассинхроне."""
 
@@ -2492,17 +2706,17 @@ class CheckUipCzEndpointTests(TestCase):
         self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
         self.assertFalse(self.uip.is_desync)
 
-    def test_failed_reserve_number_not_in_cz_registers_uip(self):
-        """Номера нет в резерве ЧЗ и он не резервируется → зарегистрирован."""
+    def test_failed_reserve_number_not_in_cz_keeps_desync(self):
+        """Номера нет в резерве, но код не подтверждён → не регистрируем."""
         response = self._failed_reserve(set())
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertFalse(body['is_error'])
-        self.assertEqual(body['result'], 'registered')
+        self.assertEqual(body['result'], 'desync')
         self.uip.refresh_from_db()
-        self.assertEqual(self.uip.status, PartyStatusChoices.REGISTERED)
-        self.assertFalse(self.uip.is_desync)
+        self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertTrue(self.uip.is_desync)
 
     def test_failed_reserve_list_unavailable_keeps_desync(self):
         """Список резерва ЧЗ недоступен → оставляем в рассинхроне."""
@@ -2529,7 +2743,7 @@ class CheckUipCzEndpointTests(TestCase):
         self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
         self.assertFalse(self.uip.is_desync)
 
-    def test_draft_not_in_cz_reserve_becomes_registered(self):
+    def test_draft_not_in_cz_reserve_keeps_desync(self):
         self.uip.status = PartyStatusChoices.DRAFT
         self.uip.save(update_fields=['status'])
 
@@ -2537,10 +2751,10 @@ class CheckUipCzEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body['result'], 'registered')
+        self.assertEqual(body['result'], 'desync')
         self.uip.refresh_from_db()
-        self.assertEqual(self.uip.status, PartyStatusChoices.REGISTERED)
-        self.assertFalse(self.uip.is_desync)
+        self.assertEqual(self.uip.status, PartyStatusChoices.DRAFT)
+        self.assertTrue(self.uip.is_desync)
 
     def test_draft_with_applied_code_becomes_registered(self):
         """Черновик с нанесённым (В обороте) кодом → registered."""
