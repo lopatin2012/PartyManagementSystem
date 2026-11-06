@@ -5,22 +5,23 @@
 
 Рассинхрон копится в двух видах, и задача разбирает оба:
 
-* `reserved_cz` / `reserved_local`, которых больше нет в резерве ЧЗ: если по
-  коду из внешнего задания отчёт о нанесении сформирован (код APPLIED/INTRODUCED
-  в ЧЗ) — УИП переводится в `registered`; дальше работает обычная статусная
-  лестница (`closed` → `archived`).
+* `reserved_cz` / `reserved_local`, которых больше нет в резерве ЧЗ:
+  - если по коду из задания отчёт о нанесении сформирован (код APPLIED /
+    INTRODUCED / WITHDRAWN в ЧЗ) — УИП переводится в `registered`; дальше
+    работает обычная статусная лестница (`closed` → `archived`);
+  - если кода нет или он не использован, регистрация **не подтверждается**:
+    УИП остаётся в рассинхроне до ручного разбора. Сгоревший резерв
+    автоматически не перерезервируется — только по запросу задания или
+    вручную.
 * `registered` / `closed` / `archived`, которые всё ещё числятся в резерве ЧЗ:
-  если код нанесён, регистрация подтверждена — снимается только флаг
-  `is_desync`, статус не меняется.
+  статус не меняется, снимается только флаг `is_desync`.
 
 Код для проверки берётся из локальных `CISCode` УИП; если локальных кодов нет —
 запрашивается один код у сервера завода (`get_any_code_for_task` по
 `external_number_task`), как в `register_uip`. Статусы кодов проверяются
 пакетно в ЧЗ (`POST /cises/info`, до 1000 кодов за запрос, по товарной группе),
-поэтому одиночных обращений не делаем.
-
-Если отчёт не сформирован (код не APPLIED) или кода нет — УИП остаётся в
-рассинхроне и разбирается администратором вручную.
+поэтому одиночных обращений не делаем. `WITHDRAWN` («выведен из оборота»)
+тоже означает, что код использован.
 """
 
 import logging
@@ -39,12 +40,6 @@ MAX_CODES_PER_UIP = 100
 # локальных кодов; ограничение не даёт недоступному заводу затормозить воркер).
 MAX_EXTERNAL_FETCHES = 30
 
-# Статусы, которые переводятся в REGISTERED при подтверждении регистрации.
-RESERVED_STATUSES = [
-    PartyStatusChoices.RESERVED_CZ,
-    PartyStatusChoices.RESERVED_LOCAL,
-]
-
 # Статусы, для которых достаточно снять флаг рассинхрона.
 REGISTERED_STATUSES = [
     PartyStatusChoices.REGISTERED,
@@ -60,10 +55,12 @@ REGISTRABLE_STATUSES = [
     PartyStatusChoices.RESERVED_LOCAL,
 ]
 
-# Статусы кода в ЧЗ, означающие, что код нанесён (отчёт сформирован).
+# Статусы кода в ЧЗ, означающие, что код использован (отчёт сформирован).
 APPLIED_STATUSES = {
     CISCodesStatusChoices.APPLIED,
     CISCodesStatusChoices.INTRODUCED_INTO_CIRCULATION,
+    # Код уже выведен из оборота — значит, его использовали.
+    CISCodesStatusChoices.WITHDRAWN_FROM_CIRCULATION,
 }
 
 # Статусы, которые задача не трогает.
@@ -279,14 +276,24 @@ def resolve_desync_uips(fetch_external: bool = True, max_uips: int = MAX_UIPS_PE
         codes = codes_by_uip.get(uip.id)
         try:
             if codes and any(code in applied for code in codes):
-                # Код нанесён в ЧЗ → отчёт о нанесении сформирован.
+                # Код использован в ЧЗ → отчёт о нанесении сформирован.
                 status_changed, desync_cleared = _register_by_code(
                     uip, source='sync', note=REGISTERED_NOTE,
                 )
                 summary['registered'] += int(status_changed)
             elif codes:
-                # Коды есть, но ни один не нанесён — оставляем на ручной разбор.
+                # Коды есть, но ни один не использован — оставляем на ручной
+                # разбор. Регистрацию по одному факту отсутствия в резерве
+                # не подтверждаем.
                 summary['remaining'] += 1
+                continue
+            elif uip.status in REGISTERED_STATUSES:
+                # УИП уже зарегистрирован/закрыт/в архиве: код не нужен,
+                # снимаем только флаг рассинхрона.
+                desync_cleared = _clear_desync(uip)
+                summary['desync_cleared'] += int(desync_cleared)
+                if not desync_cleared:
+                    summary['remaining'] += 1
                 continue
             elif reserved_numbers is None:
                 # Нет кодов и список резерва ЧЗ недоступен — оставляем.
@@ -299,11 +306,11 @@ def resolve_desync_uips(fetch_external: bool = True, max_uips: int = MAX_UIPS_PE
                 )
                 summary['reserved'] += int(status_changed)
             else:
-                # Номера нет в резерве ЧЗ — регистрация уже состоялась.
-                status_changed, desync_cleared = register_desync_uip(
-                    uip, source='sync', note=REGISTERED_NOTE,
-                )
-                summary['registered'] += int(status_changed)
+                # Номера нет в резерве, код не использован: недостаточно
+                # данных, чтобы считать УИП зарегистрированным. Перерезерв
+                # здесь не делаем — только по запросу задания или вручную.
+                summary['remaining'] += 1
+                continue
 
             if not status_changed and not desync_cleared:
                 # Неожиданный статус — не трогаем, оставляем администратору.

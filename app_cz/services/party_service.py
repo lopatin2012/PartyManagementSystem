@@ -3,7 +3,7 @@ import json
 import hashlib
 import logging
 import re
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 import requests
 
@@ -1620,6 +1620,95 @@ def restore_burned_uips(
     return restored
 
 
+def _reservation_burned(uip: UIP) -> bool:
+    """Истёк ли срок резерва УИП (30 дней с даты резервирования)."""
+    if not uip.reservation_date:
+        return False
+    from app_cz.services.reserve_monitor import BURN_DAYS
+
+    return (
+        uip.reservation_date + timedelta(days=BURN_DAYS)
+        <= timezone.now().date()
+    )
+
+
+def _reserve_existing_uip(
+        uip: UIP,
+        article: str,
+        production_date: date,
+        target_status: str = None,
+) -> dict:
+    """
+    Резервирует в ЧЗ уже существующий УИП по запросу (задание или ручной).
+
+    Для черновика это первичное резервирование, для сгоревшего
+    `reserved_*` — повторное. Без запроса такие УИП не трогаем.
+    """
+    try:
+        product_sku = ProductSKU.objects.get(article=article)
+    except ObjectDoesNotExist:
+        logger.error(f'Отсутствует продукт указанный в запросе: {article}')
+        return {
+            'is_error': True,
+            'message': 'Проверьте артикул продукта или наличие продукта в базе СУП.'
+        }
+
+    reserve_result = reserve_parties_honest_sign(
+        product_group=product_sku.product.group,
+        party_numbers=[uip.number],
+    )
+    if reserve_result.get('is_error'):
+        return {
+            'is_error': True,
+            'message': _reservation_error_message(
+                reserve_result,
+                f'Не удалось зарезервировать УИП {uip.number} по запросу',
+            ),
+        }
+
+    target = target_status or PartyStatusChoices.RESERVED_LOCAL
+    if target not in PartyStatusChoices.values:
+        target = PartyStatusChoices.RESERVED_LOCAL
+
+    note = (
+        'Резервирование по запросу: черновик зарезервирован в ЧЗ'
+        if uip.status == PartyStatusChoices.DRAFT
+        else 'Повторное резервирование по запросу: сгоревший номер зарезервирован в ЧЗ'
+    )
+    today = timezone.now().date()
+
+    with transaction.atomic():
+        uip.product_sku = product_sku
+        if production_date:
+            uip.production_date = production_date
+        uip.reservation_date = today
+        uip.is_desync = False
+        uip.save(update_fields=[
+            'product_sku', 'production_date', 'reservation_date',
+            'is_desync', 'updated_at',
+        ])
+        changed = uip.change_status(target, source='api', note=note)
+        if not changed:
+            # Статус уже reserved_*; фиксируем сам факт резервирования.
+            UIPStatusLog.objects.create(
+                uip=uip,
+                from_status=uip.status,
+                to_status=uip.status,
+                source='api',
+                note=note,
+            )
+
+    return {
+        'is_error': False,
+        'uuid_uip': str(uip.id),
+        'uuid_task': str(uuid7()),
+        'reservation_date': uip.reservation_date,
+        'status': str(target),
+        'number': uip.number,
+        'message': f'УИП {uip.number} зарезервирован в ЧЗ по запросу',
+    }
+
+
 def _re_reserve_burned_uip(
         uip: UIP,
         article: str,
@@ -1770,6 +1859,26 @@ def _generate_local_uip(
                 production_date,
                 target_status,
             )
+
+        # Черновик или сгоревший reserved_* резервируем только по запросу
+        # (задание/ручной вызов с skip_cz=False), автоматически — нет.
+        if not skip_cz and (
+            existing_uip.status == PartyStatusChoices.DRAFT
+            or (
+                existing_uip.status in (
+                    PartyStatusChoices.RESERVED_CZ,
+                    PartyStatusChoices.RESERVED_LOCAL,
+                )
+                and _reservation_burned(existing_uip)
+            )
+        ):
+            return _reserve_existing_uip(
+                existing_uip,
+                article,
+                production_date,
+                target_status,
+            )
+
         return {
             'is_error': not is_external_service,
             'uuid_uip': str(existing_uip.id),

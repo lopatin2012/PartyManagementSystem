@@ -660,7 +660,34 @@ class ReReserveBurnedUipTests(TestCase):
         self.assertEqual(uip.status, PartyStatusChoices.DELETED)
         self.assertEqual(uip.reservation_date, date(2025, 1, 1))
 
-    def test_generate_existing_active_uip_not_re_reserved(self):
+    def test_generate_existing_burned_uip_is_rere_reserved_on_request(self):
+        """Сгоревший reserved_* перерезервируется по запросу (skip_cz=false)."""
+        uip = self._create_burned_uip()
+        uip.change_status(PartyStatusChoices.RESERVED_LOCAL, source='test')
+
+        with patch(
+            'app_cz.services.party_service.reserve_parties_honest_sign'
+        ) as mock_reserve:
+            mock_reserve.return_value = {
+                'is_error': False,
+                'message_error': 'Ошибки отсутствуют',
+                'lst_party_number_info': [{'partyNumber': uip.number}],
+            }
+            result = reserve_uips({
+                'article': BURNED_ARTICLE,
+                'production_date': BURNED_DATE.isoformat(),
+                'mode': 'local',
+                'skip_cz': False,
+            })
+
+        self.assertFalse(result['is_error'])
+        mock_reserve.assert_called_once()
+        uip.refresh_from_db()
+        self.assertEqual(uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertEqual(uip.reservation_date, timezone.now().date())
+
+    def test_generate_existing_active_uip_not_re_reserved_without_request(self):
+        """Без запроса (skip_cz=true) активный УИП не перерезервируется."""
         uip = self._create_burned_uip()
         uip.change_status(PartyStatusChoices.RESERVED_LOCAL, source='test')
 
@@ -671,6 +698,7 @@ class ReReserveBurnedUipTests(TestCase):
                 'article': BURNED_ARTICLE,
                 'production_date': BURNED_DATE.isoformat(),
                 'mode': 'local',
+                'skip_cz': True,
             })
 
         self.assertTrue(result['is_error'])
