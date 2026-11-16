@@ -92,6 +92,11 @@ def _burn_warn_threshold_date():
     return timezone.now().date() - timedelta(days=BURN_DAYS - BURN_WARN_DAYS)
 
 
+def _burn_window_start_date():
+    """Дата резервирования, раньше которой УИП уже сгорел."""
+    return timezone.now().date() - timedelta(days=BURN_DAYS)
+
+
 # Порог срока годности (дней, включительно), для которого при снятии с резерва
 # при переполнении (>95%) код берётся из общего резерва завода (по GTIN),
 # а не из задания.
@@ -803,17 +808,26 @@ def check_uip_burn_and_notify() -> dict:
 
     УИП в резерве сгорает через BURN_DAYS (30) дней после резервирования.
     Если до сгорания осталось не более BURN_WARN_DAYS (7) дней — отправляется
-    email-предупреждение со списком таких УИП и оставшимися днями.
+    email-предупреждение со списком таких УИП и оставшимися днями. Уже
+    сгоревшие УИП (дата сгорания в прошлом) в письмо не попадают.
 
     :return: Сводка проверки.
     """
     threshold = _burn_warn_threshold_date()
+    window_start = _burn_window_start_date()
 
     at_risk = list(
         UIP.objects.filter(status__in=RESERVED_STATUSES)
         .filter(
-            Q(reservation_date__lte=threshold)
-            | Q(reservation_date__isnull=True, created_at__date__lte=threshold)
+            Q(
+                reservation_date__gte=window_start,
+                reservation_date__lte=threshold,
+            )
+            | Q(
+                reservation_date__isnull=True,
+                created_at__date__gte=window_start,
+                created_at__date__lte=threshold,
+            )
         )
         .select_related('product_sku__product')
         .order_by('reservation_date', 'created_at')
@@ -825,6 +839,9 @@ def check_uip_burn_and_notify() -> dict:
         reserve_date = _uip_effective_reservation_date(uip)
         burn_date = reserve_date + timedelta(days=BURN_DAYS)
         days_left = (burn_date - today).days
+        if days_left < 0:
+            # Страховка: уже сгоревший УИП не должен попадать в письмо.
+            continue
         records.append({
             'number': uip.number,
             'status': uip.get_status_display(),

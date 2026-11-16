@@ -147,12 +147,18 @@ class ReservedPartyViewSet(viewsets.ReadOnlyModelViewSet):
         if not lookup_value:
             raise NotFound("Не указан идентификатор")
 
-        # Проверяем, является ли строка валидным UUID
-        try:
-            uuid.UUID(lookup_value)
-            obj = queryset.filter(id=lookup_value).first()
-        except (ValueError, AttributeError):
-            obj = queryset.filter(number=lookup_value).first()
+        # Сначала ищем по номеру УИП: 32-значный номер из цифр является
+        # валидной строкой UUID, поэтому проверка формата UUID до поиска
+        # по номеру ломала карточки таких УИП (404).
+        obj = queryset.filter(number=lookup_value).first()
+
+        if obj is None:
+            try:
+                uuid.UUID(lookup_value)
+            except (ValueError, AttributeError):
+                pass
+            else:
+                obj = queryset.filter(id=lookup_value).first()
 
         if not obj:
             raise NotFound(f"УИП не найден: {lookup_value}")

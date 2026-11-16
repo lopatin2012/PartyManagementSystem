@@ -25,6 +25,7 @@ import requests
 
 from app_helper import external_http
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime, parse_date
 
@@ -71,16 +72,23 @@ ACTIVE_SYNC_STATUSES = [
     ProductionPartyStatusChoices.CLOSED,
 ]
 
-# Статусы задания, по которым синхронизируем КОДЫ маркировки.
-# Только «В работе» и «Закрыто» — по «Создано», «Завершено» и остальным
-# коды не тянем.
-CODE_SYNC_STATUSES = [
+# Статусы, для которых действует ограничение CODE_SYNC_WINDOW_DAYS.
+# «Завершено» обрабатывается отдельно: старые завершённые задания
+# добираются, если они ждут синхронизации или остались без кодов.
+WINDOWED_CODE_SYNC_STATUSES = [
     ProductionPartyStatusChoices.WORK,
     ProductionPartyStatusChoices.CLOSED,
 ]
 
+# Разовая досинхронизация завершённых заданий, которые были помечены
+# «Синхронизировано» без кодов (до исправления фильтра статусов).
+COMPLETED_BACKFILL_DAYS = 30
+# Максимум завершённых заданий за один прогон, чтобы не перегружать заводы.
+COMPLETED_SYNC_LIMIT = 300
+
 # Глубина окна синхронизации кодов по дате создания задания: сегодня и
-# предыдущие 3 дня. Более старые задания коды не тянут (иначе объём огромный).
+# предыдущие 3 дня. Более старые активные задания коды не тянут (иначе
+# объём огромный). На завершённые задания ограничение не распространяется.
 CODE_SYNC_WINDOW_DAYS = 3
 
 # Финальный статус задания — последняя синхронизация данных из него.
@@ -948,15 +956,76 @@ def sync_codes_for_party(party: ProductionParty, url: str = None, token: str = N
 # Периодический синхронизатор.
 # ==========================================
 
+def _get_parties_for_code_sync(since):
+    """
+    Задания, по которым нужно забрать коды в текущем прогоне.
+
+    - «В работе»/«Закрыто» — в пределах окна CODE_SYNC_WINDOW_DAYS;
+    - «Завершено» — если задание ждёт синхронизации (PENDING) или если
+      коды так и не были получены, а задание ещё в окне бэкфилла.
+    """
+    active = ProductionParty.objects.filter(
+        is_external=True,
+        status__in=WINDOWED_CODE_SYNC_STATUSES,
+        external_created_at__date__gte=since,
+    )
+
+    backfill_since = (
+        timezone.now().date() - timedelta(days=COMPLETED_BACKFILL_DAYS)
+    )
+    completed = ProductionParty.objects.filter(
+        is_external=True,
+        status=ProductionPartyStatusChoices.COMPLETED,
+    )
+
+    # Сначала задания, которые ждут синхронизации (свежие изменения).
+    # Не OR-им с проверкой кодов: LEFT JOIN по cis_codes размножает строки
+    # задания на все его коды и съедает лимит.
+    completed_ids = list(
+        completed
+        .filter(sync_status=ProductionPartySyncStatusChoices.PENDING)
+        .order_by('-created_at')
+        .values_list('id', flat=True)[:COMPLETED_SYNC_LIMIT]
+    )
+
+    remaining = COMPLETED_SYNC_LIMIT - len(completed_ids)
+    if remaining:
+        backfill_ids = (
+            completed
+            .filter(
+                cis_codes__isnull=True,
+                last_sync_at__isnull=True,
+                external_created_at__date__gte=backfill_since,
+            )
+            .exclude(id__in=completed_ids)
+            .order_by('-created_at')
+            .values_list('id', flat=True)[:remaining]
+        )
+        completed_ids.extend(backfill_ids)
+
+    party_ids = set(active.values_list('id', flat=True))
+    party_ids.update(completed_ids)
+
+    return (
+        ProductionParty.objects
+        .filter(id__in=party_ids)
+        .select_related(
+            'uip__product_sku__product',
+            'line__workshop__factory',
+        )
+    )
+
+
 def sync_all_external_tasks(progress_name: str = None) -> dict:
     """
     Периодическая синхронизация данных с внешними сервисами заводов.
 
     Задания приходят во внешний сервис через приёмник (api/tasks/receive/).
-    Здесь выполняется синхронизация кодов маркировки только по заданиям:
-    - в статусе «В работе» или «Закрыто» (CODE_SYNC_STATUSES);
-    - созданным не раньше, чем CODE_SYNC_WINDOW_DAYS дней назад
-      (по дате создания задания external_created_at), включая сегодняшние.
+    Здесь выполняется синхронизация кодов маркировки по заданиям:
+    - «В работе»/«Закрыто» — созданным не раньше, чем CODE_SYNC_WINDOW_DAYS
+      дней назад (по external_created_at), включая сегодняшние;
+    - «Завершено» — если задание ждёт синхронизации или коды не были
+      получены (разовый бэкфилл COMPLETED_BACKFILL_DAYS).
 
     Адрес сервера маркировки определяется по заводу партии (Factory.ip_address/port_address).
 
@@ -985,18 +1054,10 @@ def sync_all_external_tasks(progress_name: str = None) -> dict:
         sync_status=ProductionPartySyncStatusChoices.SYNCED,
     ).update(sync_status=ProductionPartySyncStatusChoices.SYNCED)
 
-    # Синхронизация кодов только по заданиям «В работе»/«Закрыто»,
-    # созданным за последние CODE_SYNC_WINDOW_DAYS дней (включая сегодня).
+    # Синхронизация кодов по активным заданиям в окне и по завершённым.
     today = timezone.now().date()
     since = today - timedelta(days=CODE_SYNC_WINDOW_DAYS)
-    parties = ProductionParty.objects.filter(
-        is_external=True,
-        status__in=CODE_SYNC_STATUSES,
-        external_created_at__date__gte=since,
-    ).select_related(
-        'uip__product_sku__product',
-        'line__workshop__factory',
-    )
+    parties = _get_parties_for_code_sync(since)
     total_parties = parties.count()
 
     for index, party in enumerate(parties, start=1):
@@ -1024,17 +1085,20 @@ def sync_all_external_tasks(progress_name: str = None) -> dict:
             summary['codes_created'] += result.get('synced_count', 0)
             summary['codes_updated'] += result.get('updated_count', 0)
 
-    # Задания, по которым коды не тянутся (статус не «В работе»/«Закрыто» или
-    # создано раньше окна CODE_SYNC_WINDOW_DAYS), не должны висеть в «Ожидают
+    # Задания, по которым коды не тянутся, не должны висеть в «Ожидают
     # синхронизации»: по ним синхронизировать нечего. Помечаем их
-    # «Синхронизировано» — если внешний сервис снова изменит задание (например,
-    # «Создано» → «В работе»), приёмник вернёт его в PENDING.
+    # «Синхронизировано» — если внешний сервис снова изменит задание,
+    # приёмник вернёт его в PENDING. Завершённые задания не помечаем:
+    # для них ещё возможен бэкфилл кодов.
     ProductionParty.objects.filter(
         is_external=True,
         sync_status=ProductionPartySyncStatusChoices.PENDING,
     ).exclude(
-        status__in=CODE_SYNC_STATUSES,
-        external_created_at__date__gte=since,
+        Q(
+            status__in=WINDOWED_CODE_SYNC_STATUSES,
+            external_created_at__date__gte=since,
+        )
+        | Q(status=ProductionPartyStatusChoices.COMPLETED)
     ).update(sync_status=ProductionPartySyncStatusChoices.SYNCED)
 
     parts = [
@@ -1047,6 +1111,89 @@ def sync_all_external_tasks(progress_name: str = None) -> dict:
     summary['message'] = 'Синхронизация завершена. ' + ', '.join(parts)
     summary['is_error'] = summary['errors'] > 0
 
+    logger.info(summary['message'])
+    return summary
+
+
+def backfill_completed_party_codes(
+        days: int = COMPLETED_BACKFILL_DAYS,
+        limit: int = 0,
+        dry_run: bool = False,
+) -> dict:
+    """
+    Досинхронизирует коды завершённых заданий, у которых их нет.
+
+    Нужно для заданий, которые до исправления фильтра были помечены
+    «Синхронизировано» без кодов. Берёт все завершённые задания без кодов
+    за указанный период (включая уже синхронизированные с пустым ответом).
+    По умолчанию смотрит последние COMPLETED_BACKFILL_DAYS дней; для более
+    старой истории период задаётся явно.
+
+    :param days: глубина истории по дате создания задания.
+    :param limit: максимум заданий за запуск (0 — без ограничения).
+    :param dry_run: только подсчёт кандидатов.
+    :return: сводка.
+    """
+    since = timezone.now().date() - timedelta(days=days)
+    parties = (
+        ProductionParty.objects
+        .filter(
+            is_external=True,
+            status=ProductionPartyStatusChoices.COMPLETED,
+            cis_codes__isnull=True,
+            external_created_at__date__gte=since,
+        )
+        .select_related(
+            'uip__product_sku__product',
+            'line__workshop__factory',
+        )
+        .order_by('-created_at')
+    )
+    total = parties.count()
+    if limit:
+        parties = parties[:limit]
+
+    summary = {
+        'is_error': False,
+        'dry_run': dry_run,
+        'total': total,
+        'processed': 0,
+        'codes_created': 0,
+        'codes_updated': 0,
+        'errors': 0,
+        'error_details': [],
+        'message': '',
+    }
+
+    if dry_run:
+        summary['message'] = (
+            f'Кандидатов на досинхронизацию: {total} (за {days} дн.).'
+        )
+        logger.info(summary['message'])
+        return summary
+
+    for party in parties:
+        result = sync_codes_for_party(party)
+        summary['processed'] += 1
+        if result.get('has_error'):
+            summary['errors'] += 1
+            factory = get_factory_for_party(party)
+            summary['error_details'].append({
+                'party': party.external_number_task or str(party.id),
+                'factory': factory.name if factory else None,
+                'message': result.get('message', 'ошибка синхронизации кодов'),
+            })
+        else:
+            summary['codes_created'] += result.get('synced_count', 0)
+            summary['codes_updated'] += result.get('updated_count', 0)
+
+    summary['message'] = (
+        f'Досинхронизация завершённых заданий: обработано '
+        f'{summary["processed"]} из {total}, кодов создано '
+        f'{summary["codes_created"]}, обновлено {summary["codes_updated"]}, '
+        f'ошибок {summary["errors"]}.'
+    )
+    summary['is_error'] = summary['errors'] > 0
     logger.info(summary['message'])
     return summary
 
