@@ -1,4 +1,5 @@
 from datetime import timedelta
+import os
 from unittest.mock import patch
 
 from django.core.cache import cache
@@ -11,6 +12,24 @@ from app_event.models import (
 from app_helper import (
     external_http, load_tracker, metrics, middleware, service_helper,
 )
+from config import settings as project_settings
+
+
+class ServiceVersionTests(SimpleTestCase):
+    """Версия для /health/: окружение важнее config/_version.py."""
+
+    def test_env_version_has_priority(self):
+        with patch.dict(os.environ, {'SERVICE_VERSION': 'v2.0.0-12-gabc'}):
+            self.assertEqual(
+                project_settings._service_version(), 'v2.0.0-12-gabc',
+            )
+
+    def test_empty_env_falls_back_to_file_version(self):
+        with patch.dict(os.environ, {'SERVICE_VERSION': ''}):
+            version = project_settings._service_version()
+
+        self.assertTrue(version)
+        self.assertNotEqual(version, '')
 
 
 class LoadStatsMessageTests(SimpleTestCase):

@@ -171,7 +171,7 @@ Pulls each factory's `product-list`, writes per-factory records into `ProductSKU
 ## Other gotchas
 
 - **Graceful shutdown; `CancelledError` in logs is normal.** `run_all.py` handles SIGTERM/SIGINT (terminates children, waits 15 s, then kills), uvicorn uses `--timeout-graceful-shutdown 10`, and `config/asgi.py` turns `asyncio.shield`'s «CancelledError exception in shielded future» into one INFO line. Many such lines mean restarts/reloads, not a slow endpoint.
-- **Versioning is tag-driven** (setuptools-scm → `config/_version.py`, gitignored). Commit subjects use `Feat:`/`Fix:`/`Docs:`; README maps fix→patch, feat→minor. Release: `git tag -a v2.0.0 -m "..."`.
+- **Versioning is tag-driven** (setuptools-scm → `config/_version.py`, gitignored). Commit subjects use `Feat:`/`Fix:`/`Docs:`; README maps fix→patch, feat→minor. Release: `git tag -a v2.0.0 -m "..."`. Deploy exports `SERVICE_VERSION` (`git describe --tags --always --dirty`) into the container, and `settings.py` prefers it over `config/_version.py`: the Docker volume mount `.:/app` exposes the host's stale generated file, so `/health/` would otherwise report an old version forever.
 - **`helper_info/`** (untracked) holds authoritative Chestny Znak specs: `True_API_GIS_MT.txt` (TrueAPI + National Catalog methods/rate limits — source for `rate_limit.py`) and `API_СУЗ_3.0.txt`. Consult them before changing CZ behavior instead of guessing from the web.
 - External marking-server URLs are per factory (`Factory.ip_address`/`port_address`), not `.env`.
 - Live events: use `log_event()` (`app_event/utils.py`: module/level/message/actor/metadata) instead of ad-hoc logging.

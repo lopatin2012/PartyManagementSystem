@@ -108,6 +108,12 @@ else
   warn "Пропускаю git pull (--no-pull)"
 fi
 
+# Версия для /health/. Перекрывает config/_version.py, который в Docker
+# виден с хоста через volume mount и может быть от предыдущего pip install.
+SERVICE_VERSION="$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD)"
+export SERVICE_VERSION
+log "Версия сервиса: ${SERVICE_VERSION}"
+
 # --- 2. Сборка образа ------------------------------------------------------
 if [[ "$NO_BUILD" -eq 0 ]]; then
   log "docker compose build ${SERVICE}"

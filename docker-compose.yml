@@ -10,6 +10,7 @@ services:
       - DB_USER=party
       - DB_PASSWORD=party
       - DB_HOST=db
+      - SERVICE_VERSION=${SERVICE_VERSION:-}
       - POSTGRES_DB=party
       - POSTGRES_USER=party
       - POSTGRES_PASSWORD=party
