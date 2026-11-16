@@ -284,7 +284,6 @@ class ReservedPartyListSerializer(serializers.ModelSerializer):
     """Сериализатор для списка зарезервированных партий."""
 
     party_number = serializers.CharField(source='number')
-    party_number_type = serializers.CharField(source='get_number_type_display')
     status = serializers.CharField(source='get_status_display')
 
     product = serializers.SerializerMethodField()
@@ -297,7 +296,6 @@ class ReservedPartyListSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'party_number',
-            'party_number_type',
             'status',
             'product',
             'workshop',
@@ -374,7 +372,6 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
     party_number = serializers.CharField(source='number')
     status = serializers.CharField(source='get_status_display')
     status_code = serializers.CharField(source='status')
-    number_type_display = serializers.CharField(source='get_number_type_display')
     description = serializers.CharField(read_only=True)
 
     # === Продукт ===
@@ -403,7 +400,6 @@ class ReservedPartyDetailSerializer(serializers.ModelSerializer):
             'party_number',
             'status',
             'status_code',
-            'number_type_display',
             'description',
             'product',
             'workshop',

@@ -2073,7 +2073,7 @@ class ReservePartiesDuplicatesTests(TestCase):
 
 
 class CodeSyncFilterTests(TestCase):
-    """Синхронизация кодов: только «В работе»/«Закрыто» и за последние 3 дня."""
+    """Синхронизация кодов: активные в окне и завершённые задания."""
 
     def setUp(self):
         from app_factory.models import Line, Workshop
@@ -2083,8 +2083,9 @@ class CodeSyncFilterTests(TestCase):
         )
         workshop = Workshop.objects.create(factory=self.factory, name='Цех')
         self.line = Line.objects.create(workshop=workshop, name='Линия')
+        self.packaging = _create_sku().product.packagings.first()
 
-    def _party(self, number, status, created):
+    def _party(self, number, status, created, **kwargs):
         return ProductionParty.objects.create(
             line=self.line,
             production_party=number,
@@ -2092,6 +2093,15 @@ class CodeSyncFilterTests(TestCase):
             is_external=True,
             status=status,
             external_created_at=created,
+            **kwargs,
+        )
+
+    def _code(self, party, code):
+        CISCode.objects.create(
+            production_party=party,
+            product_packaging=self.packaging,
+            code=code,
+            level=PackagingLevelChoices.UNIT,
         )
 
     def _synced_numbers(self):
@@ -2105,7 +2115,7 @@ class CodeSyncFilterTests(TestCase):
             code_sync.sync_all_external_tasks()
         return synced
 
-    def test_only_work_and_closed_recent(self):
+    def test_work_closed_and_completed_recent(self):
         now = timezone.now()
         self._party('work', ProductionPartyStatusChoices.WORK, now)
         self._party('closed', ProductionPartyStatusChoices.CLOSED, now)
@@ -2116,10 +2126,10 @@ class CodeSyncFilterTests(TestCase):
 
         self.assertIn('work', synced)
         self.assertIn('closed', synced)
+        self.assertIn('completed', synced)
         self.assertNotIn('created', synced)
-        self.assertNotIn('completed', synced)
 
-    def test_old_tasks_excluded(self):
+    def test_old_work_tasks_excluded(self):
         from datetime import timedelta as _td
         now = timezone.now()
         self._party('today', ProductionPartyStatusChoices.WORK, now)
@@ -2131,6 +2141,48 @@ class CodeSyncFilterTests(TestCase):
         self.assertIn('today', synced)
         self.assertIn('d3', synced)
         self.assertNotIn('d4', synced)
+
+    def test_old_completed_pending_included(self):
+        """Завершённое задание в «Ожидают» добирается без окна 3 дня."""
+        from datetime import timedelta as _td
+        old = timezone.now() - _td(days=10)
+        self._party(
+            'completed-pending', ProductionPartyStatusChoices.COMPLETED, old,
+            sync_status=ProductionPartySyncStatusChoices.PENDING,
+        )
+
+        self.assertIn('completed-pending', self._synced_numbers())
+
+    def test_old_completed_without_codes_backfilled(self):
+        """Ранее «синхронизированное» завершённое задание без кодов добирается."""
+        from datetime import timedelta as _td
+        old = timezone.now() - _td(days=10)
+        self._party(
+            'no-codes', ProductionPartyStatusChoices.COMPLETED, old,
+            sync_status=ProductionPartySyncStatusChoices.SYNCED,
+        )
+        self._party(
+            'empty-synced', ProductionPartyStatusChoices.COMPLETED, old,
+            sync_status=ProductionPartySyncStatusChoices.SYNCED,
+            last_sync_at=timezone.now(),
+        )
+        with_codes = self._party(
+            'with-codes', ProductionPartyStatusChoices.COMPLETED, old,
+            sync_status=ProductionPartySyncStatusChoices.SYNCED,
+        )
+        self._code(with_codes, '010460175102601921CODE0001')
+        too_old = timezone.now() - _td(days=40)
+        self._party(
+            'too-old', ProductionPartyStatusChoices.COMPLETED, too_old,
+            sync_status=ProductionPartySyncStatusChoices.SYNCED,
+        )
+
+        synced = self._synced_numbers()
+
+        self.assertIn('no-codes', synced)
+        self.assertNotIn('empty-synced', synced)
+        self.assertNotIn('with-codes', synced)
+        self.assertNotIn('too-old', synced)
 
     def test_ineligible_tasks_not_left_pending(self):
         """Необрабатываемые задания не остаются в «Ожидают синхронизации»."""
@@ -2147,17 +2199,18 @@ class CodeSyncFilterTests(TestCase):
 
         self._synced_numbers()
 
-        for party in (created, completed, old):
+        for party in (created, old):
             party.refresh_from_db()
             self.assertEqual(
                 party.sync_status, ProductionPartySyncStatusChoices.SYNCED,
             )
-        # Обрабатываемое задание остаётся PENDING (в тесте sync замокан и
-        # статус не проставляет).
-        work.refresh_from_db()
-        self.assertEqual(
-            work.sync_status, ProductionPartySyncStatusChoices.PENDING,
-        )
+        # Обрабатываемые задания остаются PENDING до реальной синхронизации
+        # (в тесте sync замокан и статус не проставляет).
+        for party in (work, completed):
+            party.refresh_from_db()
+            self.assertEqual(
+                party.sync_status, ProductionPartySyncStatusChoices.PENDING,
+            )
 
     def test_receive_maps_datetime_create(self):
         code_sync.receive_external_task({
@@ -2171,6 +2224,87 @@ class CodeSyncFilterTests(TestCase):
         self.assertEqual(party.external_created_at.year, 2026)
         self.assertEqual(party.external_created_at.month, 10)
         self.assertEqual(party.external_created_at.day, 1)
+
+
+class BackfillCompletedPartyCodesTests(TestCase):
+    """Разовая досинхронизация кодов завершённых заданий."""
+
+    def _party(self, number, created, sync_status, last_sync_at=None):
+        return ProductionParty.objects.create(
+            production_party=number,
+            external_number_task=number,
+            is_external=True,
+            status=ProductionPartyStatusChoices.COMPLETED,
+            external_created_at=created,
+            sync_status=sync_status,
+            last_sync_at=last_sync_at,
+        )
+
+    def test_dry_run_counts_candidates_without_requests(self):
+        self._party(
+            'candidate', timezone.now(),
+            ProductionPartySyncStatusChoices.SYNCED,
+        )
+
+        with patch.object(code_sync, 'sync_codes_for_party') as sync:
+            result = code_sync.backfill_completed_party_codes(dry_run=True)
+
+        self.assertTrue(result['dry_run'])
+        self.assertEqual(result['total'], 1)
+        sync.assert_not_called()
+
+    def test_processes_candidates_and_reports_codes(self):
+        self._party(
+            'candidate', timezone.now(),
+            ProductionPartySyncStatusChoices.SYNCED,
+        )
+
+        with patch.object(
+            code_sync, 'sync_codes_for_party',
+            return_value={
+                'has_error': False, 'synced_count': 5, 'updated_count': 2,
+            },
+        ) as sync:
+            result = code_sync.backfill_completed_party_codes()
+
+        sync.assert_called_once()
+        self.assertEqual(result['processed'], 1)
+        self.assertEqual(result['codes_created'], 5)
+        self.assertEqual(result['codes_updated'], 2)
+        self.assertFalse(result['is_error'])
+
+    def test_limit_and_error_reporting(self):
+        now = timezone.now()
+        for index in range(3):
+            self._party(
+                f'candidate-{index}', now,
+                ProductionPartySyncStatusChoices.SYNCED,
+            )
+
+        with patch.object(
+            code_sync, 'sync_codes_for_party',
+            return_value={'has_error': True, 'message': 'нет связи'},
+        ):
+            result = code_sync.backfill_completed_party_codes(limit=2)
+
+        self.assertEqual(result['total'], 3)
+        self.assertEqual(result['processed'], 2)
+        self.assertEqual(result['errors'], 2)
+        self.assertTrue(result['is_error'])
+        self.assertIn('нет связи', result['error_details'][0]['message'])
+
+    def test_command_dry_run(self):
+        self._party(
+            'candidate', timezone.now(),
+            ProductionPartySyncStatusChoices.SYNCED,
+        )
+        out = StringIO()
+
+        call_command(
+            'sync_completed_party_codes', '--dry-run', stdout=out,
+        )
+
+        self.assertIn('Кандидатов на досинхронизацию: 1', out.getvalue())
 
 
 
@@ -2934,6 +3068,130 @@ class UipBurnEmailTests(TestCase):
         burn = reserve + timedelta(days=30)
         self.assertIn(f'{reserve:%d.%m.%Y}', html)
         self.assertIn(f'{burn:%d.%m.%Y}', html)
+
+
+class UipBurnWindowTests(TestCase):
+    """В письмо о сгорании попадают только предстоящие сгорания."""
+
+    def setUp(self):
+        product = Product.objects.create(
+            group=ProductGroupChoices.MILK,
+            name='Напиток кисломолочный пастеризованный',
+            shelf_life_in_days=14,
+            item_condition=StateConditionChoices.READY_ORDER_KM,
+            card_status=CardStateChoices.PUBLISHED,
+        )
+        ProductPackaging.objects.create(
+            product=product,
+            level=PackagingLevelChoices.UNIT,
+            gtin='04601751028945',
+            quantity_inside=1,
+        )
+        self.sku = ProductSKU.objects.create(product=product, article='13427')
+
+    def _uip(self, number, days_ago):
+        return UIP.objects.create(
+            product_sku=self.sku,
+            number=number,
+            status=PartyStatusChoices.RESERVED_LOCAL,
+            reservation_date=timezone.now().date() - timedelta(days=days_ago),
+        )
+
+    def test_burned_uip_is_not_reported(self):
+        """УИП с датой сгорания в прошлом в письмо не попадает."""
+        from app_cz.services import reserve_monitor
+
+        self._uip('04601751028945260923134270000000', days_ago=31)
+
+        with patch.object(
+            reserve_monitor, '_notify', return_value={'sent': True},
+        ) as notify:
+            result = reserve_monitor.check_uip_burn_and_notify()
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['at_risk_count'], 0)
+        notify.assert_not_called()
+
+    def test_uip_burning_today_is_reported(self):
+        """На границе окна (сгорание сегодня) остаток равен нулю."""
+        from app_cz.services import reserve_monitor
+
+        self._uip('04601751028945260923134270000001', days_ago=30)
+
+        with patch.object(
+            reserve_monitor, '_notify', return_value={'sent': True},
+        ) as notify:
+            result = reserve_monitor.check_uip_burn_and_notify()
+
+        self.assertEqual(result['at_risk_count'], 1)
+        _subject, body, _recipients = notify.call_args.args
+        self.assertIn('осталось: 0 дн.', body)
+
+    def test_burned_uip_without_reservation_date_is_not_reported(self):
+        """Без даты резервирования окно считается от даты создания."""
+        from app_cz.services import reserve_monitor
+
+        uip = self._uip('04601751028945260923134270000002', days_ago=0)
+        uip.reservation_date = None
+        uip.save(update_fields=['reservation_date'])
+        UIP.objects.filter(pk=uip.pk).update(
+            created_at=timezone.now() - timedelta(days=31),
+        )
+
+        with patch.object(
+            reserve_monitor, '_notify', return_value={'sent': True},
+        ) as notify:
+            result = reserve_monitor.check_uip_burn_and_notify()
+
+        self.assertEqual(result['at_risk_count'], 0)
+        notify.assert_not_called()
+
+
+class ReservedPartyApiLookupTests(TestCase):
+    """Публичный API УИП: 32-значный номер не должен приниматься за UUID."""
+
+    def setUp(self):
+        self.sku = _create_sku()
+        self.number = '04601751026019260101500320000000'
+        self.uip = UIP.objects.create(
+            product_sku=self.sku,
+            number=self.number,
+            status=PartyStatusChoices.RESERVED_LOCAL,
+            production_date=date(2026, 1, 1),
+            reservation_date=date(2026, 1, 1),
+        )
+
+    def test_list_returns_uip(self):
+        response = self.client.get(
+            '/cz/api/v1/reserved_parties/', {'search': self.number},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['count'], 1)
+
+    def test_detail_by_number(self):
+        response = self.client.get(
+            f'/cz/api/v1/reserved_parties/{self.number}/'
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['party_number'], self.number)
+
+    def test_detail_by_uuid(self):
+        response = self.client.get(
+            f'/cz/api/v1/reserved_parties/{self.uip.id}/'
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['party_number'], self.number)
+
+    def test_codes_by_number(self):
+        response = self.client.get(
+            f'/cz/api/v1/reserved_parties/{self.number}/codes/'
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['party_number'], self.number)
 
 
 class RefreshSuzTokenRetryTests(TestCase):
