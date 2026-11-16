@@ -324,6 +324,10 @@ curl "http://<host>:<port>/uip/api/v1/search/?q=04601751026019260101500320000000
 - Новая функциональность (`feat`): `1.0.0` → `1.1.0`
 - Поднятие версии тегом: `git tag -a v2.0.0 -m "Release version 2.0.0"`
 
+При деплое `deploy.sh` / `deploy.ps1` передают в контейнер `SERVICE_VERSION`
+(`git describe --tags --always --dirty`). `/health/` показывает её, а не
+устаревший `config/_version.py`, который виден через volume mount.
+
 ## Прочее
 
 - Админ-панель Django: `/admin/`

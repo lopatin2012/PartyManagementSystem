@@ -117,6 +117,17 @@ if (-not $NoPull) {
     Write-Warn 'Пропускаю git pull (-NoPull)'
 }
 
+# Версия для /health/. Перекрывает config/_version.py, который в Docker
+# виден с хоста через volume mount и может быть от предыдущего pip install.
+$serviceVersion = (& git describe --tags --always --dirty 2>$null)
+if ([string]::IsNullOrWhiteSpace($serviceVersion)) {
+    $serviceVersion = (& git rev-parse --short HEAD).Trim()
+} else {
+    $serviceVersion = $serviceVersion.Trim()
+}
+$env:SERVICE_VERSION = $serviceVersion
+Write-Log "Версия сервиса: $serviceVersion"
+
 # --- 2. Сборка образа ------------------------------------------------------
 if (-not $NoBuild) {
     Write-Log "docker compose build $Service"

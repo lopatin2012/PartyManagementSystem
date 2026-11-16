@@ -18,18 +18,35 @@ import os
 from dotenv import load_dotenv
 import psycopg
 
-try:
-    from ._version import version as SERVICE_VERSION
-except ImportError:
-    SERVICE_VERSION = '0.0.0-dev'
-
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-# Импорт переменных.
+# Импорт переменных. Загружаем .env до чтения SERVICE_VERSION, чтобы
+# переменная из .env тоже могла переопределить версию.
 dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
 if os.path.exists(dotenv_path):
     load_dotenv(dotenv_path=dotenv_path)
+
+
+def _service_version() -> str:
+    """
+    Версия сервиса для /health/.
+
+    SERVICE_VERSION из окружения важнее config/_version.py: в Docker
+    каталог проекта примонтирован с хоста, и сгенерированный файл версии
+    может остаться от предыдущего запуска pip install -e .
+    """
+    env_version = os.getenv('SERVICE_VERSION', '').strip()
+    if env_version:
+        return env_version
+    try:
+        from ._version import version
+    except ImportError:
+        return '0.0.0-dev'
+    return version
+
+
+SERVICE_VERSION = _service_version()
+
+# Build paths inside the project like this: BASE_DIR / 'subdir'.
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
