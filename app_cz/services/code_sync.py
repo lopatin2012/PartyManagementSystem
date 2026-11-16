@@ -675,6 +675,40 @@ def _upsert_codes(party: ProductionParty, default_packaging: ProductPackaging, c
     return {'created': created_count, 'updated': updated_count, 'skipped': skipped_count}
 
 
+def _handle_codes_not_found(party: ProductionParty, api_url: str) -> dict:
+    """
+    404 от сервера завода при запросе кодов задания.
+
+    Для завершённого задания это нормально: завод уже не хранит его коды.
+    Помечаем задание «Синхронизировано», чтобы оно не висело в очереди и не
+    роняло всю задачу синхронизации. Для активного задания 404 — ошибка.
+    """
+    if party.status == ProductionPartyStatusChoices.COMPLETED:
+        message = (
+            'Завершённое задание: сервер завода не хранит коды (404). '
+            'Синхронизация пропущена.'
+        )
+        _mark_party_sync(party, True, message)
+        logger.warning(
+            f'{message} ({api_url}, task_id={party.external_number_task})'
+        )
+        return {
+            'has_error': False,
+            'not_found': True,
+            'skipped_count': 0,
+            'message': message,
+        }
+
+    message = f'Задание не найдено на сервере завода (404): {api_url}'
+    _mark_party_sync(party, False, message)
+    logger.error(f'{message} (task_id={party.external_number_task})')
+    return {
+        'has_error': True,
+        'url': api_url,
+        'message': message,
+    }
+
+
 def sync_codes_task(
         url: str,
         task_id: str,
@@ -766,6 +800,8 @@ def sync_codes_task(
     try:
         logger.info(f'Запрос кодов из внешнего сервиса: task_id={task_id}')
         response = external_http.get('factory', api_url, params=params, headers=headers, timeout=30)
+        if response.status_code == 404:
+            return _handle_codes_not_found(party, api_url)
         response.raise_for_status()
         payload = response.json()
     except requests.exceptions.RequestException as e:
@@ -1039,6 +1075,7 @@ def sync_all_external_tasks(progress_name: str = None) -> dict:
         'parties_synced': 0,
         'codes_created': 0,
         'codes_updated': 0,
+        'skipped_not_found': 0,
         'errors': 0,
         'error_details': [],
         'message': '',
@@ -1081,6 +1118,8 @@ def sync_all_external_tasks(progress_name: str = None) -> dict:
                 'url': result.get('url') or build_external_service_url(party),
                 'message': result.get('message', 'ошибка синхронизации кодов'),
             })
+        elif result.get('not_found'):
+            summary['skipped_not_found'] += 1
         else:
             summary['codes_created'] += result.get('synced_count', 0)
             summary['codes_updated'] += result.get('updated_count', 0)
@@ -1106,6 +1145,11 @@ def sync_all_external_tasks(progress_name: str = None) -> dict:
         f'кодов создано: {summary["codes_created"]}',
         f'кодов обновлено: {summary["codes_updated"]}',
     ]
+    if summary['skipped_not_found']:
+        parts.append(
+            f'завершённых заданий без кодов на заводе: '
+            f'{summary["skipped_not_found"]}'
+        )
     if summary['errors']:
         parts.append(f'⚠ ошибок: {summary["errors"]}')
     summary['message'] = 'Синхронизация завершена. ' + ', '.join(parts)
@@ -1160,6 +1204,7 @@ def backfill_completed_party_codes(
         'processed': 0,
         'codes_created': 0,
         'codes_updated': 0,
+        'skipped_not_found': 0,
         'errors': 0,
         'error_details': [],
         'message': '',
@@ -1183,6 +1228,8 @@ def backfill_completed_party_codes(
                 'factory': factory.name if factory else None,
                 'message': result.get('message', 'ошибка синхронизации кодов'),
             })
+        elif result.get('not_found'):
+            summary['skipped_not_found'] += 1
         else:
             summary['codes_created'] += result.get('synced_count', 0)
             summary['codes_updated'] += result.get('updated_count', 0)
@@ -1191,6 +1238,7 @@ def backfill_completed_party_codes(
         f'Досинхронизация завершённых заданий: обработано '
         f'{summary["processed"]} из {total}, кодов создано '
         f'{summary["codes_created"]}, обновлено {summary["codes_updated"]}, '
+        f'без кодов на заводе {summary["skipped_not_found"]}, '
         f'ошибок {summary["errors"]}.'
     )
     summary['is_error'] = summary['errors'] > 0

@@ -270,6 +270,97 @@ class SyncCodesErrorDetailsTests(TestCase):
         self.assertNotIn('потребительская упаковка', self.party.last_sync_message or '')
 
 
+class CompletedTaskCodesNotFoundTests(TestCase):
+    """404 по кодам завершённого задания не роняет синхронизацию."""
+
+    def setUp(self):
+        from app_factory.models import Line, Workshop
+
+        self.factory = Factory.objects.create(
+            name='Завод 404', ip_address='127.0.0.1', port_address=8011,
+        )
+        workshop = Workshop.objects.create(factory=self.factory, name='Цех')
+        self.line = Line.objects.create(workshop=workshop, name='Линия')
+        self.sku = _create_sku()
+        self.uip = UIP.objects.create(
+            product_sku=self.sku,
+            number='04601751026019260101500320000000',
+            status=PartyStatusChoices.RESERVED_LOCAL,
+        )
+        self.party = ProductionParty.objects.create(
+            uip=self.uip,
+            line=self.line,
+            production_party='1',
+            external_number_task='task-404',
+            is_external=True,
+            status=ProductionPartyStatusChoices.COMPLETED,
+            sync_status=ProductionPartySyncStatusChoices.PENDING,
+            external_created_at=timezone.now(),
+        )
+
+    def _call(self):
+        response = Mock()
+        response.status_code = 404
+        with patch(
+            'app_cz.services.code_sync.external_http.get',
+            return_value=response,
+        ):
+            return code_sync.sync_codes_task(
+                url='http://127.0.0.1:8011',
+                task_id='task-404',
+                production_party_id=str(self.party.id),
+            )
+
+    def test_completed_task_404_marks_synced(self):
+        result = self._call()
+
+        self.assertFalse(result['has_error'])
+        self.assertTrue(result['not_found'])
+        self.party.refresh_from_db()
+        self.assertEqual(
+            self.party.sync_status, ProductionPartySyncStatusChoices.SYNCED,
+        )
+        self.assertIn('404', self.party.last_sync_message)
+
+    def test_active_task_404_is_error(self):
+        self.party.status = ProductionPartyStatusChoices.WORK
+        self.party.save(update_fields=['status'])
+
+        result = self._call()
+
+        self.assertTrue(result['has_error'])
+        self.party.refresh_from_db()
+        self.assertEqual(
+            self.party.sync_status, ProductionPartySyncStatusChoices.ERROR,
+        )
+
+    def test_sync_all_does_not_fail_on_404(self):
+        with patch.object(
+            code_sync, 'sync_codes_for_party',
+            return_value={
+                'has_error': False, 'not_found': True, 'message': '404',
+            },
+        ):
+            result = code_sync.sync_all_external_tasks()
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['errors'], 0)
+        self.assertEqual(result['skipped_not_found'], 1)
+
+    def test_backfill_does_not_fail_on_404(self):
+        with patch.object(
+            code_sync, 'sync_codes_for_party',
+            return_value={
+                'has_error': False, 'not_found': True, 'message': '404',
+            },
+        ):
+            result = code_sync.backfill_completed_party_codes()
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['errors'], 0)
+        self.assertEqual(result['skipped_not_found'], 1)
+
+
 class GetFactoryChangedSinceTests(TestCase):
     """get_factory_changed_since: сохранённая метка имеет приоритет."""
 
