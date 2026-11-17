@@ -15,7 +15,7 @@ from django.db.models import ObjectDoesNotExist, Prefetch
 from django.db import transaction
 from django.utils.dateparse import parse_datetime, parse_date
 
-from app_cz.models import CISCode, SUZAccount
+from app_cz.models import CISCode, SUZAccount, ProductionCodeStatusChoices
 from app_cz.suz_config import SUZ
 from app_cz.enums import TypeProduct, SHORT_SHELF_LIFE_RESERVE_FROM
 from app_cz.services.suz_client import get_true_api_session_token
@@ -1423,20 +1423,39 @@ def _collect_uip_codes(uips: list) -> dict:
     """
     Собирает по одному коду DataMatrix из заданий каждого УИП.
 
-    Статус кода со стороны завода/1С не обновляется, поэтому фактическую
-    нанесённость проверяем в ЧЗ (пакетно, см. `_register_uips_with_applied_codes`).
+    Приоритет — коды, которые завод пометил как нанесённые (APPLIED): у
+    больших партий первый по id код может быть ещё «напечатанным», и
+    проверка ЧЗ по нему не подтверждает регистрацию.
 
-    :return: {uip_id: code} — по одному коду на УИП (первый найденный).
+    :return: {uip_id: code} — по одному коду на УИП.
     """
     codes_by_uip = {}
-    for code_row in (
+    applied_rows = (
         CISCode.objects
-        .filter(production_party__uip__in=uips)
-        .values_list('production_party__uip_id', 'code')
+        .filter(
+            production_party__uip__in=uips,
+            production_status=ProductionCodeStatusChoices.APPLIED,
+        )
         .order_by('production_party__uip_id', 'id')
-    ):
-        uip_id, code = code_row
-        codes_by_uip.setdefault(uip_id, code)
+        .distinct('production_party__uip_id')
+        .values_list('production_party__uip_id', 'code')
+    )
+    for uip_id, code in applied_rows:
+        # Ключ — строка: id из БД (uuid.UUID) и id только что созданного
+        # объекта (uuid_utils.UUID) не равны друг другу, хотя строка одна.
+        codes_by_uip.setdefault(str(uip_id), code)
+
+    missing = [uip for uip in uips if str(uip.id) not in codes_by_uip]
+    if missing:
+        fallback_rows = (
+            CISCode.objects
+            .filter(production_party__uip__in=missing)
+            .order_by('production_party__uip_id', 'id')
+            .distinct('production_party__uip_id')
+            .values_list('production_party__uip_id', 'code')
+        )
+        for uip_id, code in fallback_rows:
+            codes_by_uip.setdefault(str(uip_id), code)
     return codes_by_uip
 
 
@@ -1461,7 +1480,7 @@ def _register_uips_with_applied_codes(uips: list) -> tuple[list, list]:
         return [], list(uips)
 
     # Группируем коды по товарной группе (pg — параметр /cises/info).
-    uip_by_id = {uip.id: uip for uip in uips}
+    uip_by_id = {str(uip.id): uip for uip in uips}
     codes_by_group: dict = {}
     for uip_id, code in codes_by_uip.items():
         uip = uip_by_id.get(uip_id)
@@ -1483,7 +1502,7 @@ def _register_uips_with_applied_codes(uips: list) -> tuple[list, list]:
     registered = []
     not_registered = []
     for uip in uips:
-        code = codes_by_uip.get(uip.id)
+        code = codes_by_uip.get(str(uip.id))
         if code in applied_codes:
             registered.append(uip)
         else:

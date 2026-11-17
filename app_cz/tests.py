@@ -41,7 +41,9 @@ from app_uip.models import (
     ProductionPartySyncStatusChoices,
     UIP,
 )
-from app_cz.models import CISCode, SUZAccount
+from app_cz.models import (
+    CISCode, SUZAccount, ProductionCodeStatusChoices,
+)
 from app_cz.services import code_sync
 from app_cz.services import desync_resolution
 from app_cz.services import party_service
@@ -680,7 +682,8 @@ class ResolveDesyncUipsTests(TestCase):
             reservation_date=reservation_date,
         )
 
-    def _party_with_code(self, uip, code, index='1'):
+    def _party_with_code(self, uip, code, index='1',
+                         production_status=ProductionCodeStatusChoices.FREE):
         party = ProductionParty.objects.create(
             uip=uip,
             production_party=index,
@@ -691,6 +694,7 @@ class ResolveDesyncUipsTests(TestCase):
             product_packaging=self.packaging,
             code=code,
             level=PackagingLevelChoices.UNIT,
+            production_status=production_status,
         )
         return party
 
@@ -757,6 +761,69 @@ class ResolveDesyncUipsTests(TestCase):
         self.assertEqual(result['registered'], 1)
         uip.refresh_from_db()
         self.assertEqual(uip.status, PartyStatusChoices.REGISTERED)
+
+    def test_local_codes_prefers_applied(self):
+        """Для проверки берутся нанесённые коды, а не первые напечатанные."""
+        from app_cz.services.desync_resolution import _local_codes
+
+        uip = self._uip('04601751026019260101500320000000')
+        self._party_with_code(
+            uip, '010460175102601921PENDING1', index='1',
+        )
+        applied_code = '010460175102601921APPLIED1'
+        self._party_with_code(
+            uip, applied_code, index='2',
+            production_status=ProductionCodeStatusChoices.APPLIED,
+        )
+
+        self.assertEqual(_local_codes(uip), [applied_code])
+
+    def test_collect_uip_codes_prefers_applied(self):
+        """Один код для sync_parties тоже берётся нанесённый."""
+        from app_cz.services.party_service import _collect_uip_codes
+
+        uip = self._uip('04601751026019260101500320000000')
+        self._party_with_code(
+            uip, '010460175102601921PENDING1', index='1',
+        )
+        applied_code = '010460175102601921APPLIED1'
+        self._party_with_code(
+            uip, applied_code, index='2',
+            production_status=ProductionCodeStatusChoices.APPLIED,
+        )
+
+        # Ключ — строка: id из БД и id только что созданного объекта имеют
+        # разные UUID-классы (uuid.UUID и uuid_utils.UUID).
+        self.assertEqual(
+            _collect_uip_codes([uip])[str(uip.id)], applied_code,
+        )
+
+    def test_register_with_applied_code_uses_db_uuid_type(self):
+        """Регистрация по коду работает и для только что созданного УИП."""
+        from app_cz.services.party_service import (
+            _register_uips_with_applied_codes,
+        )
+
+        uip = self._uip('04601751026019260101500320000000')
+        self._party_with_code(
+            uip, '010460175102601921PENDING1', index='1',
+        )
+        applied_code = '010460175102601921APPLIED1'
+        self._party_with_code(
+            uip, applied_code, index='2',
+            production_status=ProductionCodeStatusChoices.APPLIED,
+        )
+
+        with patch(
+            'app_cz.services.code_status.get_cises_statuses',
+            return_value={applied_code: 'APPLIED'},
+        ):
+            registered, not_registered = _register_uips_with_applied_codes(
+                [uip],
+            )
+
+        self.assertEqual(registered, [uip])
+        self.assertEqual(not_registered, [])
 
     def test_pending_code_keeps_desync(self):
         uip = self._uip('04601751026019260101500320000000')
