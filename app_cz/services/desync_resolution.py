@@ -26,7 +26,7 @@
 
 import logging
 
-from app_cz.models import CISCode, CISCodesStatusChoices
+from app_cz.models import CISCode, CISCodesStatusChoices, ProductionCodeStatusChoices
 from app_uip.models import UIP, PartyStatusChoices, ProductionParty
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,25 @@ RESERVED_NOTE = (
 
 
 def _local_codes(uip: UIP) -> list:
-    """До MAX_CODES_PER_UIP локальных кодов УИП (старейшие первыми)."""
+    """
+    До MAX_CODES_PER_UIP локальных кодов УИП.
+
+    Сначала берём коды, которые завод пометил как нанесённые (APPLIED):
+    у больших партий первые по id коды часто ещё «напечатаны», и проверка
+    ЧЗ только по ним не подтверждает регистрацию.
+    """
+    applied = list(
+        CISCode.objects
+        .filter(
+            production_party__uip=uip,
+            production_status=ProductionCodeStatusChoices.APPLIED,
+        )
+        .order_by('id')
+        .values_list('code', flat=True)[:MAX_CODES_PER_UIP]
+    )
+    if applied:
+        return applied
+
     return list(
         CISCode.objects
         .filter(production_party__uip=uip)
