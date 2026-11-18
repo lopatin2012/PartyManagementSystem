@@ -7,9 +7,8 @@ Django 6.0.7 app (Python 3.14, PostgreSQL, ASGI/uvicorn) for production batches 
 ## Quick commands
 
 ```bash
-# Windows: dependencies exist only in .venv (system python has no Django)
-.venv\Scripts\Activate.ps1          # or call .venv\Scripts\python.exe
-
+# Python 3.14. This checkout has no .venv; `python` already imports Django.
+# If `import django` fails, install deps first (requirements.txt is UTF-16LE — see Dockerfile/CI).
 python run_all.py                   # web + scheduler + worker in one terminal
 uvicorn config.asgi:application --host 0.0.0.0 --port 8888
 python manage.py run_scheduler      # --once = enqueue every task once and exit
@@ -158,7 +157,7 @@ Pulls each factory's `product-list`, writes per-factory records into `ProductSKU
 
 - **CI** (`.github/workflows/ci.yml`) runs on every push/PR with a PostgreSQL 15 service: iconv-converts the UTF-16 `requirements.txt`, strips `pywin32`/`git+`, installs deps, then `manage.py check`, non-blocking `makemigrations --check --dry-run`, `makemigrations`, `migrate` on **both** DBs and `collectstatic`. It does **not** run tests.
 - **Deploy** (`.github/workflows/deploy.yml`) runs on push to `main` or manually on a self-hosted runner (labels `linux, party-management`), using repo variable `DEPLOY_PATH`; it invokes `deploy.sh <branch>`.
-- `deploy.sh`/`deploy.ps1`: `git pull --ff-only` → `docker compose build` → wait for DB healthy → gate `check`/`makemigrations`/`collectstatic` (aborts on failure) → `migrate` both DBs → `docker compose up -d --build` → post-check. `--check-only`/`-CheckOnly` stops after the gate.
+- `deploy.sh`/`deploy.ps1`: `git pull --ff-only` → `docker compose build` → wait for DB healthy → gate `check`/`makemigrations`/`collectstatic` (aborts on failure) → `migrate` both DBs → `docker compose up -d --build` → post-check. `--check-only`/`-CheckOnly` stops after the gate; `--no-pull`/`--no-build` skip those steps. `SERVICE`/`DB_SERVICE`/`HEALTH_TIMEOUT` are overridable via env.
 - Docker is available but not the primary dev flow: `docker-compose.yml` has only `web` + `db`; the container CMD runs `makemigrations` → `migrate` (both DBs) → `collectstatic` → `exec python run_all.py` (so web+scheduler+worker live in `web`). It does **not** run `reset_nk_sync`. The Dockerfile patches `DB_HOST` into `settings.py` with `sed` and strips `pywin32`/`git+` from the requirements — don't mirror those hacks locally.
 
 ## Changelog (`docs/CHANGELOG.md`)
@@ -173,9 +172,9 @@ Pulls each factory's `product-list`, writes per-factory records into `ProductSKU
 
 - **Graceful shutdown; `CancelledError` in logs is normal.** `run_all.py` handles SIGTERM/SIGINT (terminates children, waits 15 s, then kills), uvicorn uses `--timeout-graceful-shutdown 10`, and `config/asgi.py` turns `asyncio.shield`'s «CancelledError exception in shielded future» into one INFO line. Many such lines mean restarts/reloads, not a slow endpoint.
 - **Versioning is tag-driven** (setuptools-scm → `config/_version.py`, gitignored). Commit subjects use `Feat:`/`Fix:`/`Docs:`; README maps fix→patch, feat→minor. Release: `git tag -a v2.0.0 -m "..."`. Deploy exports `SERVICE_VERSION` (`git describe --tags --always --dirty`) into the container, and `settings.py` prefers it over `config/_version.py`: the Docker volume mount `.:/app` exposes the host's stale generated file, so `/health/` would otherwise report an old version forever.
-- **`helper_info/`** (untracked) holds authoritative Chestny Znak specs: `True_API_GIS_MT.txt` (TrueAPI + National Catalog methods/rate limits — source for `rate_limit.py`) and `API_СУЗ_3.0.txt`. Consult them before changing CZ behavior instead of guessing from the web.
+- **Chestny Znak specs** (untracked `helper_info/`, if present on the machine): `True_API_GIS_MT.txt` (TrueAPI + National Catalog methods/rate limits — source for `rate_limit.py`) and `API_СУЗ_3.0.txt`. Consult them before changing CZ behavior instead of guessing from the web.
 - External marking-server URLs are per factory (`Factory.ip_address`/`port_address`), not `.env`.
 - Live events: use `log_event()` (`app_event/utils.py`: module/level/message/actor/metadata) instead of ad-hoc logging.
-- Management commands: `app_cz`: `archive_old_codes`, `reset_nk_sync`, `relink_uip_skus`, `sync_completed_party_codes`; `app_factory`: `sync_molvest_reference`, `check_molvest_products`; `app_event`: `cleanup_logs` (отчёт по ретеншну, `--cleanup` — очистка); `app_scheduler`: `run_scheduler`, `run_tasks_worker`.
+- Management commands: `app_cz`: `archive_old_codes`, `reset_nk_sync`, `relink_uip_skus`, `sync_completed_party_codes`; `app_uip`: `reserve_required_drafts`, `restore_pg_failed_drafts`; `app_factory`: `sync_molvest_reference`, `check_molvest_products`; `app_event`: `cleanup_logs` (отчёт по ретеншну, `--cleanup` — очистка); `app_scheduler`: `run_scheduler`, `run_tasks_worker`.
 - **`requirements.txt` is UTF-16LE** (BOM `FF FE`), so read/edit tools see binary. Keep the encoding (iconv in Docker/CI) and note the self-referential `-e git+…` line that CI/Docker strip.
 - **`docs/`** is tracked Russian documentation (`01-overview`…`10-presentation-outline`, `CHANGELOG`); it is derived and partly stale (e.g. CHANGELOG claims `docs/` is gitignored). Treat code, README and this file as the source of truth.
