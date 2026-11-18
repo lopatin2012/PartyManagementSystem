@@ -50,24 +50,23 @@ class CISCode(models.Model):
     )
 
     # Дублируем уровень упаковки для быстрого доступа и фильтрации без JOIN.
+    # Отдельные индексы по этим полям не нужны: level/cz_status в данных почти
+    # не различаются, а фильтры админки идут по PK (-id). См. Meta.indexes.
     level = models.PositiveSmallIntegerField(
         choices=PackagingLevelChoices.choices,
         verbose_name='Уровень упаковки',
-        db_index=True
     )
 
     cz_status = models.PositiveSmallIntegerField(
         choices=CISCodesStatusChoices.choices,
         default=CISCodesStatusChoices.EMITTED,
         verbose_name='Статус со стороны ЧЗ',
-        db_index=True
     )
 
     production_status = models.PositiveSmallIntegerField(
         choices=ProductionCodeStatusChoices.choices,
         default=ProductionCodeStatusChoices.FREE,
         verbose_name='Статус со стороны производства',
-        db_index=True
     )
 
     parent = models.ForeignKey(
@@ -87,10 +86,16 @@ class CISCode(models.Model):
         verbose_name_plural = '1. Коды маркировки'
         ordering = ('-created_at',)
         indexes = [
+            # Карточка партии: свежие коды партии по created_at.
             models.Index(fields=['production_party', '-created_at']),
-            models.Index(fields=['product_packaging', '-created_at']),
-            models.Index(fields=['cz_status', '-created_at']),
-            models.Index(fields=['production_status', '-created_at']),
+            # Desync берёт первые коды партии в порядке id (а не created_at),
+            # поэтому порядок именно (production_party, id). production_status
+            # в INCLUDE оставляет COUNT(*) по APPLIED index-only.
+            models.Index(
+                fields=['production_party', 'id'],
+                include=['production_status'],
+                name='cis_code_party_id_status_idx',
+            ),
             models.Index(fields=['parent', 'level']),
             # Индекс под поиск по началу кода: UPPER(code) LIKE 'prefix%'.
             # Без него префиксный поиск на миллионах кодов делает полный скан.
