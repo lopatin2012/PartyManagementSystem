@@ -1015,14 +1015,24 @@ class SuzOrdersPageTests(TestCase):
                     'orderStatus': 'READY',
                     'serviceProviderId': 'SRV1',
                     'createdTimestamp': 1737000000000,
-                    'buffers': [],
+                    'buffers': [{
+                        'gtin': '04601751026019',
+                        'totalCodes': 10,
+                        'availableCodes': 10,
+                        'bufferStatus': 'ACTIVE',
+                    }],
                 },
                 {
                     'orderId': 'own-order',
                     'orderStatus': 'READY',
                     'serviceProviderId': '',
                     'createdTimestamp': 1737000000000,
-                    'buffers': [],
+                    'buffers': [{
+                        'gtin': '04601751026019',
+                        'totalCodes': 10,
+                        'availableCodes': 10,
+                        'bufferStatus': 'ACTIVE',
+                    }],
                 },
             ],
             'page': 1,
@@ -1041,6 +1051,13 @@ class SuzOrdersPageTests(TestCase):
         # Чекбокс/форма массового закрытия — только у своего заказа.
         self.assertIn('value="own-order"', html)
         self.assertNotIn('value="provider-order"', html)
+        # Скачивание кодов — тоже только у своего заказа.
+        self.assertIn(
+            reverse('suz_order_codes', args=['own-order']), html,
+        )
+        self.assertNotIn(
+            reverse('suz_order_codes', args=['provider-order']), html,
+        )
 
     def test_bulk_controls_rendered(self):
         self.client.force_login(self.admin)
