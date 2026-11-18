@@ -3912,6 +3912,236 @@ class SuzOrdersServiceTests(TestCase):
         cache.delete('suz_providers')
 
 
+class SuzOrderCodesDownloadTests(TestCase):
+    """Скачивание доступных кодов заказа из СУЗ в TXT."""
+
+    def setUp(self):
+        self.account = SUZAccount.objects.create(
+            is_active=True,
+            certificate_name='Тестовый сертификат',
+            serial_number='SN-TEST-1',
+            inn='1234567890',
+            oms_id='cdf12109-10d3-11e6-8b6f-0050569977a1',
+            device_name='device',
+            connection_identifier='conn',
+            dynamic_token='token-123',
+        )
+
+    def _order_result(self, buffers, order_id='order-1'):
+        return {
+            'is_error': False,
+            'message': '',
+            'total_count': 1,
+            'orders': [{'orderId': order_id, 'buffers': buffers}],
+            'page': 1,
+            'limit': 1,
+        }
+
+    def _codes_response(self, codes, status_code=200, payload=None):
+        response = Mock()
+        response.status_code = status_code
+        response.json.return_value = (
+            payload if payload is not None else {'codes': codes}
+        )
+        return response
+
+    def test_downloads_available_codes_as_txt(self):
+        from app_cz.services import order_service
+
+        order = self._order_result([{
+            'gtin': '04601751026019',
+            'availableCodes': 2,
+            'bufferStatus': 'ACTIVE',
+        }])
+        response = self._codes_response(['code1', 'code2'])
+
+        with patch.object(
+            order_service, 'get_suz_orders', return_value=order,
+        ), patch.object(
+            order_service.external_http, 'get', return_value=response,
+        ) as get:
+            result = order_service.get_suz_order_codes('order-1')
+
+        self.assertFalse(result['is_error'])
+        self.assertEqual(result['count'], 2)
+        self.assertEqual(result['content'], 'code1\r\ncode2\r\n')
+        self.assertTrue(
+            result['filename'].startswith('04601751026019_2_')
+        )
+        self.assertTrue(result['filename'].endswith('.txt'))
+
+        kwargs = get.call_args.kwargs
+        self.assertEqual(
+            get.call_args.args[1],
+            order_service.SUZ.download_codes_from_order,
+        )
+        self.assertEqual(kwargs['params'], {
+            'omsId': self.account.oms_id,
+            'orderId': 'order-1',
+            'quantity': 2,
+            'gtin': '04601751026019',
+        })
+        self.assertEqual(kwargs['headers']['clientToken'], 'token-123')
+
+    def test_strips_gs_separator_from_file(self):
+        from app_cz.services import order_service
+
+        order = self._order_result([{
+            'gtin': '04601751026019',
+            'availableCodes': 1,
+        }])
+        response = self._codes_response(['code1\x1d93tail'])
+
+        with patch.object(
+            order_service, 'get_suz_orders', return_value=order,
+        ), patch.object(
+            order_service.external_http, 'get', return_value=response,
+        ):
+            result = order_service.get_suz_order_codes('order-1')
+
+        self.assertEqual(result['content'], 'code193tail\r\n')
+
+    def test_fetches_all_available_in_one_request(self):
+        from app_cz.services import order_service
+
+        order = self._order_result([{
+            'gtin': '04601751026019',
+            'availableCodes': 5,
+        }])
+        response = self._codes_response(['c1', 'c2', 'c3', 'c4', 'c5'])
+
+        with patch.object(
+            order_service, 'get_suz_orders', return_value=order,
+        ), patch.object(
+            order_service.external_http, 'get', return_value=response,
+        ) as get:
+            result = order_service.get_suz_order_codes('order-1')
+
+        self.assertEqual(result['count'], 5)
+        self.assertEqual(
+            result['content'], 'c1\r\nc2\r\nc3\r\nc4\r\nc5\r\n',
+        )
+        self.assertEqual(get.call_count, 1)
+        self.assertEqual(
+            get.call_args.kwargs['params']['quantity'], 5,
+        )
+
+    def test_no_available_codes_returns_error(self):
+        from app_cz.services import order_service
+
+        order = self._order_result([{
+            'gtin': '04601751026019',
+            'availableCodes': 0,
+            'bufferStatus': 'ACTIVE',
+        }])
+
+        with patch.object(
+            order_service, 'get_suz_orders', return_value=order,
+        ), patch.object(order_service.external_http, 'get') as get:
+            result = order_service.get_suz_order_codes('order-1')
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('нет доступных', result['message'].lower())
+        get.assert_not_called()
+
+    def test_closed_buffer_is_skipped(self):
+        from app_cz.services import order_service
+
+        order = self._order_result([{
+            'gtin': '04601751026019',
+            'availableCodes': 10,
+            'bufferStatus': 'CLOSED',
+        }])
+
+        with patch.object(
+            order_service, 'get_suz_orders', return_value=order,
+        ), patch.object(order_service.external_http, 'get') as get:
+            result = order_service.get_suz_order_codes('order-1')
+
+        self.assertTrue(result['is_error'])
+        get.assert_not_called()
+
+    def test_multiple_gtins_are_combined(self):
+        from app_cz.services import order_service
+
+        order = self._order_result([
+            {'gtin': '04601751026019', 'availableCodes': 1},
+            {'gtin': '04601751026020', 'availableCodes': 1},
+        ])
+        responses = [
+            self._codes_response(['c1']),
+            self._codes_response(['c2']),
+        ]
+
+        with patch.object(
+            order_service, 'get_suz_orders', return_value=order,
+        ), patch.object(
+            order_service.external_http, 'get', side_effect=responses,
+        ) as get:
+            result = order_service.get_suz_order_codes('order-1')
+
+        self.assertEqual(result['count'], 2)
+        self.assertEqual(result['content'], 'c1\r\nc2\r\n')
+        self.assertTrue(result['filename'].startswith('order-1_2_'))
+        self.assertEqual(get.call_count, 2)
+
+    def test_suz_error_is_reported(self):
+        from app_cz.services import order_service
+
+        order = self._order_result([{
+            'gtin': '04601751026019',
+            'availableCodes': 10,
+        }])
+        response = self._codes_response(
+            [],
+            status_code=400,
+            payload={'globalErrors': [{'error': 'Нет доступных кодов'}]},
+        )
+
+        with patch.object(
+            order_service, 'get_suz_orders', return_value=order,
+        ), patch.object(
+            order_service.external_http, 'get', return_value=response,
+        ):
+            result = order_service.get_suz_order_codes('order-1')
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('Нет доступных кодов', result['message'])
+
+    def test_order_not_found(self):
+        from app_cz.services import order_service
+
+        with patch.object(
+            order_service, 'get_suz_orders',
+            return_value={
+                'is_error': False,
+                'orders': [],
+                'total_count': 0,
+            },
+        ):
+            result = order_service.get_suz_order_codes('order-404')
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('не найден', result['message'])
+
+    def test_requires_active_account(self):
+        from app_cz.services import order_service
+
+        SUZAccount.objects.update(is_active=False)
+        order = self._order_result([{
+            'gtin': '04601751026019',
+            'availableCodes': 1,
+        }])
+
+        with patch.object(
+            order_service, 'get_suz_orders', return_value=order,
+        ):
+            result = order_service.get_suz_order_codes('order-1')
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('не найдена', result['message'])
+
+
 @override_settings(
     SUZ_ACTIVE_ORDERS_LIMIT=90,
     SUZ_ORDERS_NOTIFICATION_EMAILS=['ops@test.local'],

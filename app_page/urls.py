@@ -18,5 +18,10 @@ urlpatterns = [
         name='product_control_detail',
     ),
     path('suz/', view=views.SuzOrdersView.as_view(), name='suz_orders'),
+    path(
+        'suz/<str:order_id>/codes/',
+        view=views.SuzOrderCodesDownloadView.as_view(),
+        name='suz_order_codes',
+    ),
     path('suz/close/', view=views.SuzOrderCloseView.as_view(), name='suz_order_close'),
 ]

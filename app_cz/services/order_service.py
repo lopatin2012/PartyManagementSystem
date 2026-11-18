@@ -1,6 +1,6 @@
 # app_cz/services/order_service.py
 
-"""Просмотр и закрытие заказов кодов маркировки в СУЗ."""
+"""Просмотр, скачивание кодов и закрытие заказов кодов маркировки в СУЗ."""
 
 import json
 import logging
@@ -26,6 +26,10 @@ ORDER_STATUS_LABELS = {
 
 MAX_PAGE_SIZE = 100
 MAX_BULK_CLOSE = 100
+
+# Размер порции при выгрузке кодов заказа. СУЗ отдаёт до 150 000 кодов
+# за запрос; для одной выгрузки запрашиваем всё доступное количество, чтобы
+# не терять уже выданные коды при сбое на середине.
 
 # «Активные» заказы: ещё не закрыты и не отклонены. Используются как
 # фильтр по умолчанию для страницы /suz/ (метод поиска принимает orderStatuses).
@@ -173,6 +177,172 @@ def get_suz_orders(
         'page': page,
         'limit': limit,
     }
+
+
+def get_suz_order_codes(order_id: str) -> dict:
+    """
+    Забирает доступные коды заказа из СУЗ и формирует TXT-файл.
+
+    Внимание: ``GET /api/v3/codes`` выдаёт коды из заказа. После выгрузки
+    они становятся недоступны для выдачи на линию, поэтому в интерфейсе
+    действие подтверждается отдельно.
+
+    :return: {'is_error', 'message', 'filename', 'content', 'count'}.
+    """
+    order_id = (order_id or '').strip()
+    if not order_id:
+        return {'is_error': True, 'message': 'Не указан идентификатор заказа.'}
+
+    orders_result = get_suz_orders(
+        page=1, limit=1, status='all', order_id=order_id,
+    )
+    if orders_result.get('is_error'):
+        return {
+            'is_error': True,
+            'message': (
+                orders_result.get('message')
+                or 'Не удалось получить заказ из СУЗ.'
+            ),
+        }
+
+    order = next(
+        (
+            item for item in (orders_result.get('orders') or [])
+            if str(item.get('orderId') or '').lower() == order_id.lower()
+        ),
+        None,
+    )
+    if order is None:
+        return {
+            'is_error': True,
+            'message': f'Заказ {order_id} не найден в СУЗ.',
+        }
+
+    account, error = _active_account()
+    if error:
+        return {'is_error': True, 'message': error}
+
+    # GTIN → сколько кодов ещё можно забрать. Буферы не в статусе ACTIVE
+    # уже закрыты для выдачи (EXHAUSTED/CLOSED/REJECTED).
+    targets = {}
+    for buffer in order.get('buffers') or []:
+        gtin = str(buffer.get('gtin') or '').strip()
+        status = str(buffer.get('bufferStatus') or '').strip().upper()
+        available = _buffer_available(buffer)
+        if not gtin or available <= 0:
+            continue
+        if status and status != 'ACTIVE':
+            continue
+        targets[gtin] = targets.get(gtin, 0) + available
+
+    if not targets:
+        return {
+            'is_error': True,
+            'message': (
+                'В заказе нет доступных для выдачи кодов. '
+                'Возможно, коды уже выданы.'
+            ),
+        }
+
+    codes = []
+    for gtin, available in targets.items():
+        data, error = _fetch_order_codes(
+            account=account,
+            order_id=order_id,
+            gtin=gtin,
+            quantity=available,
+        )
+        if error:
+            return {'is_error': True, 'message': error}
+
+        batch = data.get('codes') if isinstance(data, dict) else None
+        if isinstance(batch, dict):
+            batch = [batch.get('code')] if batch.get('code') else []
+        if not isinstance(batch, list):
+            batch = []
+        batch = [str(code).strip() for code in batch]
+        batch = [code for code in batch if code]
+        codes.extend(batch)
+
+    if not codes:
+        return {
+            'is_error': True,
+            'message': 'СУЗ не вернул коды заказа.',
+        }
+
+    from django.utils import timezone
+
+    if len(targets) == 1:
+        file_prefix = next(iter(targets))
+    else:
+        file_prefix = order_id
+    filename = (
+        f'{file_prefix}_{len(codes)}_'
+        f'{timezone.now().strftime("%d%m%y")}.txt'
+    )
+    # В файл коды пишем без управляющего разделителя GS, как в
+    # «Молвест.Маркировка».
+    content = ''.join(
+        f'{str(code).replace(chr(29), "")}\r\n' for code in codes
+    )
+    return {
+        'is_error': False,
+        'message': f'Скачано кодов: {len(codes)}.',
+        'filename': filename,
+        'content': content,
+        'count': len(codes),
+        'gtins': list(targets),
+    }
+
+
+def _buffer_available(buffer: dict) -> int:
+    """Сколько кодов ещё доступно в буфере заказа."""
+    return max(_as_int(buffer.get('availableCodes'), 0), 0)
+
+
+def _fetch_order_codes(
+        account: SUZAccount,
+        order_id: str,
+        gtin: str,
+        quantity: int,
+) -> tuple[dict | None, str | None]:
+    """Получить доступные коды заказа: ``GET /api/v3/codes``."""
+    headers = {
+        'clientToken': account.dynamic_token,
+        'Accept': 'application/json',
+    }
+    params = {
+        'omsId': account.oms_id,
+        'orderId': order_id,
+        'quantity': quantity,
+        'gtin': gtin,
+    }
+    try:
+        response = external_http.get(
+            'suz',
+            SUZ.download_codes_from_order,
+            params=params,
+            headers=headers,
+            timeout=60,
+        )
+    except requests.exceptions.RequestException as e:
+        logger.error(f'СУЗ: ошибка получения кодов заказа {order_id}: {e}')
+        return None, f'Ошибка соединения с СУЗ: {e}'
+
+    if response.status_code != 200:
+        message = _extract_error(response)
+        logger.warning(
+            f'СУЗ: получение кодов заказа {order_id} (GTIN {gtin}) вернуло '
+            f'{response.status_code}: {message}'
+        )
+        return None, f'СУЗ вернул ошибку {response.status_code}: {message}'
+
+    try:
+        data = response.json()
+    except ValueError:
+        return None, 'СУЗ вернул некорректный ответ (не JSON).'
+
+    return data, None
 
 
 def close_suz_order(order_id: str) -> dict:
@@ -486,6 +656,17 @@ def _extract_error(response) -> str:
     except ValueError:
         return (response.text or '')[:300]
     if isinstance(data, dict):
+        for key in ('globalErrors', 'fieldErrors'):
+            errors = data.get(key)
+            if isinstance(errors, list) and errors:
+                first = errors[0]
+                if isinstance(first, dict):
+                    return str(
+                        first.get('error')
+                        or first.get('fieldError')
+                        or first
+                    )[:300]
+                return str(first)[:300]
         return str(
             data.get('message')
             or data.get('errorMessage')

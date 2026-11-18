@@ -128,6 +128,7 @@ python manage.py test app_uip.tests.ReserveAccumulationTests.test_generate_count
 - `POST /suz/close/` (`SuzOrderCloseView`) closes one/many orders (`getlist` → `close_suz_orders`, no batch API) via `POST /api/v3/order/close` signed with `unpinned_signed_data` (`X-Signature`); partial failures are reported via Django messages.
 - `order.can_close` = no `serviceProviderId` and status not `CLOSED`/`DECLINED`; provider orders show a disabled ✕ and no bulk checkbox; checkboxes belong to the external `#bulkCloseForm` via the HTML `form` attribute (no nested forms).
 - `contactPerson` exists only in the create-order request (`attributes`), not in search results — extract tolerantly and hide the column if absent.
+- `POST /suz/<order_id>/codes/` (`SuzOrderCodesDownloadView`) → `order_service.get_suz_order_codes`: for each `ACTIVE` buffer with `availableCodes > 0` calls `GET /api/v3/codes` (one request per GTIN, `quantity = availableCodes`) and returns a TXT attachment (`\r\n`, GS `\x1d` stripped, filename `{gtin|order_id}_{count}_{ddmmyy}.txt`). The call **issues** codes from the order, so the template confirms it and the button is shown only when `order.available_codes > 0`; codes are not stored locally.
 - Hourly `check_suz_orders` emails when active orders exceed `SUZ_ACTIVE_ORDERS_LIMIT` (default 90) to `SUZ_ORDERS_NOTIFICATION_EMAILS` (falls back to `UIP_RESERVE_NOTIFICATION_EMAILS`), every hour while exceeded.
 
 ## Reserve monitoring & accumulation
