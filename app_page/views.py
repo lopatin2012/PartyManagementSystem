@@ -595,6 +595,9 @@ class SuzOrdersView(AdminRequiredMixin, TemplateView):
                 not order['has_service_provider']
                 and order.get('orderStatus') not in ('CLOSED', 'DECLINED')
             )
+            order['can_download_codes'] = (
+                order['can_close'] and order['available_codes'] > 0
+            )
 
         has_contact_person = any(
             order.get('contact_person') for order in orders

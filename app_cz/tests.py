@@ -3983,7 +3983,7 @@ class SuzOrderCodesDownloadTests(TestCase):
         })
         self.assertEqual(kwargs['headers']['clientToken'], 'token-123')
 
-    def test_strips_gs_separator_from_file(self):
+    def test_preserves_gs_separator_in_file(self):
         from app_cz.services import order_service
 
         order = self._order_result([{
@@ -3999,7 +3999,7 @@ class SuzOrderCodesDownloadTests(TestCase):
         ):
             result = order_service.get_suz_order_codes('order-1')
 
-        self.assertEqual(result['content'], 'code193tail\r\n')
+        self.assertEqual(result['content'], 'code1\x1d93tail\r\n')
 
     def test_fetches_all_available_in_one_request(self):
         from app_cz.services import order_service
@@ -4042,6 +4042,44 @@ class SuzOrderCodesDownloadTests(TestCase):
 
         self.assertTrue(result['is_error'])
         self.assertIn('нет доступных', result['message'].lower())
+        get.assert_not_called()
+
+    def test_service_provider_order_cannot_download(self):
+        from app_cz.services import order_service
+
+        order = self._order_result([{
+            'gtin': '04601751026019',
+            'availableCodes': 10,
+            'bufferStatus': 'ACTIVE',
+        }])
+        order['orders'][0]['serviceProviderId'] = 'SRV1'
+
+        with patch.object(
+            order_service, 'get_suz_orders', return_value=order,
+        ), patch.object(order_service.external_http, 'get') as get:
+            result = order_service.get_suz_order_codes('order-1')
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('сервис-провайдера', result['message'])
+        get.assert_not_called()
+
+    def test_closed_order_cannot_download(self):
+        from app_cz.services import order_service
+
+        order = self._order_result([{
+            'gtin': '04601751026019',
+            'availableCodes': 10,
+            'bufferStatus': 'ACTIVE',
+        }])
+        order['orders'][0]['orderStatus'] = 'CLOSED'
+
+        with patch.object(
+            order_service, 'get_suz_orders', return_value=order,
+        ), patch.object(order_service.external_http, 'get') as get:
+            result = order_service.get_suz_order_codes('order-1')
+
+        self.assertTrue(result['is_error'])
+        self.assertIn('закрыт', result['message'].lower())
         get.assert_not_called()
 
     def test_closed_buffer_is_skipped(self):

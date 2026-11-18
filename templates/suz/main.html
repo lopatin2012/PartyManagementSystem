@@ -120,7 +120,7 @@
                             </span>
                         </td>
                         <td class="suz-center">
-                            {% if order.available_codes and order.orderStatus != 'DECLINED' and order.orderStatus != 'CLOSED' %}
+                            {% if order.can_download_codes %}
                                 <form method="post" action="{% url 'suz_order_codes' order.orderId %}"
                                       class="suz-download-form"
                                       onsubmit="return confirm('Скачать доступные коды заказа {{ order.orderId }}? Они будут выданы из СУЗ и станут недоступны для печати на линии.');">

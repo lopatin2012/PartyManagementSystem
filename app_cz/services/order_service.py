@@ -218,6 +218,24 @@ def get_suz_order_codes(order_id: str) -> dict:
             'message': f'Заказ {order_id} не найден в СУЗ.',
         }
 
+    # Скачивание — только для наших заказов, как и закрытие: заказы
+    # сервис-провайдера нам не принадлежат.
+    if str(order.get('serviceProviderId') or '').strip():
+        return {
+            'is_error': True,
+            'message': (
+                'Заказ создан через сервис-провайдера — скачивание кодов '
+                'недоступно.'
+            ),
+        }
+    if order.get('orderStatus') in ('CLOSED', 'DECLINED'):
+        return {
+            'is_error': True,
+            'message': (
+                'Заказ закрыт или отклонён — скачивание кодов недоступно.'
+            ),
+        }
+
     account, error = _active_account()
     if error:
         return {'is_error': True, 'message': error}
@@ -280,11 +298,9 @@ def get_suz_order_codes(order_id: str) -> dict:
         f'{file_prefix}_{len(codes)}_'
         f'{timezone.now().strftime("%d%m%y")}.txt'
     )
-    # В файл коды пишем без управляющего разделителя GS, как в
-    # «Молвест.Маркировка».
-    content = ''.join(
-        f'{str(code).replace(chr(29), "")}\r\n' for code in codes
-    )
+    # Коды пишем как пришли из СУЗ: управляющий разделитель GS (\x1d)
+    # между КИ и крипто-хвостом обязателен для печати/сканирования.
+    content = ''.join(f'{str(code)}\r\n' for code in codes)
     return {
         'is_error': False,
         'message': f'Скачано кодов: {len(codes)}.',
