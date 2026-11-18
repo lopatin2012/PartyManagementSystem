@@ -7,8 +7,8 @@ Django 6.0.7 app (Python 3.14, PostgreSQL, ASGI/uvicorn) for production batches 
 ## Quick commands
 
 ```bash
-# Python 3.14. This checkout has no .venv; `python` already imports Django.
-# If `import django` fails, install deps first (requirements.txt is UTF-16LE — see Dockerfile/CI).
+# Deps live in the gitignored .venv (Python 3.14). The global `python` has NO Django.
+.\.venv\Scripts\Activate.ps1        # then plain `python` works
 python run_all.py                   # web + scheduler + worker in one terminal
 uvicorn config.asgi:application --host 0.0.0.0 --port 8888
 python manage.py run_scheduler      # --once = enqueue every task once and exit
@@ -17,11 +17,11 @@ python manage.py run_tasks_worker
 python manage.py makemigrations <app_label>
 python manage.py migrate                       # also: --database archive
 python manage.py test app_uip app_cz app_factory app_event app_scheduler app_page app_helper
-python manage.py test app_uip.tests.ReserveAccumulationTests.test_generate_count_loops
+python manage.py test app_uip.tests.ReserveUipsServiceTests.test_generate_count_loops
 ```
 
-- Fresh checkout: `pip install -r requirements.txt`, **then** `pip install -e .`. `pyproject.toml` declares no dependencies, and `-e` generates `config/_version.py` (setuptools-scm).
-- `run_all.py` binds uvicorn to the machine's LAN IP and adds `--reload` unless `DEBUG` is explicitly `0`. Only uvicorn reloads — restart `run_scheduler`/`run_tasks_worker` after code changes.
+- Fresh checkout: create the venv first (`python -m venv .venv`), then `pip install -r requirements.txt`, **then** `pip install -e .`. `pyproject.toml` declares no dependencies, and `-e` generates `config/_version.py` (setuptools-scm).
+- `run_all.py` binds uvicorn to the machine's LAN IP and adds `--reload` unless `DEBUG` is `0` — it reads the **OS environment, not `config/.env`**, so `DEBUG=0` in `.env` still leaves reload on; export it in the shell. Only uvicorn reloads — restart `run_scheduler`/`run_tasks_worker` after code changes.
 - No linter, formatter or typechecker is configured. Don't add tooling or mass-reformat; match surrounding style.
 
 ## Architecture
@@ -68,7 +68,7 @@ python manage.py test app_uip.tests.ReserveAccumulationTests.test_generate_count
 
 ## Tests
 
-- Real suites: `app_uip/tests.py` (largest: reservation, accumulation, search, roles), `app_cz/tests.py` (external sync/watermark, code sync, CZ status mapping, generation/reserve, admin paginator, SUZ), `app_factory/tests.py` (activity/`sku_links`, NK shelf life, packagings), `app_event/tests.py` (health/alerts, monitoring API), `app_scheduler/tests.py` (schedule, fixed daily, status, progress, manual run), `app_page/tests.py` (product control, factory scoping, SUZ page, status panel), `app_helper/tests.py` (load stats, request metrics, session cookie, ASGI logging). `app_wms/tests.py` is an empty stub.
+- Real suites: `app_cz/tests.py` (largest, ~4.5k lines: external sync/watermark, code sync, desync, CZ status mapping, generation/reserve, admin paginator, SUZ), `app_uip/tests.py` (reservation, accumulation, search, roles), `app_factory/tests.py` (activity/`sku_links`, NK shelf life, packagings), `app_event/tests.py` (health/alerts, monitoring API), `app_scheduler/tests.py` (schedule, fixed daily, status, progress, manual run), `app_page/tests.py` (product control, factory scoping, SUZ page, status panel), `app_helper/tests.py` (load stats, request metrics, session cookie, ASGI logging). `app_wms/tests.py` is an empty stub.
 - Tests need a reachable PostgreSQL (Django creates/drops a temp DB) and mock CZ/HTTP with `unittest.mock.patch` — no network or SUZ account needed.
 - Page-render tests need the `STATIC_OVERRIDE` trick (`ManifestStaticFilesStorage` has no manifest in tests) and patch `config.context_processors.check_factories` / `app_helper.service_helper.diagnose_service` so the status widget doesn't hit the network.
 - **CI does not run tests** — it only does `check`, migrations and `collectstatic`. Always run the relevant local suite.
@@ -82,6 +82,9 @@ python manage.py test app_uip.tests.ReserveAccumulationTests.test_generate_count
 - **Archive fallback:** codes older than 45 days move nightly to `CISCodeArchive` (`app_cz/services/code_archive.py`). `api_search` and `SearchView` query the working table first, then — for `code` searches only — `CISCodeArchive.objects.using('archive')`; the API sets `in_archive: true` (page shows «Код найден в архиве»). UIPs are never searched in the archive.
 - `search` and `status_parties` are public (`AllowAny` is the DRF default); only `reserve-uips` requires admin (`IsAppAdmin`). `ProductSKU` has no `name` — serializers must use `product_sku.product.name` (the old `product_sku.name` broke `/status_parties/active/`).
 - **`CISCode`/`CISCodeArchive` admin must stay fast on huge tables.** `CISCodeAdmin` orders by `-id`; there is **no index on `CISCode.created_at`**, so `-created_at` sorts millions of rows per page. Both admins use `LargeTablePaginator` (approximate count from `pg_class.reltuples` for the queryset's table **and DB alias**) with `show_full_result_count=False` — without it every changelist open runs a full `COUNT(*)`. `list_filter` on choice fields is cheap (`ChoicesFieldListFilter`).
+- **`CISCode` index layout is tuned for 60M+ rows (15 indexes/21 GB → 7/13 GB); don't "restore" the old set.** Measured on 100k-code batches: insert ~2 s vs ~10 s, status update ~6 s vs ~15 s with the old 15-index set. Keep `(production_party, id) INCLUDE (production_status)` in exactly that order: desync reads a party's codes with `ORDER BY id`, and `(production_party, production_status, id)` makes the no-status fallback in `_local_codes` degrade to a PK scan (~5 s instead of ~0.1 ms). Do **not** re-add single-column indexes on `level`/`cz_status`/`production_status` or `(cz_status|production_status, -created_at)`: those columns are nearly constant and the admin orders by `-id`; `(product_packaging, -created_at)` matches no query (the FK auto-index is enough).
+- **`code ..._like` is Django's automatic `varchar_pattern_ops` index** for `unique`/`db_index` text fields (`postgresql/schema.py`, not `Meta.indexes`). Nothing uses case-sensitive `startswith` here (`istartswith` relies on `cis_code_upper_prefix_idx`), so it is dead weight (~3 GB) and can only be dropped manually (`DROP INDEX CONCURRENTLY`) — `Meta.indexes` cannot remove it, and it reappears on a freshly created DB.
+- **Build the covering index concurrently in production.** `makemigrations` emits a plain `AddIndex`, which locks writes on `app_cz_ciscode` for minutes; pre-create with `CREATE INDEX CONCURRENTLY` + `migrate --fake`, or hand-edit the migration to use `AddIndexConcurrently`. Migrations are per-machine, so the generated file is not shared.
 
 ## UIP numbers & generation
 
