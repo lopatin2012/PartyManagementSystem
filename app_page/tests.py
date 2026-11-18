@@ -1089,3 +1089,141 @@ class SuzOrdersPageTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Контактное лицо')
         self.assertContains(response, 'Иванов П.А.')
+
+    def test_download_requires_login(self):
+        response = self.client.post(
+            reverse('suz_order_codes', args=['order-1']),
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/auth/login/', response.url)
+
+    def test_non_admin_cannot_download(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            reverse('suz_order_codes', args=['order-1']),
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_admin_downloads_order_codes(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.get_suz_order_codes', return_value={
+            'is_error': False,
+            'message': 'Скачано кодов: 2.',
+            'filename': 'codes.txt',
+            'content': 'code1\r\ncode2\r\n',
+            'count': 2,
+        }) as download:
+            response = self.client.post(
+                reverse('suz_order_codes', args=['order-1']),
+                {'next': '/suz/?status=READY'},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response['Content-Type'], 'text/plain; charset=utf-8',
+        )
+        self.assertEqual(
+            response['Content-Disposition'],
+            'attachment; filename="codes.txt"',
+        )
+        self.assertEqual(
+            response.content.decode('utf-8'), 'code1\r\ncode2\r\n',
+        )
+        download.assert_called_once_with('order-1')
+
+    def test_download_error_redirects_with_message(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.get_suz_order_codes', return_value={
+            'is_error': True,
+            'message': 'Нет доступных кодов',
+        }):
+            response = self.client.post(
+                reverse('suz_order_codes', args=['order-1']),
+                {'next': '/suz/?status=READY'},
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.redirect_chain[0][0], '/suz/?status=READY')
+        self.assertContains(response, 'Нет доступных кодов')
+
+    def test_download_button_shown_for_available_codes(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.get_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'total_count': 1,
+            'orders': [{
+                'orderId': 'order-1',
+                'orderStatus': 'READY',
+                'createdTimestamp': 1737000000000,
+                'buffers': [{
+                    'gtin': '04601751026019',
+                    'totalCodes': 10,
+                    'availableCodes': 10,
+                }],
+            }],
+            'page': 1,
+            'limit': 50,
+        }):
+            response = self.client.get(reverse('suz_orders'))
+
+        self.assertContains(
+            response, reverse('suz_order_codes', args=['order-1']),
+        )
+        self.assertContains(
+            response, 'Скачать доступные коды заказа в TXT',
+        )
+
+    def test_download_button_hidden_without_available_codes(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.get_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'total_count': 1,
+            'orders': [{
+                'orderId': 'order-1',
+                'orderStatus': 'READY',
+                'createdTimestamp': 1737000000000,
+                'buffers': [{
+                    'gtin': '04601751026019',
+                    'totalCodes': 10,
+                    'availableCodes': 0,
+                }],
+            }],
+            'page': 1,
+            'limit': 50,
+        }):
+            response = self.client.get(reverse('suz_orders'))
+
+        self.assertNotContains(
+            response, reverse('suz_order_codes', args=['order-1']),
+        )
+
+    def test_download_button_hidden_for_closed_order(self):
+        self.client.force_login(self.admin)
+        with patch('app_page.views.get_suz_orders', return_value={
+            'is_error': False,
+            'message': '',
+            'total_count': 1,
+            'orders': [{
+                'orderId': 'order-1',
+                'orderStatus': 'CLOSED',
+                'createdTimestamp': 1737000000000,
+                'buffers': [{
+                    'gtin': '04601751026019',
+                    'totalCodes': 10,
+                    'availableCodes': 10,
+                }],
+            }],
+            'page': 1,
+            'limit': 50,
+        }):
+            response = self.client.get(reverse('suz_orders'))
+
+        self.assertNotContains(
+            response, reverse('suz_order_codes', args=['order-1']),
+        )

@@ -281,6 +281,34 @@
     margin: 0;
 }
 
+/* Кнопка скачивания кодов заказа */
+.suz-download-form {
+    display: inline;
+    margin: 0 0.35rem 0 0;
+}
+
+.suz-download-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    padding: 0 0.55rem;
+    border-radius: 6px;
+    border: 1px solid rgba(187, 207, 50, 0.5);
+    background: rgba(187, 207, 50, 0.12);
+    color: var(--accent-green);
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+
+.suz-download-btn:hover {
+    background: var(--accent-green);
+    color: #111111;
+    border-color: var(--accent-green);
+}
+
 .suz-close-btn {
     display: inline-flex;
     align-items: center;

@@ -7,7 +7,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db.models import Exists, OuterRef, Q
-from django.http import Http404, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views import View
@@ -17,6 +17,7 @@ from app_cz.models import CISCode, CISCodeArchive
 from app_cz.services.order_service import (
     ORDER_STATUS_LABELS,
     close_suz_orders,
+    get_suz_order_codes,
     get_suz_orders,
     get_suz_providers,
     order_status_label,
@@ -571,7 +572,12 @@ class SuzOrdersView(AdminRequiredMixin, TemplateView):
                 _to_int(b.get('totalCodes'), 0) for b in buffers
             )
             order['available_codes'] = sum(
-                _to_int(b.get('availableCodes'), 0) for b in buffers
+                _to_int(b.get('availableCodes'), 0)
+                for b in buffers
+                if (
+                    not b.get('bufferStatus')
+                    or str(b.get('bufferStatus')).upper() == 'ACTIVE'
+                )
             )
             attributes = order.get('attributes') or {}
             order['contact_person'] = (
@@ -620,6 +626,32 @@ class SuzOrdersView(AdminRequiredMixin, TemplateView):
             'message': result.get('message', ''),
         })
         return context
+
+
+class SuzOrderCodesDownloadView(AdminRequiredMixin, View):
+    """Скачивание доступных кодов заказа из СУЗ в TXT (POST)."""
+
+    def post(self, request, order_id):
+        result = get_suz_order_codes(order_id)
+
+        if result.get('is_error'):
+            messages.error(
+                request,
+                result.get('message') or 'Не удалось скачать коды заказа.',
+            )
+            next_url = (request.POST.get('next') or '').strip()
+            if next_url.startswith('/suz/'):
+                return redirect(next_url)
+            return redirect('suz_orders')
+
+        response = HttpResponse(
+            result['content'],
+            content_type='text/plain; charset=utf-8',
+        )
+        response['Content-Disposition'] = (
+            f'attachment; filename="{result["filename"]}"'
+        )
+        return response
 
 
 class SuzOrderCloseView(AdminRequiredMixin, View):
