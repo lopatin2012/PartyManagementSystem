@@ -1956,6 +1956,79 @@ class TrueApiSessionTokenTests(TestCase):
         self.assertIn('Неверная подпись', result['message'])
 
 
+class TrueApiClientTokenTests(TestCase):
+    """TrueAPIClient: единый токен UUID важнее legacy-поля token."""
+
+    def setUp(self):
+        from app_cz.models import SUZAccount
+        self.account = SUZAccount.objects.create(
+            is_active=True,
+            certificate_name='Тестовый сертификат',
+            serial_number='0123456789ABCDEF',
+            inn='7701234567',
+            oms_id='oms-1',
+            device_name='Устройство',
+            connection_identifier='conn-1',
+        )
+
+    def _ok_response(self, payload):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = payload
+        response.text = str(payload)
+        return response
+
+    @patch('app_cz.services.true_api_client.attached_signed_data',
+           return_value=('data', 'SIGNED'))
+    @patch('app_cz.services.true_api_client.external_http.get')
+    @patch('app_cz.services.true_api_client.external_http.post')
+    def test_prefers_uuid_token_and_requests_united_token(
+            self, mock_post, mock_get, *_):
+        from app_cz.services.true_api_client import TrueAPIClient
+
+        mock_get.return_value = self._ok_response(
+            {'uuid': 'u-1', 'data': 'data'}
+        )
+        mock_post.return_value = self._ok_response({
+            'token': 'LEGACY-JWT',
+            'uuidToken': '123e4567-e89b-12d3-a456-426655440000',
+        })
+
+        token = TrueAPIClient().get_token()
+
+        self.assertEqual(token, '123e4567-e89b-12d3-a456-426655440000')
+        self.assertTrue(mock_post.call_args.kwargs['json']['unitedToken'])
+
+    @patch('app_cz.services.true_api_client.attached_signed_data',
+           return_value=('data', 'SIGNED'))
+    @patch('app_cz.services.true_api_client.external_http.get')
+    @patch('app_cz.services.true_api_client.external_http.post')
+    def test_falls_back_to_token_field(self, mock_post, mock_get, *_):
+        from app_cz.services.true_api_client import TrueAPIClient
+
+        mock_get.return_value = self._ok_response(
+            {'uuid': 'u-1', 'data': 'data'}
+        )
+        mock_post.return_value = self._ok_response({'token': 'TOKEN-PLAIN'})
+
+        self.assertEqual(TrueAPIClient().get_token(), 'TOKEN-PLAIN')
+
+    @patch('app_cz.services.true_api_client.attached_signed_data',
+           return_value=('data', 'SIGNED'))
+    @patch('app_cz.services.true_api_client.external_http.get')
+    @patch('app_cz.services.true_api_client.external_http.post')
+    def test_raises_when_no_token(self, mock_post, mock_get, *_):
+        from app_cz.services.true_api_client import TrueAPIClient
+
+        mock_get.return_value = self._ok_response(
+            {'uuid': 'u-1', 'data': 'data'}
+        )
+        mock_post.return_value = self._ok_response({})
+
+        with self.assertRaises(ValueError):
+            TrueAPIClient().get_token()
+
+
 class ReservePartiesTokenFailureTests(TestCase):
     """Резерв партий не падает 500 при сбое получения токена TrueAPI."""
 

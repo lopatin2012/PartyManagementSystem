@@ -6,10 +6,10 @@
 Токен получается по стандартному flow:
   1. GET /auth/key → {"uuid": "...", "data": "..."}
   2. Подпись data УКЭП (attached_signed_data)
-  3. POST /auth/simpleSignIn → {"token": "..."} / {"uuidToken": "..."}
+  3. POST /auth/simpleSignIn → {"uuidToken": "<uuid>", "expireDate": ...}
 
-Используется для методов Национального каталога и других endpoints True API,
-требующих Bearer-аутентификации.
+Запрашивается единый токен в формате UUID (`unitedToken: true`); JWT
+поддерживается ЧЗ только до 31.12.2026.
 """
 
 import logging
@@ -74,7 +74,9 @@ class TrueAPIClient:
         response.raise_for_status()
 
         result = response.json()
-        token = result.get('token') or result.get('uuidToken')
+        # При unitedToken=True ЧЗ отдаёт uuidToken (единый токен в UUID).
+        # `token` может остаться legacy-значением (JWT), поэтому он только fallback.
+        token = result.get('uuidToken') or result.get('token')
         if not token:
             raise ValueError('Токен отсутствует в ответе True API (simpleSignIn)')
 

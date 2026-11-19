@@ -239,7 +239,8 @@ class NationalCatalogClient:
     """Клиент «Национального каталога» (ГИС МТ).
 
     Методы каталога размещаются на базовом адресе True API и аутентифицируются
-    JWT-токеном (Bearer), получаемым через TrueAPIClient.get_jwt_token().
+    единым токеном в формате UUID (Bearer), получаемым через
+    TrueAPIClient.get_token().
     """
 
     PAGE_SIZE = 100
@@ -274,11 +275,11 @@ class NationalCatalogClient:
             self._wait_prev_phase = None
 
     def _auth_headers(self) -> Dict[str, str]:
-        if not getattr(self, '_jwt_token', None):
-            self._jwt_token = self.true_api_client.get_token()
+        if not getattr(self, '_token', None):
+            self._token = self.true_api_client.get_token()
         return {
             'accept': 'application/json',
-            'Authorization': f'Bearer {self._jwt_token}',
+            'Authorization': f'Bearer {self._token}',
         }
 
     def _make_request(
