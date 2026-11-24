@@ -348,6 +348,19 @@ class SUZAccount(models.Model):
         verbose_name="Токен действителен до"
     )
 
+    # Единый токен True API в формате UUID. Живёт 10 часов и считается
+    # действующим на стороне ЧЗ, поэтому его нельзя запрашивать на каждую
+    # операцию (лимит — 1000 действующих токенов на пользователя).
+    true_api_token = models.CharField(
+        max_length=512,
+        blank=True, null=True,
+        verbose_name="Единый токен True API (UUID)"
+    )
+    true_api_token_expires_at = models.DateTimeField(
+        blank=True, null=True,
+        verbose_name="Токен True API действителен до"
+    )
+
     # Аудит.
     created_at = models.DateTimeField(
         auto_now_add=True,

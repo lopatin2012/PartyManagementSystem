@@ -1956,8 +1956,28 @@ class TrueApiSessionTokenTests(TestCase):
         self.assertIn('Неверная подпись', result['message'])
 
 
-class TrueApiClientTokenTests(TestCase):
-    """TrueAPIClient: единый токен UUID важнее legacy-поля token."""
+class TrueApiClientTokenTests(SimpleTestCase):
+    """TrueAPIClient получает токен из общего кэша suz_client."""
+
+    @patch('app_cz.services.true_api_client.get_true_api_session_token',
+           return_value={'token': 'UUID-TOKEN', 'message': 'ok'})
+    def test_returns_shared_token(self, mock_get):
+        from app_cz.services.true_api_client import TrueAPIClient
+
+        self.assertEqual(TrueAPIClient().get_token(), 'UUID-TOKEN')
+        mock_get.assert_called_once()
+
+    @patch('app_cz.services.true_api_client.get_true_api_session_token',
+           return_value={'token': None, 'message': 'нет токена'})
+    def test_raises_without_token(self, mock_get):
+        from app_cz.services.true_api_client import TrueAPIClient
+
+        with self.assertRaisesMessage(ValueError, 'нет токена'):
+            TrueAPIClient().get_token()
+
+
+class TrueApiTokenCacheTests(TestCase):
+    """Единый UUID-токен кэшируется в SUZAccount и переиспользуется."""
 
     def setUp(self):
         from app_cz.models import SUZAccount
@@ -1978,55 +1998,153 @@ class TrueApiClientTokenTests(TestCase):
         response.text = str(payload)
         return response
 
-    @patch('app_cz.services.true_api_client.attached_signed_data',
-           return_value=('data', 'SIGNED'))
-    @patch('app_cz.services.true_api_client.external_http.get')
-    @patch('app_cz.services.true_api_client.external_http.post')
-    def test_prefers_uuid_token_and_requests_united_token(
-            self, mock_post, mock_get, *_):
-        from app_cz.services.true_api_client import TrueAPIClient
-
-        mock_get.return_value = self._ok_response(
-            {'uuid': 'u-1', 'data': 'data'}
+    def _cache(self, token, expires_delta):
+        self.account.true_api_token = token
+        self.account.true_api_token_expires_at = (
+            timezone.now() + expires_delta
         )
+        self.account.save(update_fields=[
+            'true_api_token', 'true_api_token_expires_at',
+        ])
+
+    @patch('app_cz.services.suz_client.attached_signed_data',
+           return_value=('data', 'SIGNED'))
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           return_value={'uuid': 'u-1', 'data': 'data'})
+    @patch('app_cz.services.suz_client.external_http.post')
+    def test_reuses_cached_token(self, mock_post, *_):
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        token = '123e4567-e89b-12d3-a456-426655440001'
+        mock_post.return_value = self._ok_response({'uuidToken': token})
+
+        first = get_true_api_session_token()
+        second = get_true_api_session_token()
+
+        self.assertEqual(first['token'], token)
+        self.assertEqual(second['token'], token)
+        self.assertEqual(mock_post.call_count, 1)
+        self.account.refresh_from_db()
+        self.assertEqual(self.account.true_api_token, token)
+        self.assertIsNotNone(self.account.true_api_token_expires_at)
+
+    @patch('app_cz.services.suz_client.attached_signed_data',
+           return_value=('data', 'SIGNED'))
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           return_value={'uuid': 'u-1', 'data': 'data'})
+    @patch('app_cz.services.suz_client.external_http.post')
+    def test_expired_token_is_refreshed(self, mock_post, *_):
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        self._cache('OLD', -timedelta(minutes=1))
+        mock_post.return_value = self._ok_response({'uuidToken': 'NEW'})
+
+        result = get_true_api_session_token()
+
+        self.assertEqual(result['token'], 'NEW')
+        self.assertEqual(mock_post.call_count, 1)
+
+    @patch('app_cz.services.suz_client.attached_signed_data',
+           return_value=('data', 'SIGNED'))
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           return_value={'uuid': 'u-1', 'data': 'data'})
+    @patch('app_cz.services.suz_client.external_http.post')
+    def test_force_refresh_ignores_cache(self, mock_post, *_):
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        self._cache('OLD', timedelta(hours=1))
+        mock_post.return_value = self._ok_response({'uuidToken': 'NEW'})
+
+        result = get_true_api_session_token(force_refresh=True)
+
+        self.assertEqual(result['token'], 'NEW')
+        self.assertEqual(mock_post.call_count, 1)
+
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           side_effect=Exception('нет сети'))
+    def test_refresh_failure_uses_still_valid_cached_token(self, *_):
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        self._cache('CACHED', timedelta(hours=1))
+
+        result = get_true_api_session_token(force_refresh=True)
+
+        self.assertEqual(result['token'], 'CACHED')
+        self.assertIn('кэша', result['message'])
+
+    @patch('app_cz.services.suz_client.attached_signed_data',
+           return_value=('data', 'SIGNED'))
+    @patch('app_cz.services.suz_client.get_true_api_auth_key',
+           return_value={'uuid': 'u-1', 'data': 'data'})
+    @patch('app_cz.services.suz_client.external_http.post')
+    def test_expire_date_limits_cache_ttl(self, mock_post, *_):
+        from app_cz.services.suz_client import get_true_api_session_token
+
         mock_post.return_value = self._ok_response({
-            'token': 'LEGACY-JWT',
-            'uuidToken': '123e4567-e89b-12d3-a456-426655440000',
+            'uuidToken': 'UUID-2',
+            'expireDate': '2099-01-01T00:00:00.000Z',
         })
 
-        token = TrueAPIClient().get_token()
+        get_true_api_session_token()
 
-        self.assertEqual(token, '123e4567-e89b-12d3-a456-426655440000')
-        self.assertTrue(mock_post.call_args.kwargs['json']['unitedToken'])
+        self.account.refresh_from_db()
+        expires = self.account.true_api_token_expires_at
+        now = timezone.now()
+        if timezone.is_aware(expires):
+            expires = timezone.make_naive(
+                expires, timezone.get_current_timezone()
+            )
+        if timezone.is_aware(now):
+            now = timezone.make_naive(now, timezone.get_current_timezone())
+        # 2099-й ограничен TTL 10 ч, минус запас 30 мин.
+        self.assertGreater(expires, now + timedelta(hours=9))
+        self.assertLessEqual(expires, now + timedelta(hours=10))
 
-    @patch('app_cz.services.true_api_client.attached_signed_data',
-           return_value=('data', 'SIGNED'))
-    @patch('app_cz.services.true_api_client.external_http.get')
-    @patch('app_cz.services.true_api_client.external_http.post')
-    def test_falls_back_to_token_field(self, mock_post, mock_get, *_):
+    def test_true_api_client_reuses_cached_token(self):
         from app_cz.services.true_api_client import TrueAPIClient
 
-        mock_get.return_value = self._ok_response(
-            {'uuid': 'u-1', 'data': 'data'}
+        cached = '123e4567-e89b-12d3-a456-426655440002'
+        self._cache(cached, timedelta(hours=1))
+
+        with patch(
+            'app_cz.services.suz_client.external_http.get'
+        ) as mock_get, patch(
+            'app_cz.services.suz_client.external_http.post'
+        ) as mock_post:
+            self.assertEqual(TrueAPIClient().get_token(), cached)
+
+        mock_get.assert_not_called()
+        mock_post.assert_not_called()
+
+
+class AppliedCodesSingleTokenTests(SimpleTestCase):
+    """Один токен на весь прогон _applied_codes, а не на группу."""
+
+    @patch('app_cz.services.code_status.get_cises_statuses', return_value={})
+    @patch('app_cz.services.suz_client.get_true_api_session_token',
+           return_value={'token': 'UUID'})
+    def test_fetches_token_once_for_all_groups(self, mock_token, mock_statuses):
+        from app_cz.services.desync_resolution import _applied_codes
+
+        def _uip(uip_id, group):
+            return Mock(
+                product_sku_id=uip_id,
+                product_sku=Mock(product=Mock(group=group)),
+            )
+
+        _applied_codes(
+            {'a': ['1'], 'b': ['2'], 'c': ['3']},
+            {
+                'a': _uip('a', 'milk'),
+                'b': _uip('b', 'milk'),
+                'c': _uip('c', 'water'),
+            },
         )
-        mock_post.return_value = self._ok_response({'token': 'TOKEN-PLAIN'})
 
-        self.assertEqual(TrueAPIClient().get_token(), 'TOKEN-PLAIN')
-
-    @patch('app_cz.services.true_api_client.attached_signed_data',
-           return_value=('data', 'SIGNED'))
-    @patch('app_cz.services.true_api_client.external_http.get')
-    @patch('app_cz.services.true_api_client.external_http.post')
-    def test_raises_when_no_token(self, mock_post, mock_get, *_):
-        from app_cz.services.true_api_client import TrueAPIClient
-
-        mock_get.return_value = self._ok_response(
-            {'uuid': 'u-1', 'data': 'data'}
-        )
-        mock_post.return_value = self._ok_response({})
-
-        with self.assertRaises(ValueError):
-            TrueAPIClient().get_token()
+        self.assertEqual(mock_token.call_count, 1)
+        self.assertEqual(mock_statuses.call_count, 2)
+        for call in mock_statuses.call_args_list:
+            self.assertEqual(call.kwargs['token'], 'UUID')
 
 
 class ReservePartiesTokenFailureTests(TestCase):
