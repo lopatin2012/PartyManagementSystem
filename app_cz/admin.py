@@ -296,9 +296,15 @@ class SUZAccountAdmin(admin.ModelAdmin):
             'fields': ('oms_id', 'device_name', 'connection_identifier')
         }),
         ('Авторизация (обновляется автоматически)', {
-            'fields': ('dynamic_token', 'token_expires_at'),
+            'fields': (
+                'dynamic_token', 'token_expires_at',
+                'true_api_token', 'true_api_token_expires_at',
+            ),
             'classes': ('collapse',),
-            'description': 'Эти поля заполняются автоматически при успешном запросе токена из СУЗ.'
+            'description': (
+                'Динамический токен СУЗ (clientToken) и единый UUID-токен '
+                'True API. Заполняются автоматически.'
+            )
         }),
         ('Системная информация', {
             'fields': ('created_at', 'updated_at'),
@@ -306,7 +312,11 @@ class SUZAccountAdmin(admin.ModelAdmin):
         }),
     )
 
-    readonly_fields = ('dynamic_token', 'token_expires_at', 'created_at', 'updated_at')
+    readonly_fields = (
+        'dynamic_token', 'token_expires_at',
+        'true_api_token', 'true_api_token_expires_at',
+        'created_at', 'updated_at',
+    )
 
     @admin.display(description='Статус')
     def status_badge(self, obj):
