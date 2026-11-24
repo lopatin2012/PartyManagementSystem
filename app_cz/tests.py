@@ -3652,6 +3652,25 @@ class ReservedPartyApiLookupTests(TestCase):
         self.assertEqual(response.json()['party_number'], self.number)
 
 
+class SuzAccountAdminTests(SimpleTestCase):
+    """Поля единого токена True API видны в админке и только для чтения."""
+
+    def test_true_api_token_fields_are_exposed(self):
+        from django.contrib import admin
+        from app_cz.admin import SUZAccountAdmin
+        from app_cz.models import SUZAccount
+
+        model_admin = SUZAccountAdmin(SUZAccount, admin.site)
+        fields = [
+            field
+            for _, options in model_admin.fieldsets
+            for field in options['fields']
+        ]
+        for field in ('true_api_token', 'true_api_token_expires_at'):
+            self.assertIn(field, fields)
+            self.assertIn(field, model_admin.readonly_fields)
+
+
 class CheckSuzTokenMessageTests(TestCase):
     """check_suz_token сообщает и состояние единого токена True API."""
 
