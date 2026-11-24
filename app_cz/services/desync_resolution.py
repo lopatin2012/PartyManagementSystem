@@ -168,6 +168,13 @@ def _applied_codes(codes_by_uip: dict, uip_by_id: dict, token: str = None) -> se
             continue
         codes_by_group.setdefault(group, []).extend(codes)
 
+    # Один токен на весь прогон: get_cises_statuses иначе запросит новый
+    # на каждую товарную группу (лимит ЧЗ — 1000 действующих токенов).
+    if token is None and codes_by_group:
+        from app_cz.services.suz_client import get_true_api_session_token
+
+        token = (get_true_api_session_token() or {}).get('token')
+
     applied = set()
     for group, codes in codes_by_group.items():
         for code, raw_status in get_cises_statuses(codes, group, token=token).items():

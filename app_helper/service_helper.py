@@ -194,6 +194,10 @@ def check_suz_token() -> dict:
     """
     Проверяет активную учётную запись СУЗ и срок действия динамического токена.
 
+    Дополнительно сообщает состояние единого токена True API (UUID), но не
+    считает его отсутствие аварией: он запрашивается лениво при первой
+    операции и обновляется автоматически.
+
     :return: {'is_ok': bool, 'message': str}
     """
     try:
@@ -209,7 +213,35 @@ def check_suz_token() -> dict:
             account.token_expires_at.strftime('%Y-%m-%d %H:%M')
             if account.token_expires_at else 'без срока'
         )
-        return {'is_ok': True, 'message': f'Токен действителен до {expires}'}
+
+        true_api_note = ''
+        if account.true_api_token:
+            import uuid
+
+            from app_cz.services.suz_client import true_api_token_is_valid
+
+            try:
+                uuid.UUID(str(account.true_api_token))
+                token_format_ok = True
+            except (ValueError, TypeError, AttributeError):
+                token_format_ok = False
+
+            if not token_format_ok:
+                true_api_note = '; True API токен в некорректном формате'
+            elif true_api_token_is_valid(account):
+                true_api_note = (
+                    '; True API токен до '
+                    f'{account.true_api_token_expires_at:%Y-%m-%d %H:%M}'
+                )
+            else:
+                true_api_note = '; True API токен требует обновления'
+        else:
+            true_api_note = '; True API токен ещё не запрашивался'
+
+        return {
+            'is_ok': True,
+            'message': f'Токен действителен до {expires}{true_api_note}',
+        }
     except Exception as e:
         logger.error(f'Проверка СУЗ: {e}')
         return {'is_ok': False, 'message': str(e)}

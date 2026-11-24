@@ -2,7 +2,10 @@
 
 import json
 import logging
+from datetime import timedelta
+
 import requests
+from django.utils import timezone
 
 from app_helper import external_http
 from django.core.exceptions import ObjectDoesNotExist
@@ -55,11 +58,24 @@ def send_application_report(
     except ObjectDoesNotExist:
         raise ValueError("Активная учётная запись СУЗ не найдена в системе")
 
+    # Токен на исходе — обновляем заранее (плановая задача может не успеть).
+    if (
+        account.dynamic_token
+        and account.token_expires_at
+        and account.token_expires_at <= timezone.now() + timedelta(hours=1)
+    ):
+        from app_cz.services.suz_client import ensure_suz_token_valid
+
+        ensure_suz_token_valid()
+        account.refresh_from_db()
+
     client_token = account.dynamic_token
     oms_id = account.oms_id
 
     if not client_token:
         raise ValueError("Динамический токен СУЗ отсутствует. Обновите его перед отправкой отчёта.")
+    if account.token_expires_at and account.token_expires_at <= timezone.now():
+        raise ValueError("Динамический токен СУЗ истёк. Обновите его перед отправкой отчёта.")
 
     url = SUZ.utilisation
     type_product = TypeProduct.MILK.value

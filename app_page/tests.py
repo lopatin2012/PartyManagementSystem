@@ -303,6 +303,32 @@ class UipListViewDesyncFilterTests(TestCase):
         self.assertEqual(response.context['total_count'], 2)
         self.assertFalse(response.context['desync_only'])
 
+    def test_action_buttons_do_not_submit_filter_form(self):
+        """Кнопки действий внутри формы фильтров не должны её отправлять.
+
+        Без type="button" браузер считает их submit: отмена confirm всё
+        равно перезагружает страницу и теряет query-фильтры (в т.ч. desync).
+        """
+        from app_uip.models import PartyStatusChoices, ProductionParty
+
+        desync = self._uip('15', True)
+        ProductionParty.objects.create(
+            uip=desync,
+            production_party='1',
+            external_number_task='task-1',
+        )
+        draft = self._uip('16', False)
+        draft.status = PartyStatusChoices.DRAFT
+        draft.save(update_fields=['status'])
+
+        html = self.client.get(reverse('uip_list')).content.decode()
+
+        for css_class in ('btn-check-cz', 'btn-report', 'btn-reserve'):
+            self.assertRegex(
+                html,
+                rf'<button\s+type="button"\s+class="[^"]*{css_class}',
+            )
+
 
 @STATIC_OVERRIDE
 class NavigationUipLinkTests(TestCase):

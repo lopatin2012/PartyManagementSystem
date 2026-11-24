@@ -348,6 +348,19 @@ class SUZAccount(models.Model):
         verbose_name="Токен действителен до"
     )
 
+    # Единый токен True API в формате UUID. Живёт 10 часов и считается
+    # действующим на стороне ЧЗ, поэтому его нельзя запрашивать на каждую
+    # операцию (лимит — 1000 действующих токенов на пользователя).
+    true_api_token = models.CharField(
+        max_length=512,
+        blank=True, null=True,
+        verbose_name="Единый токен True API (UUID)"
+    )
+    true_api_token_expires_at = models.DateTimeField(
+        blank=True, null=True,
+        verbose_name="Токен True API действителен до"
+    )
+
     # Аудит.
     created_at = models.DateTimeField(
         auto_now_add=True,
@@ -380,11 +393,30 @@ class SUZAccount(models.Model):
         Переопределяем save, чтобы при активации этой записи,
         все остальные записи автоматически деактивировались.
         """
-        if self.is_active:
+        update_fields = kwargs.get('update_fields')
+        # Обновление только токенов не должно трогать другие записи.
+        if self.is_active and (
+            update_fields is None or 'is_active' in update_fields
+        ):
             # Снимаем флаг активности со всех остальных записей.
             SUZAccount.objects.exclude(pk=self.pk).update(is_active=False)
 
         super().save(*args, **kwargs)
+
+    def clear_tokens(self):
+        """Сбрасывает сохранённые токены (при сбросе/смене учётной записи)."""
+        if self.pk:
+            type(self).objects.filter(pk=self.pk).update(
+                dynamic_token=None,
+                token_expires_at=None,
+                true_api_token=None,
+                true_api_token_expires_at=None,
+                updated_at=timezone.now(),
+            )
+        self.dynamic_token = None
+        self.token_expires_at = None
+        self.true_api_token = None
+        self.true_api_token_expires_at = None
 
     @property
     def is_token_valid(self) -> bool:
