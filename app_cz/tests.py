@@ -3094,6 +3094,47 @@ class CheckUipCzEndpointTests(TestCase):
         self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
         self.assertTrue(self.uip.is_desync)
 
+    def test_failed_reserve_absent_fresh_reserve_registers(self):
+        """Номера нет в резерве, но резерв моложе 30 дней → зарегистрирован."""
+        self.uip.reservation_date = timezone.now().date() - timedelta(days=5)
+        self.uip.save(update_fields=['reservation_date'])
+
+        response = self._failed_reserve(set())
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body['is_error'])
+        self.assertEqual(body['result'], 'registered')
+        self.uip.refresh_from_db()
+        self.assertEqual(self.uip.status, PartyStatusChoices.REGISTERED)
+        self.assertFalse(self.uip.is_desync)
+
+    def test_failed_reserve_absent_old_reserve_keeps_desync(self):
+        """Резерв старше 30 дней мог сгореть → не регистрируем."""
+        self.uip.reservation_date = timezone.now().date() - timedelta(days=31)
+        self.uip.save(update_fields=['reservation_date'])
+
+        response = self._failed_reserve(set())
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['result'], 'desync')
+        self.uip.refresh_from_db()
+        self.assertEqual(self.uip.status, PartyStatusChoices.RESERVED_LOCAL)
+        self.assertTrue(self.uip.is_desync)
+
+    def test_failed_reserve_absent_exactly_30_days_keeps_desync(self):
+        """Ровно 30 дней — уже не «моложе», регистрацию не подтверждаем."""
+        self.uip.reservation_date = timezone.now().date() - timedelta(days=30)
+        self.uip.save(update_fields=['reservation_date'])
+
+        response = self._failed_reserve(set())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['result'], 'desync')
+        self.uip.refresh_from_db()
+        self.assertTrue(self.uip.is_desync)
+
     def test_draft_in_cz_reserve_becomes_reserved(self):
         """Черновик, числящийся в резерве ЧЗ, становится reserved_local."""
         self.uip.status = PartyStatusChoices.DRAFT

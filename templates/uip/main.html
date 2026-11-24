@@ -364,6 +364,7 @@
                                     <!-- Проверка УИП в ЧЗ (для рассинхрона). -->
                                     {% if uip.is_desync %}
                                         <button
+                                            type="button"
                                             class="btn-row-action btn-check-cz btn-icon"
                                             data-uip-id="{{ uip.id }}"
                                             data-uip-number="{{ uip.number }}"
@@ -381,6 +382,7 @@
                                     <!-- Кнопки для взаимодействуя с УИП -->
                                     {% if uip.status == 'draft' %}
                                         <button
+                                            type="button"
                                             class="btn-row-action btn-reserve btn-icon"
                                             data-uip-id="{{ uip.id }}"
                                             data-uip-number="{{ uip.number }}"
@@ -395,6 +397,7 @@
                                     {% elif uip.status == 'reserved_local' or uip.status == 'reserved_cz' %}
                                         {% if uip.has_task %}
                                             <button
+                                                type="button"
                                                 class="btn-row-action btn-report btn-icon"
                                                 data-uip-id="{{ uip.id }}"
                                                 data-uip-number="{{ uip.number }}"

@@ -5,7 +5,7 @@ import logging
 import re
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app_helper.access import (
     admin_required, admin_required_json, generate_uip_required_json,
@@ -941,8 +941,12 @@ def api_check_uip_cz(request):
       регистрация подтверждена, `reserved_*` → REGISTERED, снимаем is_desync.
       `result: "registered"`.
     - Код регистрацию не подтвердил: смотрим список резерва ЧЗ. Номер в списке →
-      он зарезервирован, снимаем is_desync (`result: "reserved"`); номера нет и
-      зарезервировать его не удалось → он уже зарегистрирован (`result: "registered"`).
+      он зарезервирован, снимаем is_desync (`result: "reserved"`).
+    - Номера нет в списке, но с даты резервирования прошло меньше 30 дней →
+      номер не мог «сгореть», значит его использовали → REGISTERED
+      (`result: "registered"`).
+    - Номера нет и резерв старше 30 дней (или дата неизвестна) → УИП остаётся
+      в рассинхроне (`result: "desync"`).
     - Список резерва ЧЗ недоступен → УИП остаётся в рассинхроне (`result: "desync"`).
 
     Во всех исходах (кроме ошибок запроса) отвечаем 200 — чтобы для фронта
@@ -1029,6 +1033,7 @@ def api_check_uip_cz(request):
     # 1) Подтверждаем регистрацию по кодам УИП (APPLIED/INTRODUCED в ЧЗ =
     #    отчёт о нанесении сформирован).
     from app_cz.services.desync_resolution import (
+        register_desync_uip,
         resolve_desync_uip,
         set_desync_uip_reserved,
     )
@@ -1050,8 +1055,8 @@ def api_check_uip_cz(request):
         )
 
     # 2) Код не подтвердил регистрацию — проверяем список резерва ЧЗ:
-    #    номер есть → он зарезервирован; номера нет, но код не использован →
-    #    недостаточно данных, оставляем в рассинхроне.
+    #    номер есть → он зарезервирован; номера нет → смотрим на возраст
+    #    резерва (ниже).
     from app_cz.services.party_service import get_reserved_party_numbers
 
     reserved_numbers = get_reserved_party_numbers()
@@ -1090,8 +1095,40 @@ def api_check_uip_cz(request):
             status=status.HTTP_200_OK,
         )
 
+    # Номера нет в резерве, зарезервировать не удалось. Если резерв моложе
+    # BURN_DAYS, номер ещё не мог «сгореть» — значит, его использовали.
+    from app_cz.services.reserve_monitor import BURN_DAYS
+
+    reserve_age = (
+        timezone.now().date() - uip.reservation_date
+        if uip.reservation_date else None
+    )
+    if reserve_age is not None and reserve_age < timedelta(days=BURN_DAYS):
+        register_desync_uip(
+            uip,
+            source='api',
+            note=(
+                'Проверка в ЧЗ: номера нет в резерве, с резервирования прошло '
+                f'меньше {BURN_DAYS} дней — УИП зарегистрирован'
+            ),
+        )
+        return Response(
+            {
+                'is_error': False,
+                'message': (
+                    f'УИП {uip.number} зарегистрирован: номера нет в резерве '
+                    f'ЧЗ, а с резервирования прошло меньше {BURN_DAYS} дней.'
+                ),
+                'result': 'registered',
+                'number': uip.number,
+                'new_status': uip.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
     # Номера нет в резерве, зарезервировать не удалось, код регистрацию не
-    # подтверждает → не считаем зарегистрированным без подтверждения кодом.
+    # подтверждает, резерв старше BURN_DAYS (или дата неизвестна) → не считаем
+    # зарегистрированным без подтверждения.
     return Response(
         {
             'is_error': False,
