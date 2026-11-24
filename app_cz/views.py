@@ -354,6 +354,14 @@ def api_setup_suz_account(request):
         valid_from = datetime.strptime(cert_info['valid_from'], "%d-%m-%Y")
         valid_to = datetime.strptime(cert_info['valid_for'], "%d-%m-%Y")
 
+        existing = SUZAccount.objects.filter(
+            serial_number=serial_number
+        ).first()
+        identity_changed = bool(existing) and (
+            existing.inn != inn
+            or existing.certificate_name != cert_info['fio']
+        )
+
         account, created = SUZAccount.objects.update_or_create(
             serial_number=serial_number,
             defaults={
@@ -367,6 +375,10 @@ def api_setup_suz_account(request):
                 'connection_identifier': connection_identifier,
             }
         )
+
+        if identity_changed:
+            # Токены принадлежат прежней учётной записи — не переиспользуем.
+            account.clear_tokens()
 
         return Response(
             {
@@ -393,8 +405,15 @@ def api_setup_suz_account(request):
 @api_view(['POST'])
 @permission_classes([IsSuperUser])
 def api_reset_suz_account(request):
-    """Деактивирует текущую активную запись СУЗ."""
-    SUZAccount.objects.filter(is_active=True).update(is_active=False)
+    """Деактивирует текущую активную запись СУЗ и сбрасывает её токены."""
+    SUZAccount.objects.filter(is_active=True).update(
+        is_active=False,
+        dynamic_token=None,
+        token_expires_at=None,
+        true_api_token=None,
+        true_api_token_expires_at=None,
+        updated_at=timezone.now(),
+    )
     return Response(
         {
             'success': True,
@@ -449,7 +468,7 @@ def api_refresh_suz_token(request):
     Принудительное обновления динамического токена СУЗ.
     """
     try:
-        success = refresh_suz_dynamic_token()
+        success = refresh_suz_dynamic_token(force=True)
 
         if success:
             return Response(

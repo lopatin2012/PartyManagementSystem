@@ -4,8 +4,10 @@
 
 import json
 import logging
+from datetime import timedelta
 
 import requests
+from django.utils import timezone
 
 from app_helper import external_http
 from app_cz.models import SUZAccount
@@ -645,15 +647,32 @@ def _format_created(timestamp_ms) -> str:
 
 
 def _active_account():
-    """Активная учётная запись СУЗ с omsId и динамическим токеном."""
+    """Активная учётная запись СУЗ с omsId и действующим динамическим токеном."""
     account = SUZAccount.objects.filter(is_active=True).first()
     if account is None:
         return None, 'Активная учётная запись СУЗ не найдена.'
     if not account.oms_id:
         return None, 'У активной учётной записи СУЗ не задан omsId.'
+
+    # Обновляем токен заранее, если он на исходе: плановая задача может не
+    # успеть (воркер/health недоступны).
+    if (
+        account.dynamic_token
+        and account.token_expires_at
+        and account.token_expires_at <= timezone.now() + timedelta(hours=1)
+    ):
+        from app_cz.services.suz_client import ensure_suz_token_valid
+
+        ensure_suz_token_valid()
+        account.refresh_from_db()
+
     if not account.dynamic_token:
         return None, (
             'Динамический токен СУЗ отсутствует — обновите его в панели статусов.'
+        )
+    if account.token_expires_at and account.token_expires_at <= timezone.now():
+        return None, (
+            'Динамический токен СУЗ истёк — обновите его в панели статусов.'
         )
     return account, None
 

@@ -393,11 +393,30 @@ class SUZAccount(models.Model):
         Переопределяем save, чтобы при активации этой записи,
         все остальные записи автоматически деактивировались.
         """
-        if self.is_active:
+        update_fields = kwargs.get('update_fields')
+        # Обновление только токенов не должно трогать другие записи.
+        if self.is_active and (
+            update_fields is None or 'is_active' in update_fields
+        ):
             # Снимаем флаг активности со всех остальных записей.
             SUZAccount.objects.exclude(pk=self.pk).update(is_active=False)
 
         super().save(*args, **kwargs)
+
+    def clear_tokens(self):
+        """Сбрасывает сохранённые токены (при сбросе/смене учётной записи)."""
+        if self.pk:
+            type(self).objects.filter(pk=self.pk).update(
+                dynamic_token=None,
+                token_expires_at=None,
+                true_api_token=None,
+                true_api_token_expires_at=None,
+                updated_at=timezone.now(),
+            )
+        self.dynamic_token = None
+        self.token_expires_at = None
+        self.true_api_token = None
+        self.true_api_token_expires_at = None
 
     @property
     def is_token_valid(self) -> bool:

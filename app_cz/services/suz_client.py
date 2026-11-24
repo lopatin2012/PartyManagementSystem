@@ -393,64 +393,95 @@ SUZ_TOKEN_REFRESH_ATTEMPTS = 3
 SUZ_TOKEN_REFRESH_THRESHOLD = timedelta(hours=1)
 
 
-def _refresh_suz_dynamic_token_once() -> bool:
+def _suz_dynamic_token_valid(
+        account, min_remaining: timedelta = None,
+) -> bool:
+    """Динамический токен СУЗ ещё можно использовать."""
+    if not account or not account.dynamic_token or not account.token_expires_at:
+        return False
+    min_remaining = min_remaining or SUZ_TOKEN_REFRESH_THRESHOLD
+    return account.token_expires_at > timezone.now() + min_remaining
+
+
+def _refresh_suz_dynamic_token_once(force: bool = False) -> bool:
     """
     Одна попытка полного цикла обновления динамического токена СУЗ.
+
+    Строка учётной записи блокируется на время запроса, чтобы веб, планировщик
+    и воркер не выдали по токену одновременно.
 
     :return: True при успехе, False при неудаче (исключения не пробрасывает).
     """
     try:
-        # 1. Получаем ключи для подписи.
-        auth_data = get_true_api_auth_key()
-        row_uuid = auth_data['uuid']
-        row_data = auth_data['data']
+        with transaction.atomic():
+            account = (
+                SUZAccount.objects.select_for_update()
+                .filter(is_active=True)
+                .first()
+            )
+            if not account:
+                logger.error(
+                    "Активная учётная запись СУЗ не найдена для обновления токена"
+                )
+                return False
 
-        # 2. Подписываем данные (прикреплённая подпись).
-        _, signed_data = attached_signed_data(row_data)
+            # Пока ждали блокировку, токен мог обновить другой процесс.
+            if not force and _suz_dynamic_token_valid(account):
+                return True
 
-        if not signed_data:
-            logger.error("Сервис подписей не вернул подпись для токена СУЗ")
-            return False
+            # 1. Получаем ключи для подписи.
+            auth_data = get_true_api_auth_key()
+            row_uuid = auth_data['uuid']
+            row_data = auth_data['data']
 
-        # 3. Получаем динамический токен.
-        dynamic_token = get_true_api_dynamic_token(row_uuid, signed_data)
+            # 2. Подписываем данные (прикреплённая подпись).
+            _, signed_data = attached_signed_data(row_data)
 
-        # Проверка корректности токена.
-        try:
-            uuid.UUID(dynamic_token)
-        except ValueError:
-            logger.error(f"Получен некорректный UUID: {dynamic_token}")
-            return False
+            if not signed_data:
+                logger.error("Сервис подписей не вернул подпись для токена СУЗ")
+                return False
 
-        # 4. Сохраняем в БД.
-        account = SUZAccount.objects.filter(is_active=True).first()
-        if not account:
-            logger.error("Активная учётная запись СУЗ не найдена перед сохранением")
-            return False
+            # 3. Получаем динамический токен.
+            dynamic_token = get_true_api_dynamic_token(row_uuid, signed_data)
 
-        account.dynamic_token = dynamic_token
-        # ЧЗ обычно выдаёт токен на 10 часов. Сохраняем с запасом на 8 часов.
-        account.token_expires_at = timezone.now() + timedelta(hours=8)
-        account.save(update_fields=['dynamic_token', 'token_expires_at', 'updated_at'])
+            # Проверка корректности токена (само значение в лог не пишем).
+            try:
+                uuid.UUID(dynamic_token)
+            except (ValueError, TypeError, AttributeError):
+                logger.error(
+                    "Получен токен СУЗ не в формате UUID — не сохраняем"
+                )
+                return False
 
-        logger.info(
-            f"Динамический токен успешно обновлён и сохранён "
-            f"для {account.certificate_name}"
-        )
-        return True
+            # 4. Сохраняем в БД (queryset.update — без побочного save()).
+            expires_at = timezone.now() + timedelta(hours=8)
+            SUZAccount.objects.filter(pk=account.pk).update(
+                dynamic_token=dynamic_token,
+                token_expires_at=expires_at,
+                updated_at=timezone.now(),
+            )
+
+            logger.info(
+                f"Динамический токен успешно обновлён и сохранён "
+                f"для {account.certificate_name}"
+            )
+            return True
 
     except Exception as e:
         logger.error(f"Ошибка попытки обновления токена СУЗ: {e}")
         return False
 
 
-def refresh_suz_dynamic_token(max_attempts: int = None) -> bool:
+def refresh_suz_dynamic_token(
+        max_attempts: int = None, force: bool = False,
+) -> bool:
     """
     Полный цикл обновления динамического токена СУЗ с повторами.
 
     При неудаче повторяем до `max_attempts` раз (по умолчанию
     SUZ_TOKEN_REFRESH_ATTEMPTS = 3). После исчерпания попыток больше не
-    пробуем и возвращаем False.
+    пробуем и возвращаем False. При `force=True` обновляем токен, даже если
+    он ещё действует (кнопка «Обновить»).
 
     :return: True при успехе, False при неудаче.
     """
@@ -459,7 +490,7 @@ def refresh_suz_dynamic_token(max_attempts: int = None) -> bool:
     max_attempts = max(1, int(max_attempts))
 
     for attempt in range(1, max_attempts + 1):
-        if _refresh_suz_dynamic_token_once():
+        if _refresh_suz_dynamic_token_once(force=force):
             return True
         logger.warning(
             f"Обновление токена СУЗ: попытка {attempt}/{max_attempts} "

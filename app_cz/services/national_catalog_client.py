@@ -15,6 +15,7 @@ from app_factory.models import NationalCatalogProduct
 from app_cz.models import SUZAccount
 from app_cz.services.rate_limit import wait_nk_endpoint
 from app_cz.services.true_api_client import TrueAPIClient
+from app_cz.services.suz_client import get_true_api_session_token
 from app_event.utils import log_event
 
 logger = logging.getLogger(__name__)
@@ -275,19 +276,20 @@ class NationalCatalogClient:
             self._wait_prev_phase = None
 
     def _auth_headers(self) -> Dict[str, str]:
-        if not getattr(self, '_token', None):
-            self._token = self.true_api_client.get_token()
+        # Токен проверяется на каждом запросе: долгий прогон НК может
+        # пережить срок жизни одного токена.
         return {
             'accept': 'application/json',
-            'Authorization': f'Bearer {self._token}',
+            'Authorization': f'Bearer {self.true_api_client.get_token()}',
         }
 
     def _make_request(
         self, method: str, endpoint: str, **kwargs
     ) -> Dict:
         url = f'{self.base_url}{endpoint}'
-        headers = kwargs.pop('headers', {})
-        headers = {**self._auth_headers(), **headers}
+        extra_headers = kwargs.pop('headers', {})
+        headers = {**self._auth_headers(), **extra_headers}
+        token_refreshed = False
 
         # Соблюдаем документированные лимиты True API (True_API_GIS_MT.txt):
         # /nk/product — не более 10 запросов за 5 минут, остальные методы НК —
@@ -313,6 +315,16 @@ class NationalCatalogClient:
                         f'пауза {backoff} сек'
                     )
                     time.sleep(backoff)
+                    continue
+                if response.status_code == 401 and not token_refreshed:
+                    # Токен отозван или истёк — принудительно обновляем и
+                    # повторяем запрос один раз.
+                    logger.warning(
+                        f'True API вернул 401 для {url} — обновляем токен'
+                    )
+                    get_true_api_session_token(force_refresh=True)
+                    headers = {**self._auth_headers(), **extra_headers}
+                    token_refreshed = True
                     continue
                 response.raise_for_status()
                 return response.json()

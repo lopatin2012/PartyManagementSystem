@@ -2749,6 +2749,8 @@ class SuzManagementPermissionsTests(TestCase):
             connection_identifier='conn',
             dynamic_token='token',
             token_expires_at=timezone.now() + timedelta(hours=2),
+            true_api_token='123e4567-e89b-12d3-a456-426655440000',
+            true_api_token_expires_at=timezone.now() + timedelta(hours=5),
         )
         self.staff = User.objects.create_user(
             username='suz-perm-staff', password='pass', is_staff=True,
@@ -2794,6 +2796,72 @@ class SuzManagementPermissionsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.account.refresh_from_db()
         self.assertFalse(self.account.is_active)
+        self.assertIsNone(self.account.dynamic_token)
+        self.assertIsNone(self.account.token_expires_at)
+        self.assertIsNone(self.account.true_api_token)
+        self.assertIsNone(self.account.true_api_token_expires_at)
+
+    def test_setup_clears_tokens_when_identity_changes(self):
+        self.client.force_login(self.superuser)
+        cert = {
+            'serial_number': 'SN-SUZ-PERM',
+            'fio': 'Новый сертификат',
+            'valid_from': '01-01-2026',
+            'valid_for': '01-01-2027',
+        }
+
+        with patch(
+            'app_cz.views.get_list_certificates', return_value=[cert]
+        ):
+            response = self.client.post(
+                '/cz/api/setup-suz-account/',
+                data={
+                    'serial_number': 'SN-SUZ-PERM',
+                    'inn': '1234567890',
+                    'oms_id': 'oms',
+                    'device_name': 'device',
+                    'connection_identifier': 'conn',
+                },
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.account.refresh_from_db()
+        self.assertEqual(self.account.certificate_name, 'Новый сертификат')
+        self.assertIsNone(self.account.dynamic_token)
+        self.assertIsNone(self.account.true_api_token)
+
+    def test_setup_keeps_tokens_when_identity_unchanged(self):
+        self.client.force_login(self.superuser)
+        cert = {
+            'serial_number': 'SN-SUZ-PERM',
+            'fio': 'Сертификат',
+            'valid_from': '01-01-2026',
+            'valid_for': '01-01-2027',
+        }
+
+        with patch(
+            'app_cz.views.get_list_certificates', return_value=[cert]
+        ):
+            response = self.client.post(
+                '/cz/api/setup-suz-account/',
+                data={
+                    'serial_number': 'SN-SUZ-PERM',
+                    'inn': '1234567890',
+                    'oms_id': 'oms',
+                    'device_name': 'device',
+                    'connection_identifier': 'conn',
+                },
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.account.refresh_from_db()
+        self.assertEqual(self.account.dynamic_token, 'token')
+        self.assertEqual(
+            self.account.true_api_token,
+            '123e4567-e89b-12d3-a456-426655440000',
+        )
 
     def test_auth_key_requires_superuser(self):
         self.client.force_login(self.staff)
@@ -3584,6 +3652,155 @@ class ReservedPartyApiLookupTests(TestCase):
         self.assertEqual(response.json()['party_number'], self.number)
 
 
+class CheckSuzTokenMessageTests(TestCase):
+    """check_suz_token сообщает и состояние единого токена True API."""
+
+    def setUp(self):
+        self.account = SUZAccount.objects.create(
+            is_active=True,
+            certificate_name='Сертификат',
+            serial_number='SN-CHECK',
+            inn='1234567890',
+            oms_id='oms',
+            device_name='device',
+            connection_identifier='conn',
+            dynamic_token='token',
+            token_expires_at=timezone.now() + timedelta(hours=2),
+            true_api_token='123e4567-e89b-12d3-a456-426655440004',
+            true_api_token_expires_at=timezone.now() + timedelta(hours=5),
+        )
+
+    def test_reports_true_api_token_expiry(self):
+        from app_helper.service_helper import check_suz_token
+
+        result = check_suz_token()
+
+        self.assertTrue(result['is_ok'])
+        self.assertIn('True API токен до', result['message'])
+
+    def test_reports_missing_true_api_token(self):
+        from app_helper.service_helper import check_suz_token
+
+        self.account.true_api_token = None
+        self.account.true_api_token_expires_at = None
+        self.account.save(update_fields=[
+            'true_api_token', 'true_api_token_expires_at',
+        ])
+
+        result = check_suz_token()
+
+        self.assertTrue(result['is_ok'])
+        self.assertIn('ещё не запрашивался', result['message'])
+
+    def test_reports_malformed_true_api_token(self):
+        from app_helper.service_helper import check_suz_token
+
+        self.account.true_api_token = 'not-a-uuid'
+        self.account.save(update_fields=['true_api_token'])
+
+        result = check_suz_token()
+
+        self.assertTrue(result['is_ok'])
+        self.assertIn('некорректном формате', result['message'])
+
+
+class SuzActiveAccountTokenTests(TestCase):
+    """_active_account обновляет токен заранее и не отдаёт просроченный."""
+
+    def setUp(self):
+        self.account = SUZAccount.objects.create(
+            is_active=True,
+            certificate_name='Сертификат',
+            serial_number='SN-ACTIVE',
+            inn='1234567890',
+            oms_id='oms',
+            device_name='device',
+            connection_identifier='conn',
+            dynamic_token='token',
+            token_expires_at=timezone.now() + timedelta(minutes=30),
+        )
+
+    @patch('app_cz.services.suz_client.ensure_suz_token_valid')
+    def test_refreshes_token_near_expiry(self, mock_ensure):
+        from app_cz.services.order_service import _active_account
+
+        account, error = _active_account()
+
+        self.assertIsNone(error)
+        self.assertIsNotNone(account)
+        mock_ensure.assert_called_once()
+
+    @patch('app_cz.services.suz_client.ensure_suz_token_valid')
+    def test_rejects_expired_token(self, mock_ensure):
+        from app_cz.services.order_service import _active_account
+
+        self.account.token_expires_at = timezone.now() - timedelta(minutes=1)
+        self.account.save(update_fields=['token_expires_at'])
+
+        account, error = _active_account()
+
+        self.assertIsNone(account)
+        self.assertIn('истёк', error)
+
+
+class SendReportTokenTests(TestCase):
+    """Отчёт о нанесении не уходит с просроченным токеном СУЗ."""
+
+    def setUp(self):
+        SUZAccount.objects.create(
+            is_active=True,
+            certificate_name='Сертификат',
+            serial_number='SN-REPORT',
+            inn='1234567890',
+            oms_id='oms',
+            device_name='device',
+            connection_identifier='conn',
+            dynamic_token='token',
+            token_expires_at=timezone.now() - timedelta(minutes=1),
+        )
+
+    @patch('app_cz.services.suz_client.ensure_suz_token_valid')
+    def test_expired_token_raises(self, mock_ensure):
+        from app_cz.services.code_client import send_application_report
+
+        with self.assertRaisesMessage(ValueError, 'истёк'):
+            send_application_report(
+                sntins=['010460175102601921CODE0001'],
+                exp_date='2027-01-01',
+                batch_number='1',
+            )
+
+
+class NationalCatalogTokenRetryTests(SimpleTestCase):
+    """НК: на 401 токен обновляется принудительно и запрос повторяется."""
+
+    @patch('app_cz.services.national_catalog_client.external_http.request')
+    @patch('app_cz.services.national_catalog_client.get_true_api_session_token')
+    @patch('app_cz.services.true_api_client.get_true_api_session_token')
+    @patch('app_cz.services.national_catalog_client.wait_nk_endpoint')
+    def test_401_refreshes_token_once(
+            self, mock_wait, mock_client_token, mock_nc_token, mock_request):
+        from app_cz.services.national_catalog_client import NationalCatalogClient
+
+        mock_client_token.return_value = {'token': 'UUID'}
+        mock_nc_token.return_value = {'token': 'UUID'}
+
+        unauthorized = Mock(status_code=401, text='')
+        unauthorized.json.return_value = {}
+        ok = Mock(status_code=200, text='')
+        ok.json.return_value = {'ok': True}
+        mock_request.side_effect = [unauthorized, ok]
+
+        result = NationalCatalogClient(user=None)._make_request(
+            'GET', '/nk/test'
+        )
+
+        self.assertEqual(result, {'ok': True})
+        self.assertEqual(mock_request.call_count, 2)
+        mock_nc_token.assert_any_call(force_refresh=True)
+        mock_wait.assert_called()
+
+
 class RefreshSuzTokenRetryTests(TestCase):
     """Обновление динамического токена СУЗ: повторы и проактивность."""
 
@@ -3661,6 +3878,65 @@ class RefreshSuzTokenRetryTests(TestCase):
 
         self.assertTrue(mock_refresh.called)
         self.assertTrue(result['refreshed'])
+
+    def test_refresh_skips_when_token_still_valid(self):
+        from app_cz.services import suz_client
+
+        self.account.dynamic_token = 'TOKEN'
+        self.account.token_expires_at = timezone.now() + timedelta(hours=5)
+        self.account.save(update_fields=['dynamic_token', 'token_expires_at'])
+
+        with patch.object(
+            suz_client, 'get_true_api_auth_key',
+        ) as mock_key:
+            result = suz_client._refresh_suz_dynamic_token_once()
+
+        self.assertTrue(result)
+        mock_key.assert_not_called()
+
+    def test_force_refresh_ignores_valid_token(self):
+        from app_cz.services import suz_client
+
+        self.account.dynamic_token = 'TOKEN'
+        self.account.token_expires_at = timezone.now() + timedelta(hours=5)
+        self.account.save(update_fields=['dynamic_token', 'token_expires_at'])
+
+        new_token = '123e4567-e89b-12d3-a456-426655440003'
+        with patch.object(
+            suz_client, 'get_true_api_auth_key',
+            return_value={'uuid': 'u-1', 'data': 'data'},
+        ), patch.object(
+            suz_client, 'attached_signed_data',
+            return_value=('data', 'SIGNED'),
+        ), patch.object(
+            suz_client, 'get_true_api_dynamic_token',
+            return_value=new_token,
+        ):
+            result = suz_client._refresh_suz_dynamic_token_once(force=True)
+
+        self.assertTrue(result)
+        self.account.refresh_from_db()
+        self.assertEqual(self.account.dynamic_token, new_token)
+
+    def test_invalid_token_value_is_not_logged(self):
+        from app_cz.services import suz_client
+
+        with patch.object(
+            suz_client, 'get_true_api_auth_key',
+            return_value={'uuid': 'u-1', 'data': 'data'},
+        ), patch.object(
+            suz_client, 'attached_signed_data',
+            return_value=('data', 'SIGNED'),
+        ), patch.object(
+            suz_client, 'get_true_api_dynamic_token',
+            return_value='SECRET-TOKEN-VALUE',
+        ), self.assertLogs(
+            'app_cz.services.suz_client', level='ERROR',
+        ) as logs:
+            result = suz_client._refresh_suz_dynamic_token_once(force=True)
+
+        self.assertFalse(result)
+        self.assertNotIn('SECRET-TOKEN-VALUE', '\n'.join(logs.output))
 
 
 class GenerateUipFactoryScopeTests(TestCase):
