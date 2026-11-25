@@ -127,8 +127,20 @@ def build_local_party_number(
     date_str = production_date.strftime('%y%m%d')
     article_part = article[:5]
 
+    if type_formation_uip == TypeFormationUIP.natura_auto.value:
+        # GTIN(14) + дата ГГММДД(6) + «0000-» + партия (7), где партия
+        # формируется автоматически из даты производства: ГГ + ISO-неделя(2)
+        # + день недели(1) + «00» (партия за день не передаётся).
+        # Год и неделя берутся из ISO-календаря: на стыке года неделя
+        # может относиться к соседнему году (ГОСТ/ISO 8601).
+        # Пример: 046017510299802607240000-2630500.
+        base = f'{gtin}{date_str}'.ljust(24, '0')  # GTIN + дата + «0000».
+        iso = production_date.isocalendar()
+        return f'{base}-{iso.year % 100:02d}{iso.week:02d}{iso.weekday}00'
+
+    # Остальные типы используют номер партии.
     if party is None:
-      return uip
+        return uip
 
     match type_formation_uip:
         case TypeFormationUIP.general.value:
@@ -160,7 +172,6 @@ def build_local_party_number(
                 return ''
             return f'{base}-{party_part}'
 
-
         case _:
             return uip
 
@@ -169,14 +180,15 @@ def article_prefix_from_local_number(number: str) -> str:
     """
     Первые 5 символов артикула из локального номера УИП.
 
-    Для всех локальных типов, кроме Natura, позиции 20:25 — артикул
-    (см. `build_local_party_number`). Для Natura (GTIN + дата + `0000-` +
-    партия) артикула в номере нет — возвращается пустая строка.
+    Для всех локальных типов, кроме «НатураПРО», позиции 20:25 — артикул
+    (см. `build_local_party_number`). Для «НатураПРО» и «НатураПРО (авто)»
+    (GTIN + дата + `0000-` + партия) артикула в номере нет — возвращается
+    пустая строка.
     """
     number = number or ''
     if len(number) < 25:
         return ''
-    if number[24] == '-':  # Natura: «0000-» после даты.
+    if number[24] == '-':  # «НатураПРО»/«НатураПРО (авто)»: «0000-» после даты.
         return ''
     prefix = number[20:25]
     return prefix if prefix.strip('0') else ''
