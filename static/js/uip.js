@@ -93,7 +93,8 @@ const TYPE_FORMATION_LABELS = {
     1: 'Обычный',
     2: 'Обычный + партия в начале',
     3: 'Обычный + партия в конце',
-    4: 'НатураПРО'
+    4: 'НатураПРО',
+    5: 'НатураПРО (авто)'
 };
 
 /** Возвращает выбранный продукт из availableProducts (или null). */
@@ -243,8 +244,10 @@ function updatePartyVisibility() {
     const mode = modeEl ? modeEl.value : 'local';
     const product = getSelectedProduct();
     const type = product ? Number(product.type_formation_uip) : 0;
-    // «Обычный» (тип 1) и ручной режим не используют номер партии — скрываем поле.
-    group.style.display = (mode !== 'manual' && product && type !== 1) ? '' : 'none';
+    // «Обычный» (тип 1), «НатураПРО (авто)» (тип 5) и ручной режим не
+    // используют номер партии — скрываем поле.
+    group.style.display =
+        (mode !== 'manual' && product && type !== 1 && type !== 5) ? '' : 'none';
 
     // НатураПРО (тип 4) требует внутренний номер партии ровно из 7 цифр,
     // остальные типы «с партией» — до 3 цифр.
@@ -255,6 +258,8 @@ function updatePartyVisibility() {
         input.placeholder = isNatura
             ? '7 цифр (например, 2640501)'
             : '0-999 (необязательно)';
+        // У «НатураПРО (авто)» партия формируется автоматически.
+        if (type === 5) input.value = '';
     }
 }
 
@@ -412,20 +417,22 @@ function onProductSelect(radio) {
     updateGenerateButtonState();
 }
 
-/** ISO-неделя и день недели (как date.isocalendar() в Python). */
-function getISOWeekAndDay(date) {
-    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+/** ISO-год, неделя и день недели (как date.isocalendar() в Python). */
+function getISOWeekAndDay(year, month, day) {
+    const d = new Date(Date.UTC(year, month - 1, day));
     const dayNum = d.getUTCDay() || 7;
     d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const isoYear = d.getUTCFullYear();
+    const yearStart = new Date(Date.UTC(isoYear, 0, 1));
     const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-    return { week: weekNo, day: dayNum };
+    return { year: isoYear, week: weekNo, day: dayNum };
 }
 
 /**
  * Формирует локальный номер УИП. Зеркально повторяет
  * build_local_party_number() из app_cz/services/party_service.py.
- * type: 1 — Обычный, 2 — партия в начале, 3 — партия в конце, 4 — НатураПРО.
+ * type: 1 — Обычный, 2 — партия в начале, 3 — партия в конце, 4 — НатураПРО,
+ * 5 — НатураПРО (авто).
  */
 function buildLocalNumber(gtin, dateStr, article, type, party) {
     // dateStr: YYYY-MM-DD -> ГГММДД
@@ -449,6 +456,16 @@ function buildLocalNumber(gtin, dateStr, article, type, party) {
         const base = (gtin + datePart).padEnd(24, '0').slice(0, 24);
         const digits = (party || '').match(/\d+/);
         return base + '-' + (digits ? digits[0] : '');
+    }
+    if (type === 5) {
+        // НатураПРО (авто): GTIN(14) + дата(6) + нули до 24 + «-» +
+        // ГГ + ISO-неделя(2) + день недели(1) + «00». Партия за день не
+        // передаётся: номер строится только по дате производства.
+        const base = (gtin + datePart).padEnd(24, '0').slice(0, 24);
+        const iso = getISOWeekAndDay(Number(yyyy), Number(mm), Number(dd));
+        const partyPart5 = String(iso.year % 100).padStart(2, '0') +
+            String(iso.week).padStart(2, '0') + String(iso.day) + '00';
+        return base + '-' + partyPart5;
     }
     // Тип 1 «Обычный» (по умолчанию): партия в номере не участвует.
     const base = gtin + datePart + article;
@@ -494,6 +511,19 @@ function buildPreviewHint(gtin, dateStr, article, type, party, number) {
             '<span class="part-party">-' + escapeHtml(partyPart4) + '</span><br>' +
             '<small>GTIN(14) + дата ГГММДД(6) + нули до 24 + «-» + внутренний номер партии. ' +
             'Номер партии: <b class="' + (len === 7 ? 'len-ok' : 'len-bad') + '">' + len + '/7</b></small>';
+    }
+    if (type === 5) {
+        const zeros = number.slice(gtin.length + datePart.length, 24);
+        const iso = getISOWeekAndDay(Number(yyyy), Number(mm), Number(dd));
+        const partyPart5 = String(iso.year % 100).padStart(2, '0') +
+            String(iso.week).padStart(2, '0') + String(iso.day) + '00';
+        return '<span class="part-gtin">' + gtin + '</span>' +
+            '<span class="part-date">' + datePart + '</span>' +
+            '<span class="part-zeros">' + zeros + '</span>' +
+            '<span class="part-party">-' + partyPart5 + '</span><br>' +
+            '<small>GTIN(14) + дата ГГММДД(6) + нули до 24 + «-» + ' +
+            'ГГ(' + (iso.year % 100) + ') + ISO-неделя(' + iso.week + ') + ' +
+            'день недели(' + iso.day + ') + «00». Партия формируется автоматически</small>';
     }
     // Тип 1 «Обычный».
     const zeros = number.slice(gtin.length + datePart.length + article.length);
@@ -709,7 +739,10 @@ async function submitGenerate() {
         const product = getSelectedProduct();
         const type = product ? Number(product.type_formation_uip) : 0;
         const partyRaw = partyInput ? partyInput.value.trim() : '';
-        if (type === 4) {
+        if (type === 5) {
+            // НатураПРО (авто): партия формируется автоматически из даты.
+            partyValue = null;
+        } else if (type === 4) {
             // НатураПРО: внутренний номер партии вводится вручную и должен
             // состоять ровно из 7 цифр (иначе номер не равен 32 символам).
             if (!/^\d{7}$/.test(partyRaw)) {

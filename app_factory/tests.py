@@ -9,7 +9,7 @@
 
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 
 from app_factory.models import (
     CardStateChoices,
@@ -421,3 +421,28 @@ class SkuFactoryLinkTests(TestCase):
             sku.article for sku in prefer_linked_skus(self.product.skus.all())
         ]
         self.assertEqual(articles, ['91307', '91229'])
+
+
+class ProductSkuAdminTypeChoicesTests(SimpleTestCase):
+    """Новый тип формирования УИП доступен в админке без отдельной правки."""
+
+    def test_natura_auto_choice_in_form(self):
+        from unittest.mock import Mock
+
+        from django.contrib import admin
+        from django.test import RequestFactory
+
+        from app_factory.admin import ProductSKUAdmin
+
+        request = RequestFactory().get('/admin/')
+        request.user = Mock(is_active=True, is_staff=True, is_superuser=True)
+        request.user.has_perm.return_value = True
+
+        model_admin = ProductSKUAdmin(ProductSKU, admin.site)
+        form_class = model_admin.get_form(request)
+        choices = dict(form_class.base_fields['type_formation_uip'].choices)
+
+        self.assertIn(TypeFormationUIP.natura_auto.value, choices)
+        self.assertEqual(
+            choices[TypeFormationUIP.natura_auto.value], 'НатураПРО (авто)',
+        )

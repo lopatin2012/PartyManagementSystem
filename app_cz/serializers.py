@@ -632,7 +632,11 @@ class GenerateUIPSerializer(serializers.Serializer):
     )
     party = serializers.CharField(
         max_length=30, required=False, allow_blank=True, default='',
-        help_text='Номер партии задания (для типов УИП «партия в начале/конце», НатураПРО)',
+        help_text=(
+            'Номер партии задания (для типов УИП «партия в начале/конце», '
+            'НатураПРО). Для «НатураПРО (авто)» не используется: партия '
+            'формируется из даты производства'
+        ),
     )
 
     def validate(self, attrs):

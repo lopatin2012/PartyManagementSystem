@@ -1216,6 +1216,19 @@ class GenerateUipTypeSyncTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_natura_auto_builds_party_from_date(self):
+        """НатураПРО (авто): партия не передаётся, строится из даты."""
+        self.sku.type_formation_uip = TypeFormationUIP.natura_auto.value
+        self.sku.save(update_fields=['type_formation_uip'])
+
+        response = self._post(int(self.sku.type_formation_uip))
+
+        self.assertEqual(response.status_code, 200, response.content.decode())
+        number = response.json()['number']
+        self.assertEqual(len(number), 32)
+        # 15.01.2026: ГГ(26) + ISO-неделя(03) + день недели(4) + «00».
+        self.assertTrue(number.endswith('-2603400'))
+
 
 class GenerateUipInactiveProductTests(TestCase):
     """Внешний generate-uip активирует неактивный продукт и создаёт УИП."""
@@ -1625,6 +1638,64 @@ class BuildLocalPartyNumberNaturaTests(TestCase):
 
         self.assertEqual(number, '046017510249302610010000-2640501')
         self.assertEqual(len(number), 32)
+
+
+class BuildLocalPartyNumberNaturaAutoTests(TestCase):
+    """Локальный УИП «НатураПРО (авто)» (type_formation_uip=5)."""
+
+    GTIN = '04601751029980'
+
+    def _build(self, production_date, party='000'):
+        from app_cz.services.party_service import build_local_party_number
+
+        return build_local_party_number(
+            self.GTIN,
+            production_date,
+            article='14362',
+            party=party,
+            type_formation_uip=TypeFormationUIP.natura_auto.value,
+        )
+
+    def test_party_built_from_production_date(self):
+        # ГГ(26) + ISO-неделя(30) + день недели(5) + «00».
+        number = self._build(date(2026, 7, 24))
+
+        self.assertEqual(number, '046017510299802607240000-2630500')
+        self.assertEqual(len(number), 32)
+        from app_cz.services.party_service import validate_party_number
+        self.assertTrue(validate_party_number(number))
+
+    def test_party_input_ignored(self):
+        # Партия не вводится: переданное значение на номер не влияет.
+        self.assertEqual(
+            self._build(date(2026, 7, 24), party='2619520'),
+            '046017510299802607240000-2630500',
+        )
+        self.assertEqual(
+            self._build(date(2026, 7, 24), party=None),
+            '046017510299802607240000-2630500',
+        )
+
+    def test_iso_week_year_at_year_boundary(self):
+        # 01.01.2027 — 53-я ISO-неделя 2026 года (переходная неделя).
+        number = self._build(date(2027, 1, 1))
+
+        self.assertEqual(number, '046017510299802701010000-2653500')
+
+    def test_december_week_belongs_to_next_year(self):
+        # 29.12.2025 — понедельник, уже 1-я ISO-неделя 2026 года.
+        number = self._build(date(2025, 12, 29))
+
+        self.assertEqual(number, '046017510299802512290000-2601100')
+
+    def test_article_prefix_is_empty(self):
+        # Артикула в номере нет — как у «НатураПРО».
+        from app_cz.services.party_service import article_prefix_from_local_number
+
+        self.assertEqual(
+            article_prefix_from_local_number(self._build(date(2026, 7, 24))),
+            '',
+        )
 
 
 class BuildLocalPartyNumberArticleTruncationTests(TestCase):
