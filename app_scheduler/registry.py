@@ -26,7 +26,6 @@ def get_scheduled_tasks() -> dict:
         close_unused_registered_uips_task,
         prune_request_metrics_task,
         refresh_suz_token_task,
-        register_reserved_uips_task,
         reserve_required_drafts_task,
         resolve_desync_uips_task,
         sync_external_parties_codes_task,
@@ -51,7 +50,7 @@ def get_scheduled_tasks() -> dict:
         'check_uip_reserve': check_uip_reserve_task,
         'check_uip_burn': check_uip_burn_task,
         'check_suz_orders': check_suz_orders_task,
-        'register_reserved_uips': register_reserved_uips_task,
+        # 'register_reserved_uips' отключена (26.11.2026) — см. SCHEDULE.
         'reserve_required_drafts': reserve_required_drafts_task,
         'resolve_desync_uips': resolve_desync_uips_task,
         'sync_parties': sync_parties_task,
